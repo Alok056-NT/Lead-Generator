@@ -4,7 +4,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 
 | Task | Title | Status | Notes |
 |---|---|---|---|
-| T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | changes | |
+| T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
 | T02 | Database layer and schema | todo | |
 | T03 | Countries and compliance tables | todo | |
 | T04 | Provider framework and search providers | todo | |
@@ -29,7 +29,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 ## Task summaries
 (Builder adds a short summary per task here.)
 
-### T01 (review)
+### T01 (done)
 Installable `lead-generator` package (`src/leadgen`, console script `leadgen`) with workspace paths, atomic `secrets.env` handling (comments preserved, masked display), pydantic `Settings` in `settings.yaml` (unknown keys kept), rotating-file + stderr logging (stdout stays clean), text and HTTP helpers, and `leadgen doctor | version | paths`. 41 tests pass (1 POSIX-only skip), ruff clean, 97% coverage. CI workflow runs Windows/Ubuntu x Python 3.11/3.13. `.gitattributes` added and files renormalised to LF.
 Files: pyproject.toml, .gitattributes, .github/workflows/tests.yml, src/leadgen/{__init__,__main__,cli}.py, src/leadgen/core/{__init__,paths,secrets,config,logging,text,http,fsutil}.py, tests/{conftest,test_paths,test_secrets,test_config,test_text,test_http,test_logging,test_cli,test_fsutil}.py, docs/DECISIONS.md, docs/STATUS.md.
 Extra beyond card: `core/fsutil.py` (shared atomic write helper), `shutdown_logging()`, `ConfigError`.
