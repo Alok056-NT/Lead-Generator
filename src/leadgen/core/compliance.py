@@ -393,8 +393,9 @@ _RULE_LIST: list[EmailRule] = [
         (
             "https://laws-lois.justice.gc.ca/eng/acts/E-1.6/FullText.html",
             "https://ised-isde.canada.ca/site/canada-anti-spam-legislation/en/node/7",
+            "https://laws-lois.justice.gc.ca/eng/acts/C-34/section-52.01.html",
         ),
-        _WITH_ADDRESS[:3],
+        _WITH_ADDRESS,
     ),
     _eu(
         "DE",
@@ -453,10 +454,11 @@ _RULE_LIST: list[EmailRule] = [
         "IT",
         "Privacy Code (Legislative Decree 196/2003) section 130; GDPR",
         "Italy requires prior informed consent (opt-in) for marketing email, recorded with its "
-        "date, with a soft exception for existing customers and similar products. The sources "
-        "checked did not settle how it treats company addresses, so treat consent as the safer "
-        "default. Include a simple way to opt out in every message.",
+        "date, and the rule covers business recipients as well as individuals. There is a soft "
+        "exception for existing customers and similar products. Include a simple way to opt out "
+        "in every message.",
         _dla("IT"),
+        default_policy=_STRICT,
     ),
     _eu(
         "SE",
@@ -471,11 +473,13 @@ _RULE_LIST: list[EmailRule] = [
     _eu(
         "DK",
         "Marketing Practices Act (Danish); GDPR",
-        "Denmark requires the recipient's prior consent for direct marketing by email, with an "
-        "exception for existing customers and similar products offered an easy opt-out. The "
-        "source checked describes the consent rule for natural persons, so how company "
-        "recipients are treated should be confirmed. Never conceal the sender.",
+        "Denmark requires the recipient's prior consent for marketing email, and the ban covers "
+        "business recipients as well as consumers. The only business carve-out is narrow and "
+        "applies to an existing customer relationship with an easy opt-out. Never conceal the "
+        "sender.",
+        "https://www.danskerhverv.dk/presse-og-nyheder/nyheder/2018/august/samtykke-til-markedsforing/",
         _dla("DK"),
+        default_policy=_STRICT,
     ),
     _eu(
         "NO",
@@ -507,7 +511,7 @@ _RULE_LIST: list[EmailRule] = [
         "correct name, address and email contact and a free opt-out. Do not send cold email "
         "to Switzerland without consent.",
         (_dla("CH"),),
-        _BASE_ELEMENTS,
+        _WITH_ADDRESS,
     ),
     _eu(
         "AT",

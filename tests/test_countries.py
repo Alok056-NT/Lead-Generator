@@ -165,3 +165,8 @@ def test_matches_location_accepts_name_string():
     assert matches_location("Singapore", "https://sg.linkedin.com/in/x", "")
     with pytest.raises(UnknownCountryError):
         matches_location("Atlantis", None, "")
+
+
+def test_polish_word_rok_is_not_south_korea():
+    assert not countries.matches_location("KR", None, "Engineer - 1 rok 3 mies.")
+    assert not countries.matches_location("KR", None, "Location: ROK")

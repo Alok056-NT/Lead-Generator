@@ -49,7 +49,7 @@ def test_known_policies():
     assert RULES["US"].default_policy == "allow_with_optout"
     assert RULES["US"].consent_model == "opt_out"
     assert "postal_address" in RULES["US"].required_elements
-    for iso in ("CA", "DE", "AU", "NZ", "NL", "AT", "ES", "ZA", "JP", "CH"):
+    for iso in ("CA", "DE", "AU", "NZ", "NL", "AT", "ES", "ZA", "JP", "CH", "IT", "DK"):
         assert RULES[iso].default_policy == "block_without_consent", iso
     assert RULES["GB"].consent_model == "opt_out"
     assert RULES["GB"].default_policy == "warn"
@@ -59,7 +59,7 @@ def test_known_policies():
 def test_eu_countries_share_base_sources_and_germany_is_stricter():
     assert compliance._EPRIVACY[0] in RULES["FR"].sources
     assert RULES["FR"].consent_model == "opt_out"
-    assert RULES["IT"].default_policy == "warn"
+    assert RULES["IT"].default_policy == "block_without_consent"
     assert RULES["DE"].default_policy == "block_without_consent"
 
 
@@ -90,3 +90,20 @@ def test_invalid_rule_values_rejected():
     with pytest.raises(ValueError, match="subject_label"):
         replace(base, subject_label="<ADV>")
     assert isinstance(base, EmailRule)
+
+
+def test_ca_and_ch_require_postal_address_and_truthful_subject():
+    for iso in ("CA", "CH"):
+        elements = RULES[iso].required_elements
+        assert "postal_address" in elements, iso
+        assert "truthful_subject" in elements, iso
+    assert any("52.01" in src for src in RULES["CA"].sources)
+
+
+def test_it_and_dk_summaries_cover_business_recipients():
+    for iso in ("IT", "DK"):
+        summary = RULES[iso].summary
+        assert "business recipients" in summary, iso
+        assert "should be confirmed" not in summary and "did not settle" not in summary
+        assert summary.endswith(DISCLAIMER)
+    assert any("danskerhverv.dk" in src for src in RULES["DK"].sources)

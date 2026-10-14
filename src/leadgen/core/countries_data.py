@@ -709,7 +709,7 @@ COUNTRY_ROWS: list[dict] = [
             "Suwon",
             "Seongnam",
         ],
-        "aliases": ["Republic of Korea", "ROK"],
+        "aliases": ["Republic of Korea"],
         "locale": "ko-KR",
         "timezone": "Asia/Seoul",
     },
