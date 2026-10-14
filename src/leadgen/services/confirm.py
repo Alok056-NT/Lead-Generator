@@ -54,6 +54,14 @@ _DASH_SEPARATOR_RE = re.compile(r"\s+[-–—]\s+")
 _FORMER_RE = re.compile(
     r"(?<![A-Za-z])(?:former(?:ly)?|retired|previously)(?![A-Za-z])|(?<![A-Za-z])ex-", re.I
 )
+# Words that make an `at <alias>` match in the snippet a past job when they come earlier in the
+# same segment or sentence ("Previously Training Manager at X", "Formerly HR lead at X").
+_FORMER_BEFORE_RE = re.compile(
+    r"(?<![A-Za-z])(?:former(?:ly)?|retired|previously|past|until|earlier)(?![A-Za-z])"
+    r"|(?<![A-Za-z])ex-",
+    re.I,
+)
+_EXPERIENCE_VALUE_RE = re.compile(r"(?<![A-Za-z])experience\s*[:·]\s*([^·]*)", re.I)
 _JOB_SEEKER_RE = re.compile(
     r"looking\s+for|open\s+to\s+work|#?opentowork|seeking|job\s+seeker", re.I
 )
@@ -386,14 +394,32 @@ _AT_ALIAS = r"(?:(?<![A-Za-z])(?i:at)\s+|@\s*){A}"
 _PRESENT = r"{A}\s*[.·,]?\s*(?:[A-Za-z]{3,9}\.?\s+)?\d{4}\s*[·\-–]?\s*(?i:Present)(?![A-Za-z])"
 
 
-def _current_in_snippet(alias: str, snippet: str, after: str) -> bool:
+def _at_alias_is_current(alias: str, text: str) -> bool:
+    """True when some `at <alias>` / `@ <alias>` match is not preceded, in its own segment or
+    sentence, by a former-role word (PLAN 11.5: when unsure, review)."""
+    for m in _compiled(alias, _AT_ALIAS).finditer(text):
+        start = max(text.rfind(" · ", 0, m.start()), text.rfind(". ", 0, m.start()))
+        if not _FORMER_BEFORE_RE.search(text[start + 1 : m.start()]):
+            return True
+    return False
+
+
+def _experience_names_none(aliases: Sequence[str], snippet: str) -> bool:
+    """True when the snippet has an `Experience:` field whose value names none of the aliases."""
+    values = [m.group(1) for m in _EXPERIENCE_VALUE_RE.finditer(snippet)]
+    return bool(values) and not any(_any_alias_in(aliases, v) for v in values)
+
+
+def _current_in_snippet(alias: str, snippet: str, after: str, loose_ok: bool = True) -> bool:
     """Does the snippet show `alias` as the current employer? Google's shapes: `Experience ·
     X`, `at X`, `@ X`, `Name. Headline. X School.` (X starts the text after the headline) and
-    `X. Jul 2011 - Present`."""
+    `X. Jul 2011 - Present`. A loose `at X` / `@ X` is no evidence when a former-role word
+    comes before it in its segment, or when `loose_ok` is False (the Experience field names
+    another company)."""
     text = _prep(snippet, alias)
     return (
         _compiled(alias, _EXPERIENCE).search(text) is not None
-        or _compiled(alias, _AT_ALIAS).search(text) is not None
+        or (loose_ok and _at_alias_is_current(alias, text))
         or _compiled(alias, "^{A}").match(_prep(after, alias)) is not None
         or _compiled(alias, _PRESENT).search(text) is not None
     )
@@ -404,7 +430,8 @@ def _current_employer(
 ) -> tuple[bool, str]:
     """(confirmed, failure reason). Implements PLAN 11.3 and the L09 'different employer' rule."""
     head_hit = _any_alias_in(aliases, headline)
-    snippet_hit = any(_current_in_snippet(a, snippet, after) for a in aliases)
+    loose_ok = not _experience_names_none(aliases, snippet)
+    snippet_hit = any(_current_in_snippet(a, snippet, after, loose_ok) for a in aliases)
     at_match = _AT_EMPLOYER_RE.search(headline)
     if at_match:
         named = at_match.group(1).strip()
@@ -508,6 +535,10 @@ def parse_result(
         return None
     aliases = company.all_aliases()
     name_raw, title_headline, truncated = _split_title(result.title)
+    if title_headline and any(
+        _compiled(a, "^{A}$").match(_prep(title_headline, a)) for a in aliases
+    ):
+        title_headline = ""  # "Name - Company | LinkedIn" carries no role: use the snippet
     snippet = _normalize(result.snippet)
     lead, after, segment = _snippet_layouts(name_raw, snippet)
     headline = _better_headline(title_headline, truncated, lead, segment)

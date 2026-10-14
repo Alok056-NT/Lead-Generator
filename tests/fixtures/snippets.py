@@ -105,6 +105,31 @@ SNIPPET_CASES: list[dict] = [
         },
         "expect": {"confirmed": True, "reasons": [], "greeting_name": "Priya"},
     },
+    # 1 (cont.). Title "Name - Company | LinkedIn" has no role: the snippet's first segment
+    # supplies the headline. Without a role in the snippet the person goes to review (L06, L07).
+    {
+        "case": "1-c",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - Northwind Health | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan-4",
+            "snippet": (
+                "Training Manager at Northwind Health · Experience: Northwind Health · "
+                "Location: Singapore"
+            ),
+        },
+        "expect": {"confirmed": True, "reasons": [], "greeting_name": "Aria"},
+    },
+    {
+        "case": "1-d",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - Northwind Health | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan-5",
+            "snippet": "Experience: Northwind Health · Location: Singapore",
+        },
+        "expect": {"confirmed": False, "reasons": ["L06", "L07"], "greeting_name": "Aria"},
+    },
     # 2. "Experience · Company" form -> confirmed.
     {
         "case": "2-a",
@@ -209,6 +234,43 @@ SNIPPET_CASES: list[dict] = [
             ),
         },
         "expect": {"confirmed": False, "reasons": ["L04"], "greeting_name": "Ivy"},
+    },
+    # 6 (cont.). Past-job wording before "at <company>" and an Experience field naming another
+    # company are no proof of a current job -> L04 (PLAN 11.5: when unsure, review).
+    {
+        "case": "6-b",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - Training Manager | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan",
+            "snippet": (
+                "Training Manager · Singapore · Previously Training Manager at Northwind Health"
+            ),
+        },
+        "expect": {"confirmed": False, "reasons": ["L04"], "greeting_name": "Aria"},
+    },
+    {
+        "case": "6-c",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - HR Manager | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan-2",
+            "snippet": "Singapore · Formerly HR lead at Northwind Health.",
+        },
+        "expect": {"confirmed": False, "reasons": ["L04"], "greeting_name": "Aria"},
+    },
+    {
+        "case": "6-d",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - HR Manager | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan-3",
+            "snippet": (
+                "Experience: Acme Corp · Singapore · "
+                "I was HR Manager at Northwind Health from 2015 to 2019."
+            ),
+        },
+        "expect": {"confirmed": False, "reasons": ["L04"], "greeting_name": "Aria"},
     },
     # 7. Headline names another employer while the snippet mentions the company -> L09.
     {

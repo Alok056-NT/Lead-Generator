@@ -77,7 +77,7 @@ def test_snippet_catalogue(case):
 
 
 def test_catalogue_is_large_and_covers_every_shape():
-    assert len(SNIPPET_CASES) >= 45
+    assert len(SNIPPET_CASES) >= 56
     numbers = {int(c["case"].split("-")[0]) for c in SNIPPET_CASES}
     assert numbers == set(range(1, 25))
     ids = [c["case"] for c in SNIPPET_CASES]
@@ -312,6 +312,74 @@ def test_at_company_in_snippet_counts():
         "Ben Adler - Training Manager | LinkedIn", "Training Manager @Northwind · Singapore"
     )
     assert cand.confirmed
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "Training Manager · Singapore · Previously Training Manager at Northwind Health",
+        "Singapore · Formerly HR lead at Northwind Health.",
+        "Singapore · Ex-HR lead @ Northwind Health",
+        "Singapore · Retired HR lead at Northwind Health",
+        "Singapore · Until 2019 HR lead at Northwind Health",
+        "Singapore · Worked in the past at Northwind Health",
+    ],
+)
+def test_at_company_after_a_former_word_is_not_current(snippet):
+    cand = parse("Ben Adler - HR Manager | LinkedIn", snippet)
+    assert codes(cand) == ["L04"]
+
+
+def test_former_word_in_another_segment_does_not_block_at_company():
+    cand = parse(
+        "Ben Adler - HR Manager | LinkedIn",
+        "Singapore · Previously at Acme · HR Manager at Northwind Health",
+    )
+    assert cand.confirmed, cand.reasons
+    # a second, current `at` match still counts
+    cand = parse(
+        "Ben Adler - HR Manager | LinkedIn",
+        "Singapore · Formerly HR lead at Northwind Health. HR Manager at Northwind Health",
+    )
+    assert cand.confirmed, cand.reasons
+
+
+def test_experience_field_naming_another_company_blocks_loose_at_match():
+    title = "Ben Adler - HR Manager | LinkedIn"
+    cand = parse(title, "Experience: Acme Corp · Singapore · HR Manager at Northwind Health")
+    assert codes(cand) == ["L04"]
+    # a present-tense date range, or an Experience field that names the company, still counts
+    cand = parse(title, "Experience: Acme Corp · Northwind Health. Mar 2018 - Present · Singapore")
+    assert cand.confirmed, cand.reasons
+    cand = parse(title, "Experience: Northwind Health · Singapore · HR Manager at Northwind Health")
+    assert cand.confirmed, cand.reasons
+    # the headline naming the company is enough whatever the Experience field says
+    cand = parse(
+        "Ben Adler - HR Manager at Northwind Health | LinkedIn", "Experience: Acme Corp · Singapore"
+    )
+    assert cand.confirmed, cand.reasons
+
+
+def test_title_with_only_a_company_after_the_name_uses_the_snippet():
+    title = "Aria Tan - Northwind Health | LinkedIn"
+    cand = parse(
+        title,
+        "Training Manager at Northwind Health · Experience: Northwind Health · "
+        "Location: Singapore",
+    )
+    assert cand.confirmed, cand.reasons
+    assert cand.headline == "Training Manager at Northwind Health"
+    cand = parse(title, "Experience: Northwind Health · Location: Singapore")
+    assert "L06" in codes(cand)
+    assert cand.headline == ""
+    cand = parse(
+        "Aria Tan - Northwind | LinkedIn",
+        "Aria Tan. HR Manager. Northwind Health School. Singapore.",
+    )
+    assert cand.confirmed and cand.headline == "HR Manager"
+    # a role that merely contains the company name is still a headline
+    cand = parse("Aria Tan - Northwind Health HR Manager | LinkedIn", "Singapore")
+    assert cand.headline == "Northwind Health HR Manager"
 
 
 def test_short_caps_alias_is_case_sensitive_and_whole_word():

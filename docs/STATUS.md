@@ -11,7 +11,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
 | T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
-| T08 | People finder and confirmation engine | changes | manual check pending: real 3-company search (reviewer/owner, spends ~6 Serper credits) and compare with the NXT pilot |
+| T08 | People finder and confirmation engine | review | manual check pending: real 3-company search (reviewer/owner, spends ~6 Serper credits) and compare with the NXT pilot |
 | T09 | Email finder and verification | todo | |
 | T10 | Drafting workflow | todo | |
 | T11 | QA engine and AI review | todo | |
@@ -71,6 +71,7 @@ Extra beyond card: `check_domains(campaign_id, company_ids=None)` (finishes or r
 Files: src/leadgen/services/{confirm,people,name_data}.py, src/leadgen/providers/search.py, tests/{test_confirm,test_people,test_search_cache}.py, tests/fixtures/snippets.py, docs/{DECISIONS,STATUS}.md.
 Corrections to the worker drafts: fixture 12-a now expects L06 and L13 (card: "L13/L06"; the weak-fit rule of PLAN 11.6 adds L13 when an IT/finance/sales/... "operations" title meets an operations group); fixture header documents how the campaign override keys map onto `CampaignCtx`; the other expectations (13-a L07+L14, 18-c L08+L10, 24-a company = excluded competitor) were checked against PLAN 11 and kept; L11/L12 are reasons only for an unusable name/headline, L20 is QA. `name_data.py` kept as drafted (overlap check in DECISIONS).
 Extra beyond card: `PeopleError`, `canonical_url`/`url_key`/`name_key`, `parse_name`, `L12` (garbled headline) and `L11` (no first+last name) as reasons, manual-promotion refusal for L03/L16 people.
+Reviewer fixes (round 2): a loose `at <alias>` / `@ <alias>` match in the snippet no longer counts when a former-role word (former, formerly, previously, retired, ex-, past, until, earlier) comes before it in its segment or sentence (L04); when the snippet has an `Experience:` field naming none of the aliases, a loose `at <alias>` elsewhere is no evidence either (L04; headline hits, `Experience: <alias>`, `<alias>. Mon YYYY - Present` still count); a title shaped "Name - Company | LinkedIn" is treated as having no headline, so the snippet's layout-A lead or first segment supplies it. New fixture cases 1-c, 1-d, 6-b, 6-c, 6-d and tests; all earlier fixture expectations unchanged (no fixture was edited). 1149 tests pass (1 POSIX-only skip), ruff clean.
 
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
@@ -120,3 +121,6 @@ Extra beyond card: `PeopleError`, `canonical_url`/`url_key`/`name_key`, `parse_n
 - T08: L20 (profile language/location hint), L21 and L22 (AI-search slug check) are QA/T21 checks and are not produced here. T21 should call `people.process_results(..., origin="ai_web_search")` and add the anti-fabrication checks on top.
 - T08: name heuristics are guesses: "Lee Min Ho" (both ends surnames) reads as "Lee Min", "Tan Wei" as "Tan"; "Ex-<Company>" in a headline counts as a former role (review). The message QA (M01) and the AI review catch wrong greetings.
 - T08: `find_people` searches each campaign country for a company without its own `country`; for many-country campaigns set a company country in `add_companies` to cut searches.
+- T08 (review): a `review` row is never upgraded when a later query returns better evidence for the same URL (the dedupe keeps the first result seen); consider keeping the best-scoring result per URL.
+- T08 (review): snippets that start with the location ("Singapore · Title · Company") lose the role, because the first segment is read as the headline source; the person goes to review (L06/L07) even though the role is present further along.
+- T08 (review): no Serper key was configured while building, so the real 3-company search is still `manual check pending`. When run, also check: `sg`/`ca`/`uk` LinkedIn subdomains, whether links like `/in/<slug>/de` appear (dropped by the profile regex), and how often titles are "Name - Company | LinkedIn" (now handled via the snippet).
