@@ -31,4 +31,10 @@ Every external fact the code depends on must be recorded here with a source and 
 | Google LinkedIn snippet shapes (Experience ·, at, @, "Name. Headline. Company School.") | NXT pilot run, 2026-10-14 (planner) | T08 |
 
 ## Verified by builders
-(Add rows: date, task, fact, source.)
+| Date | Task | Fact / decision | Source |
+|---|---|---|---|
+| 2026-10-14 | T01 | Design: `secrets.masked()` shows only "…" for values shorter than 8 characters (card says "…" + last 4) so short secrets are never fully revealed; `paths.exports_dir()` creates the folder and slugifies its argument to prevent path traversal; `secrets.set` accepts any UPPER_CASE name (not just known keys) so later providers need no change | Builder decision |
+| 2026-10-14 | T01 | pydantic 2.14.1: `ConfigDict(extra="allow")` keeps unknown keys in `model_extra` and `model_dump()` returns them, so unknown settings survive a load/save cycle; `ValidationError.errors(include_input=False, include_url=False)` omits the offending value (used so settings errors never echo values) | Ran against installed package (.venv), `pydantic.BaseModel`/`ConfigDict` |
+| 2026-10-14 | T01 | httpx 0.28.1: `httpx.Timeout(20.0, connect=10.0)` sets read/write/pool=20 and connect=10; `Client(follow_redirects=..., headers=..., timeout=...)`; `Client.stream("GET", url)` is a context manager and `Response.iter_bytes()` yields decoded chunks; `Response.encoding` honours the Content-Type charset, default utf-8 | Inspected `httpx.Client.__init__`/`stream`/`Timeout` signatures and ran a `httpx.Response` in the installed package |
+| 2026-10-14 | T01 | PyYAML 6.0.3: `yaml.safe_load` / `yaml.safe_dump(data, sort_keys=False, allow_unicode=True)`; broken input raises `yaml.YAMLError` | Installed package signature (`safe_dump(data, stream=None, **kwds)`) and used in tests |
+| 2026-10-14 | T01 | beautifulsoup4 4.15.0: `BeautifulSoup(s, "html.parser")`, `soup(["script","style"])` + `.decompose()`, `.get_text(" ")` (stdlib parser, no lxml needed) | Ran against the installed package |
