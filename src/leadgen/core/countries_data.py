@@ -196,7 +196,7 @@ COUNTRY_ROWS: list[dict] = [
     {
         "name": "United Kingdom",
         "iso2": "GB",
-        "gl": "uk",
+        "gl": "gb",
         "linkedin_subdomains": ["uk"],
         "cities": [
             "London",

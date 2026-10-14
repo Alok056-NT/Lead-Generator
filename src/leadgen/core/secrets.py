@@ -75,6 +75,11 @@ def get(name: str) -> str:
     return os.environ.get(name, "").strip()
 
 
+def stored(name: str) -> str:
+    """Value saved in `secrets.env` only (ignores the environment), or ""."""
+    return _file_values().get(name, "").strip()
+
+
 def _format(name: str, value: str) -> str:
     if value[:1] in _QUOTES:
         value = f'"{value}"'

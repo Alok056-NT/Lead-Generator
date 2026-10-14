@@ -21,7 +21,7 @@ def test_all_required_countries_present():
 def test_rows_are_well_formed():
     for iso, c in COUNTRIES.items():
         assert c.iso2 == iso and len(iso) == 2 and iso.isupper()
-        assert c.gl == ("uk" if iso == "GB" else iso.lower())
+        assert c.gl == iso.lower()  # Serper's country list uses "gb", not "uk"
         assert 5 <= len(c.cities) <= 15, iso
         assert c.name and c.locale and c.timezone
         assert all(s == s.lower() for s in c.linkedin_subdomains)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sqlite3
 import sys
 import tempfile
@@ -12,6 +13,8 @@ from pathlib import Path
 from leadgen import __version__, db
 from leadgen.core import config, paths, secrets
 from leadgen.core.logging import setup_logging
+from leadgen.providers.registry import ALL_PROVIDERS
+from leadgen.services import status
 
 MIN_PYTHON = (3, 11)
 
@@ -101,6 +104,43 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     return 0 if healthy else 1
 
 
+def cmd_keys_list(_args: argparse.Namespace) -> int:
+    """Show every provider, whether its key is set, and this month's usage."""
+    db.init_db()
+    for item in status.list_providers():
+        state = f"configured ({item['masked_key']})" if item["configured"] else "not set"
+        if item["configured"] and not item["masked_key"]:
+            state = "configured"
+        if not item["implemented"]:
+            state += ", not built yet"
+        used = item["usage_month"]
+        line = f"{item['key']:<11} {state:<34} used this month: {used['credits']:g} credits"
+        if item["remaining_free"] is not None:
+            line += f", about {item['remaining_free']:g} free left"
+        print(line)
+    return 0
+
+
+def cmd_keys_set(args: argparse.Namespace) -> int:
+    """Ask for a key without echoing it, save it and test it."""
+    db.init_db()
+    value = getpass.getpass(f"Paste the {args.provider} API key (hidden): ")
+    result = status.set_key(args.provider, value)
+    if result["ok"]:
+        print(f"Saved {args.provider} key {result['masked_key']}. {result['message']}")
+        return 0
+    print(result["message"])
+    return 1
+
+
+def cmd_keys_test(args: argparse.Namespace) -> int:
+    """Test a saved key (uses at most one credit)."""
+    db.init_db()
+    result = status.check_key(args.provider)
+    print(result["message"])
+    return 0 if result["ok"] else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(prog="leadgen", description="Lead Generator")
@@ -108,6 +148,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="check the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("version", help="show the version").set_defaults(func=cmd_version)
     sub.add_parser("paths", help="show workspace locations").set_defaults(func=cmd_paths)
+    keys = sub.add_parser("keys", help="manage API keys").add_subparsers(
+        dest="keys_command", required=True
+    )
+    providers = sorted(ALL_PROVIDERS)
+    keys.add_parser("list", help="show providers and usage").set_defaults(func=cmd_keys_list)
+    for name, func, text in (
+        ("set", cmd_keys_set, "save a key (prompted, never shown)"),
+        ("test", cmd_keys_test, "test a saved key (1 credit at most)"),
+    ):
+        sp = keys.add_parser(name, help=text)
+        sp.add_argument("provider", choices=providers)
+        sp.set_defaults(func=func)
     return parser
 
 
