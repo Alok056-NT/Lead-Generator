@@ -120,6 +120,18 @@ def _read_docx(file: Path) -> str:
     return "\n".join(blocks)
 
 
+def _is_highlighted(run) -> bool:
+    """True if the run has a highlight colour.
+
+    `<w:highlight w:val="none"/>` is valid ("no highlight") but python-docx raises ValueError
+    for it, so a ValueError counts as not highlighted.
+    """
+    try:
+        return run.font.highlight_color is not None
+    except ValueError:
+        return False
+
+
 def _paragraph_text(paragraph, styled: bool) -> str:
     """Text of one paragraph; highlighted runs are wrapped in `[HIGHLIGHT: ...]`."""
     segments: list[tuple[str, bool]] = []
@@ -129,7 +141,7 @@ def _paragraph_text(paragraph, styled: bool) -> str:
             text = run.text
             if not text:
                 continue
-            highlighted = run.font.highlight_color is not None
+            highlighted = _is_highlighted(run)
             if segments and segments[-1][1] == highlighted:
                 segments[-1] = (segments[-1][0] + text, highlighted)
             else:

@@ -120,6 +120,23 @@ def test_docx_text_tables_and_highlights(tmp_path):
     assert lines.index("Course | Length") < lines.index("Closing line")  # document order
 
 
+def test_docx_highlight_none_is_not_highlighted(tmp_path):
+    """`<w:highlight w:val="none"/>` is valid Word output; it must not make the file unreadable."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    path = tmp_path / "none.docx"
+    doc = Document()
+    run = doc.add_paragraph().add_run("Plain text with no highlight.")
+    highlight = OxmlElement("w:highlight")
+    highlight.set(qn("w:val"), "none")
+    run._r.get_or_add_rPr().append(highlight)
+    doc.save(str(path))
+    text = read_file_text(path)
+    assert text == "Plain text with no highlight."
+    assert "[HIGHLIGHT" not in text
+
+
 def test_docx_corrupt(tmp_path):
     (tmp_path / "bad.docx").write_bytes(b"not a zip")
     with pytest.raises(FileSourceError) as info:

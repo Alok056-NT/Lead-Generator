@@ -141,11 +141,13 @@ def html_to_text(html: str) -> tuple[str, str]:
 # --- URL helpers ----------------------------------------------------------------------------
 
 
-def normalize_start_url(url: str) -> str:
-    """Add `https://` if missing and check the URL is a public-looking http(s) address."""
-    url = (url or "").strip()
-    if url and "://" not in url:
-        url = f"https://{url}"
+def _check_public_url(url: str) -> None:
+    """Raise `WebError("invalid_url")` unless `url` is http(s) and its host is public-looking.
+
+    Checks the address as written only: `localhost`, `.local`/`.internal` names and IP literals
+    that are not global are refused. DNS is not resolved, so a hostname that points at a private
+    address is not caught.
+    """
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     if parsed.scheme not in ("http", "https") or not host:
@@ -158,6 +160,24 @@ def normalize_start_url(url: str) -> str:
         pass
     if local:
         raise WebError("invalid_url", "Local and private network addresses cannot be read.")
+
+
+def _guard_request(request: httpx.Request) -> None:
+    """httpx request hook: applies the URL rule to the first request and every redirect hop."""
+    _check_public_url(str(request.url))
+
+
+def _client() -> httpx.Client:
+    """The shared HTTP client with the redirect guard attached."""
+    return http.client(request_hook=_guard_request)
+
+
+def normalize_start_url(url: str) -> str:
+    """Add `https://` if missing and check the URL is a public-looking http(s) address."""
+    url = (url or "").strip()
+    if url and "://" not in url:
+        url = f"https://{url}"
+    _check_public_url(url)
     return url.split("#", 1)[0]
 
 
@@ -261,7 +281,7 @@ def crawl(start_url: str, max_pages: int = MAX_PAGES) -> tuple[list[CrawledPage]
     warnings: list[str] = []
     started = time.monotonic()
 
-    with http.client() as client:
+    with _client() as client:
         robots = _load_robots(client, base)
         agent = http.USER_AGENT
         if not robots.can_fetch(agent, start):
@@ -313,7 +333,10 @@ def crawl(start_url: str, max_pages: int = MAX_PAGES) -> tuple[list[CrawledPage]
                 continue
             limiter.acquire()
             requests_left -= 1
-            result = _fetch(client, url)
+            try:
+                result = _fetch(client, url)
+            except WebError:
+                continue  # redirected to a local/private address: skip this page
             if result.status != 200 or not result.html:
                 continue
             if _site_key(urlparse(result.url).netloc) not in allowed_hosts:
@@ -378,7 +401,7 @@ def fetch_google_doc(export_url: str) -> str:
         "This Google Doc is private (or does not exist), so it cannot be read from the link.",
     )
     try:
-        with http.client() as client:
+        with _client() as client:
             response = client.get(export_url)
     except httpx.HTTPError:
         raise WebError("unreachable", "Google Docs could not be reached.") from None

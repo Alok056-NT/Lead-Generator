@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 
 from leadgen import __version__
@@ -9,9 +11,14 @@ from leadgen import __version__
 USER_AGENT = f"LeadGenerator/{__version__}"
 
 
-def client() -> httpx.Client:
-    """An `httpx.Client` with sane timeouts, a real User-Agent and redirects enabled."""
+def client(request_hook: Callable[[httpx.Request], None] | None = None) -> httpx.Client:
+    """An `httpx.Client` with sane timeouts, a real User-Agent and redirects enabled.
+
+    `request_hook`, if given, is called with every outgoing request, including each redirect
+    hop (httpx runs request event hooks before every hop); it may raise to stop the request.
+    """
     return httpx.Client(
+        event_hooks={"request": [request_hook]} if request_hook else None,
         timeout=httpx.Timeout(20.0, connect=10.0),
         headers={"User-Agent": USER_AGENT},
         follow_redirects=True,

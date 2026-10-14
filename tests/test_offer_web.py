@@ -90,6 +90,43 @@ def test_normalize_adds_scheme_and_drops_fragment():
     )
 
 
+@respx.mock
+def test_crawl_start_url_redirecting_to_loopback_is_refused():
+    respx.get(f"{BASE}/robots.txt").mock(return_value=httpx.Response(404))
+    respx.get(f"{BASE}/").mock(
+        return_value=httpx.Response(302, headers={"location": "http://127.0.0.1/admin"})
+    )
+    internal = respx.get("http://127.0.0.1/admin").mock(return_value=httpx.Response(200))
+    with pytest.raises(WebError) as info:
+        offer_web.crawl(BASE)
+    assert info.value.code == "invalid_url"
+    assert not internal.called
+
+
+@respx.mock
+def test_crawl_skips_subpage_redirecting_to_private_address():
+    mock_site({"/": page('<a href="/about">About</a>')}, robots="")
+    respx.get(f"{BASE}/about").mock(
+        return_value=httpx.Response(301, headers={"location": "http://192.168.0.1/"})
+    )
+    internal = respx.get("http://192.168.0.1/").mock(return_value=httpx.Response(200))
+    pages, _warnings = offer_web.crawl(BASE)
+    assert [p.url for p in pages] == [f"{BASE}/"]
+    assert not internal.called
+
+
+@respx.mock
+def test_google_doc_redirect_to_local_address_is_refused():
+    respx.get(EXPORT).mock(
+        return_value=httpx.Response(302, headers={"location": "http://localhost:8080/secret"})
+    )
+    internal = respx.get("http://localhost:8080/secret").mock(return_value=httpx.Response(200))
+    with pytest.raises(WebError) as info:
+        offer_web.fetch_google_doc(EXPORT)
+    assert info.value.code == "invalid_url"
+    assert not internal.called
+
+
 # --- crawler ----------------------------------------------------------------------------------
 
 
