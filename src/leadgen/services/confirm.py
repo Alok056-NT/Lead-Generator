@@ -364,7 +364,7 @@ def _snippet_layouts(name: str, snippet: str) -> tuple[str, str, str]:
     for candidate in dict.fromkeys((name, name.split(",")[0].strip())):
         if candidate and snippet.casefold().startswith(candidate.casefold() + "."):
             rest = snippet[len(candidate) + 1 :].strip()
-            ends = _sentence_ends(rest)
+            ends = _sentence_ends(rest, company_suffix_ends=True)
             lead, after = (rest[: ends[0] - 2], rest[ends[0] :]) if ends else (rest, "")
             break
     segment = snippet.split(" · ")[0].strip()
@@ -395,20 +395,28 @@ _AT_ALIAS = r"(?:(?<![A-Za-z])(?i:at)\s+|@\s*){A}"
 _PRESENT = r"{A}\s*[.·,]?\s*(?:[A-Za-z]{3,9}\.?\s+)?\d{4}\s*[·\-–]?\s*(?i:Present)(?![A-Za-z])"
 
 
-_ABBREVIATIONS = frozenset(
-    "sr snr jr asst dy dep mgr exec assoc dir gen st dept co corp ltd inc pte bhd intl "
+_COMPANY_SUFFIXES = frozenset("co corp ltd inc pte bhd sdn intl".split())
+_ABBREVIATIONS = _COMPANY_SUFFIXES | frozenset(
+    "sr snr jr asst dy dep mgr exec assoc dir gen st dept "
     "eng admin coord supt supv rep prof dr mr mrs ms".split()
 )
-_DOT_SPACE_RE = re.compile(r"([A-Za-z]*)\. ")
+_DOT_SPACE_RE = re.compile(r"([A-Za-z]*)\. (?=([A-Za-z]*))")
 
 
-def _sentence_ends(text: str) -> list[int]:
+def _sentence_ends(text: str, company_suffix_ends: bool = False) -> list[int]:
     """Index just after each `. ` in `text` that ends a sentence. A dot after a common title or
-    company abbreviation (`Sr.`, `Asst.`, `Mgr.`, `Corp.`) or a single-letter initial does not."""
+    company abbreviation (`Sr.`, `Asst.`, `Mgr.`, `Corp.`) or a single-letter initial does not.
+    With `company_suffix_ends` (the layout-A headline split) a company-suffix dot does end the
+    sentence, unless the next word is also a suffix (`Pte. Ltd.`, `Sdn. Bhd.`, `Co. Ltd.`)."""
     ends: list[int] = []
     for m in _DOT_SPACE_RE.finditer(text):
         word = m.group(1).lower()
-        if len(word) == 1 or word in _ABBREVIATIONS:
+        if len(word) == 1:
+            continue
+        if word in _COMPANY_SUFFIXES and company_suffix_ends:
+            if m.group(2).lower() in _COMPANY_SUFFIXES:
+                continue
+        elif word in _ABBREVIATIONS:
             continue
         ends.append(m.end())
     return ends

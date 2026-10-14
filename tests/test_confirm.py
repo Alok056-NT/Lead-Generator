@@ -77,7 +77,7 @@ def test_snippet_catalogue(case):
 
 
 def test_catalogue_is_large_and_covers_every_shape():
-    assert len(SNIPPET_CASES) >= 56
+    assert len(SNIPPET_CASES) >= 58
     numbers = {int(c["case"].split("-")[0]) for c in SNIPPET_CASES}
     assert numbers == set(range(1, 25))
     ids = [c["case"] for c in SNIPPET_CASES]
@@ -349,6 +349,55 @@ def test_abbreviation_in_layout_a_headline_does_not_split_it():
     lead, after, _ = confirm._snippet_layouts(name, snippet)
     assert lead == "Sr. HR Manager"
     assert after.startswith("Northwind Health")
+
+
+_STALE_TAIL = " Northwind Health National University of Singapore. Singapore."
+
+
+@pytest.mark.parametrize(
+    ("title", "headline"),
+    [
+        ("Aria Tan - Northwind Health | LinkedIn", "HR Manager at Acme Pte. Ltd."),
+        ("Aria Tan - HR Manager at Acme Pte... | LinkedIn", "HR Manager at Acme Pte. Ltd."),
+        ("Aria Tan - HR Manager at Acme Co... | LinkedIn", "HR Manager at Acme Co."),
+        ("Aria Tan - Northwind Health | LinkedIn", "HR Manager at Acme Logistics."),
+        ("Aria Tan - Northwind Health | LinkedIn", "HR Manager at Acme Sdn. Bhd."),
+        ("Aria Tan - Northwind Health | LinkedIn", "Sr. HR Manager at Acme Co. Ltd."),
+        ("Aria Tan - Northwind Health | LinkedIn", "HR Manager at Acme Intl. Pte. Ltd."),
+    ],
+)
+def test_stale_company_suffix_headline_is_a_different_employer(title, headline):
+    cand = parse(title, f"Aria Tan. {headline}{_STALE_TAIL}")
+    assert "L09" in codes(cand), cand.reasons
+    assert cand.headline and "University" not in cand.headline and "Singapore" not in cand.headline
+
+
+def test_company_suffix_headline_naming_the_company_is_confirmed():
+    snippet = (
+        "Aria Tan. HR Manager at Northwind Health Pte. Ltd. Northwind Health "
+        "National University of Singapore. Singapore."
+    )
+    cand = parse("Aria Tan - Northwind Health | LinkedIn", snippet)
+    assert cand.confirmed, cand.reasons
+    assert cand.headline == "HR Manager at Northwind Health Pte. Ltd"
+    assert "University" not in cand.headline and "Singapore" not in cand.headline
+
+
+@pytest.mark.parametrize(
+    ("headline", "lead"),
+    [
+        ("HR Manager at Acme Pte. Ltd.", "HR Manager at Acme Pte. Ltd"),
+        ("HR Manager at Acme Sdn. Bhd.", "HR Manager at Acme Sdn. Bhd"),
+        ("HR Manager at Acme Co. Ltd.", "HR Manager at Acme Co. Ltd"),
+        ("HR Manager at Acme Corp.", "HR Manager at Acme Corp"),
+        ("Asst. Mgr. HR at Acme.", "Asst. Mgr. HR at Acme"),
+    ],
+)
+def test_layout_a_split_keeps_suffix_pairs_together(headline, lead):
+    snippet = f"Ben Adler. {headline} Northwind Health. SG"
+    got_lead, got_after, _ = confirm._snippet_layouts("Ben Adler", snippet)
+    assert got_lead == lead
+    assert got_after.startswith("Northwind")
 
 
 def test_real_sentence_end_still_limits_the_former_word():

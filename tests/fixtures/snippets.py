@@ -303,6 +303,19 @@ SNIPPET_CASES: list[dict] = [
         },
         "expect": {"confirmed": False, "reasons": ["L09"], "greeting_name": "Nina"},
     },
+    {
+        "case": "7-c",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - Northwind Health | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan-7",
+            "snippet": (
+                "Aria Tan. HR Manager at Acme Pte. Ltd. Northwind Health "
+                "National University of Singapore. Singapore."
+            ),
+        },
+        "expect": {"confirmed": False, "reasons": ["L09"], "greeting_name": "Aria"},
+    },
     # 8. Truncated employer in the headline matches the alias prefix -> confirmed.
     {
         "case": "8-a",
