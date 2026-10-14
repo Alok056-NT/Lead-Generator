@@ -7,7 +7,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
 | T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
-| T04 | Provider framework and search providers | changes | Re-review 2026-10-14: round-1 fixes OK; 2 fixes (DECISIONS Brave row split/garbled, Brave quota ignores "limit 0 = unlimited"). Real-key check: manual check pending |
+| T04 | Provider framework and search providers | review | Round 2 fixes applied 2026-10-14: DECISIONS Brave row repaired; Brave quota ignores windows with limit 0 (unlimited). Real-key check: manual check pending |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
 | T06 | Campaigns and designations | todo | |
 | T07 | Companies: add, verify, approve | todo | |
@@ -47,7 +47,7 @@ Corrections to the worker draft: removed ambiguous aliases (RSA, ROC/Republic of
 ### T04 (review)
 `providers/` has the framework (`base.py`: `ProviderError`, `ProviderInfo`, `record_usage`/`usage` on `api_usage`, thread-safe `RateLimiter`, 2-retry backoff helper that never retries 401/403), the search interface with the 30-day `cached_search`, Serper (default), Brave (optional), DuckDuckGo HTML (off unless `allow_ddg_fallback`), `FakeSearchProvider`, and `registry.py` (all eight `ProviderInfo`, `get_search_provider`, `needs_key_response`, `quota_response`, `budget_response`, `error_response`, `save_api_key`). `services/status.py` has `list_providers` (+ `set_key`/`check_key` for the CLI) and `leadgen keys list|set|test` was added. Serper's own country list uses `gb`, so T03's GB `gl` changed from `uk` to `gb`. 224 tests pass (1 POSIX-only skip), ruff clean, providers/services coverage 97%. Real Serper call (`leadgen keys set serper`, `leadgen keys test serper`, 1 credit): **manual check pending** (owner).
 Files: src/leadgen/providers/{__init__,base,search,serper,brave,ddg,fake,registry}.py, src/leadgen/services/{__init__,status}.py, src/leadgen/{cli.py,core/secrets.py,core/countries_data.py}, tests/{conftest,test_providers_base,test_serper,test_brave_ddg,test_search_cache,test_registry,test_countries}.py, tests/fixtures/ddg_results.html, docs/{DECISIONS,STATUS}.md.
-Reviewer fixes: `RateLimiter` uses `perf_counter` (Windows `monotonic` ticks every 15.6 ms); Brave `_quota_hit` pairs `X-RateLimit-Policy`/`Remaining` windows by position and reports quota only when a window over a day has 0 left; Brave `country` is sent only if in `BRAVE_COUNTRIES` (else `ALL`); DDG challenge is detected by markup (`anomaly-modal`/`anomaly.js`) and only when no results parse.
+Reviewer fixes: `RateLimiter` uses `perf_counter` (Windows `monotonic` ticks every 15.6 ms); Brave `_quota_hit` pairs `X-RateLimit-Policy`/`Remaining` windows by position and reports quota only when a window over a day has 0 left; Brave `country` is sent only if in `BRAVE_COUNTRIES` (else `ALL`); DDG challenge is detected by markup (`anomaly-modal`/`anomaly.js`) and only when no results parse. Round 2: Brave `_quota_hit` ignores windows whose limit is 0 (Brave: "0 for unlimited"), so an uncapped plan's per-second 429 stays `rate_limited`; DECISIONS Brave row repaired.
 Extra beyond card: `secrets.stored()`, `registry.check_provider`/`error_response`/`get_provider`, `SearchResult.low_confidence`.
 
 ## Follow-ups

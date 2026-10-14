@@ -50,16 +50,26 @@ def _quota_hit(response: httpx.Response) -> bool:
     Brave lists every window in each header, in the same order (per-second first, monthly
     second): `Policy: 1;w=1, 15000;w=2592000`, `Remaining: 0, 14523`, `Reset: 1, 1419704`.
     So the windows are paired by position; a plain per-second 429 is `rate_limited` even
-    though the monthly reset is far away.
+    though the monthly reset is far away. A window whose limit is 0 is unlimited (the guide:
+    "Monthly quota (0 for unlimited)"), so it can never be the reason for a 429.
     """
     headers = response.headers
     remaining = [int(n) for n in re.findall(r"\d+", headers.get("x-ratelimit-remaining", ""))]
-    sizes = [int(n) for n in re.findall(r"w=(\d+)", headers.get("x-ratelimit-policy", ""))]
-    if len(sizes) != len(remaining):  # no usable Policy: fall back to the reset times
+    policy = [
+        (int(limit), int(size))
+        for limit, size in re.findall(r"(\d+)\s*;\s*w=(\d+)", headers.get("x-ratelimit-policy", ""))
+    ]
+    if policy and len(policy) == len(remaining):
+        limits = [limit for limit, _ in policy]
+        sizes = [size for _, size in policy]
+    else:  # no usable Policy: size windows by reset time, limits from X-RateLimit-Limit
         sizes = [int(n) for n in re.findall(r"\d+", headers.get("x-ratelimit-reset", ""))]
+        limits = [int(n) for n in re.findall(r"\d+", headers.get("x-ratelimit-limit", ""))]
+        if len(limits) != len(sizes):
+            limits = [1] * len(sizes)  # unknown limits: assume capped
     return any(
-        left <= 0 and size > _QUOTA_WINDOW_SECONDS
-        for left, size in zip(remaining, sizes, strict=False)
+        left <= 0 and size > _QUOTA_WINDOW_SECONDS and limit > 0
+        for left, size, limit in zip(remaining, sizes, limits, strict=False)
     )
 
 

@@ -119,6 +119,34 @@ def test_brave_errors(brave_key, sleeps):
         provider.search("q")
     assert info.value.code == "quota"
 
+    # Unlimited monthly plan (limit 0): a per-second 429 is never quota, even at Remaining 0.
+    route.mock(
+        return_value=limited(
+            **{
+                "x-ratelimit-policy": "50;w=1, 0;w=2592000",
+                "x-ratelimit-remaining": "0, 0",
+                "x-ratelimit-reset": "1, 1419704",
+            }
+        )
+    )
+    with pytest.raises(ProviderError) as info:
+        provider.search("q")
+    assert info.value.code == "rate_limited"
+
+    # Same without Policy: limits come from X-RateLimit-Limit by position.
+    route.mock(
+        return_value=limited(
+            **{
+                "x-ratelimit-limit": "50, 0",
+                "x-ratelimit-remaining": "0, 0",
+                "x-ratelimit-reset": "1, 1419704",
+            }
+        )
+    )
+    with pytest.raises(ProviderError) as info:
+        provider.search("q")
+    assert info.value.code == "rate_limited"
+
     # No rate-limit headers at all: rate_limited.
     route.mock(return_value=httpx.Response(429))
     with pytest.raises(ProviderError) as info:
