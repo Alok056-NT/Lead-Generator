@@ -10,7 +10,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T04 | Provider framework and search providers | done | Reviewed 2026-10-14 (fix round 2). manual check pending: `leadgen keys set serper` + `leadgen keys test serper` with the owner's real key (1 credit); note the status/body a wrong key returns |
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
-| T07 | Companies: add, verify, approve | review | manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
+| T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
 | T08 | People finder and confirmation engine | todo | |
 | T09 | Email finder and verification | todo | |
 | T10 | Drafting workflow | todo | |
@@ -60,10 +60,10 @@ Extra beyond card: `guide_text()`, `find_unconfirmed()`, hard URL checks (no loc
 Files: src/leadgen/services/{designations,designation_templates,seniority,campaign}.py, tests/{test_designations,test_seniority,test_campaign}.py, tests/fixtures/titles.py (121 synthetic titles), docs/{DECISIONS,STATUS}.md.
 Corrections to the worker drafts: finance, marketing, sales, procurement, facilities and customer_service keyword lists rewritten to drop redundant entries and ambiguous words (`seo*`, `cro`, bare `controller`); fixture "Accounts Payable Manager" now `finance`; fixture header comments updated; "IT Network Operations Manager" -> `it` is correct (the false friend leaves "IT Manager"). Extra beyond the card (see DECISIONS T06): CMO/CIO/CISO/CPO as c_suite, trailing "X Head" as vp, false-rank guards (product owner, lead generation, assistant to ...), `search_mode`/option shortcuts on `update_campaign`, unique export-folder names.
 
-### T07 (review)
+### T07 (done)
 `services/companies.py` has `search_web` (cached, counted against the campaign's `search` budget, structured `needs_key` / `quota_exhausted` / `budget_reached` replies via `CompanyError.as_response()`), `add_companies` (cleans names, aliases and domains, de-duplicates by domain then name, stores excluded/competitor matches as `excluded`, checks domains in 4 threads with a DNS A/AAAA/MX look-up then a HEAD/GET of the homepage, never blocks insertion), `list_companies`, `set_company_status`, `approve_all`, `import_companies_csv` (the NXT format) and `research_queries`. `services/budget.py` is new: per-campaign `limit` / `used` / `charge` / `check` (usage lives in the `settings` table; T08, T09 reuse it). Warnings that need a human (ambiguous alias, domain redirects to another site, invalid domain) are stored as `Warning: ...` lines in the company's `notes`, and `approve_all` skips any company with one. 928 tests pass (1 POSIX-only skip), ruff clean, coverage companies 98%, budget 100%. Adding 5 real companies and reading `domain_ok`: **manual check pending** (owner).
 Files: src/leadgen/services/{companies,budget}.py, tests/test_companies.py, docs/{DECISIONS,STATUS}.md.
-Reviewer fixes: IDN domains are compared in punycode (no false redirect warning; `straße.de` -> `xn--strae-oqa.de` via `idna` with UTS 46, now declared in pyproject), competitor/excluded-company entries that look like domains also match by name, domain checks stop waiting at the 45 s limit (in-flight ones are left unchecked), parallel-threads test uses a barrier.
+Reviewer fixes: IDN domains are compared in punycode (no false redirect warning; `straße.de` -> `xn--strae-oqa.de` via `idna` with UTS 46, now declared in pyproject), competitor/excluded-company entries that look like domains also match by name, domain checks stop waiting at the 45 s limit (in-flight ones are left unchecked), parallel-threads test uses a barrier; 936 tests pass (1 POSIX-only skip).
 Extra beyond card: `check_domains(campaign_id, company_ids=None)` (finishes or repeats domain checks when the 45 s time limit cut a big batch short), `CompanyError`, `normalize_domain`, optional `country` per company, `rejected` list for bad input items, `provider`/`campaign_id`/`confirm` arguments on `search_web`.
 
 ## Follow-ups
@@ -107,3 +107,4 @@ Extra beyond card: `check_domains(campaign_id, company_ids=None)` (finishes or r
 - T07: `import_companies_csv(path)` reads any local path; for remote ChatGPT mode (T13/T17) restrict it to files under the workspace.
 - T07: duplicates are reported but not merged (a duplicate's new aliases/notes are not added to the existing company). Add a merge step if owners ask for it.
 - T07: no company delete/remove tool yet (the card has none); use status `excluded`.
+- T07 (review): a domain whose own check takes longer than the 45 s limit (e.g. a long chain of slow redirects) is never finished: it stays `domain_ok = NULL` and `check_domains` retries it first every time. If that shows up in real use, record such a check as failed (timed out) instead of unchecked. Abandoned check threads also delay process exit until they end (fine for the long-running MCP server).
