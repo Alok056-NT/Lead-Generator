@@ -29,6 +29,7 @@ For every approved company × designation group, search Google for public Linked
 ### `services/people.py`
 - `build_queries(campaign, company) -> list[(group_label, query)]`: PLAN 11 query format; quote each search term; use the company's primary name; append the country name; skip groups whose `search_terms` is empty.
 - `estimate_people_search(campaign_id, company_ids=None) -> {"companies", "searches", "cached", "credits_needed", "budget_left"}`.
+- Structure the per-result logic as a separate function from the start (`process_results(campaign, company, group_label, query, results, origin)`), so T21 can reuse it for AI-submitted results without changing behaviour. Store `evidence_origin="api"` on every person found here.
 - `find_people(campaign_id, company_ids=None, confirm=False, cursor=None, max_searches_per_call=30) -> dict`:
   - If `credits_needed > settings.confirm_threshold_credits` and not `confirm` → return the estimate with `needs_confirmation: true`.
   - Process companies in a stable order; at most `max_searches_per_call` searches per call (keeps each call < 60 s); return `next_cursor` until done.

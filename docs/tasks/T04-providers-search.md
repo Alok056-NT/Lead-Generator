@@ -45,7 +45,8 @@ class SearchProvider(Provider):
 ### `providers/registry.py`
 - `ALL_PROVIDERS`: info for serper, brave, ddg, hunter, reoon, zerobounce, lemlist, smtp (later tasks implement the last five; register their `ProviderInfo` now so `list_providers` is complete).
 - `get_search_provider() -> SearchProvider`: first configured of [serper, brave], else ddg if allowed, else raise `ProviderError("not_configured")`.
-- `needs_key_response(provider_key, why) -> dict` (shape in PLAN section 7): `{"ok": false, "needs_key": {provider, name, why, free_tier, signup_url, how_to_add: ["Dashboard → Keys (recommended)", "Tell the AI to call save_api_key"]}}`.
+- `needs_key_response(provider_key, why) -> dict` (shape in PLAN section 7): `{"ok": false, "needs_key": {provider, name, why, free_tier, signup_url, how_to_add: ["Dashboard → Keys (recommended)", "Tell the AI to call save_api_key"]}, "fallback_available": "ai_web_search", "fallback_hint": "No key or credits? The AI can run these searches with its own web search instead (slower, free)."}`.
+- `quota_response(provider_key)` and `budget_response(kind, used, limit)`: same `fallback_available`/`fallback_hint` fields (PLAN 7a). Search and email providers raising `ProviderError("quota")` must surface this shape at the service layer.
 - `save_api_key(provider_key, key) -> dict`: store via `core.secrets.set`, run `test()`; if test fails, delete the key again and return the error; return masked key on success.
 
 ### `services/status.py` (partial)

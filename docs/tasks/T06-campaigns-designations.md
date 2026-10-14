@@ -25,7 +25,7 @@ Port and generalise `classify_designation` from `reference/harvey/export.py`:
 
 ### `services/campaign.py`
 - `create_campaign(name, offer_id, countries: list[str], sectors: list[str], company_size: str, channels: list[str], designations: list[dict] | list[str], seniority_min="manager", exclusions=None, locale=None, budget=None, options=None) -> dict`:
-  - options default `{"invite_note": false, "allow_risky_emails": false}`;
+  - options default `{"invite_note": false, "allow_risky_emails": false, "allow_guess_emails": false, "search_mode": "auto"}`; `search_mode` in `api`/`ai`/`auto` (PLAN 7a);
   - countries validated via `core.countries.get` (store iso2);
   - channels subset of `email`, `linkedin`;
   - `designations`: either template keys (strings) or full group dicts; 1–8 groups;

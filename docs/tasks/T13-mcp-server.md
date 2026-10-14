@@ -17,6 +17,7 @@ Expose every service as MCP tools so Claude Desktop, Claude Code and ChatGPT can
   - typed parameters with descriptions; JSON-serialisable results;
   - annotations: read-only tools marked read-only; spending/sending tools marked as such (`find_people`, `find_emails`, `push_to_lemlist`, `send_emails`, `search_web`, `save_api_key`).
 - Every tool body: call exactly one service function; catch `ProviderError`/validation errors and return the error shape from PLAN section 10; never return secrets; truncate long strings (> 2,000 chars) except in `ingest_offer_source` chunks and `get_workflow_guide`.
+- Include tools 37–40 (AI search mode, from T21) and fold `guides/ai_search.md` (written in T21) into the workflow guide.
 - Prompt `lead_generation` = `guides/workflow.md`. Tool `get_workflow_guide` returns the same text plus `messaging_style.md` and `offer_profile.md` on request (`section` param).
 - `src/leadgen/guides/workflow.md`: the step-by-step script in PLAN section 8, written as instructions to the AI, including:
   - when to ask the user vs proceed; always show estimates before spending; confirmation wording;

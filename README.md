@@ -8,6 +8,7 @@ Find, check and contact the right people for any product or service, by chatting
 - **Learns your offer** from a web page, a document, or text you paste.
 - **Targets any country and sector** you choose, and the job roles you care about.
 - **Finds real people** at your target companies with their LinkedIn profile, and their work email if you want email outreach. It uses free-tier services where possible and asks before spending any credits.
+- **Free mode when credits run out**: the AI can run the searches with its own web search instead of a paid API, with extra checks and a quick spot check by you.
 - **Writes one personal message per person** for LinkedIn, email or both, using only facts you've confirmed about your offer.
 - **Checks everything rigorously**: every lead is confirmed against evidence (right person, right company, right country, right role), every message is checked automatically and then re-read by the AI before anything goes out.
 - **Delivers how you like**: a CSV for lemlist or Instantly, a direct push into a lemlist campaign, or sending emails from your own mailbox with reply/bounce/unsubscribe analytics.

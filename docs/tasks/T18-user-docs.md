@@ -9,6 +9,7 @@ Clear, short guides so a non-technical person can install, connect, run a campai
 - `README.md` (replace the planner's placeholder sections, keep the structure): what it does (5 bullets), install (one command per OS), connect Claude / ChatGPT (links), first campaign in 6 steps ("Say to Claude: 'Find me leads for <url> in <country>'"), costs table (free tiers), safety notes, links to guides, licence + credits.
 - `docs/user/GETTING_STARTED.md`: a full worked example with a fictional company (no real people), showing what the AI asks and what you answer.
 - `docs/user/PROVIDERS.md`: each provider: what it's for, free allowance, how to sign up, where to paste the key, what happens when credits run out.
+- `docs/user/FREE_MODE.md`: running without paid credits using the AI's own web search (what it is, when to use it, how to turn on web search in Claude/ChatGPT, the spot check, limits).
 - `docs/user/QUALITY_CHECKS.md`: every L/M code in plain English and what to do about it.
 - `docs/user/DELIVERY.md`: CSV import into lemlist/Instantly (with the lemlist sequence recipe: blank invite → Accepted invite condition → LinkedIn message `{{linkedinMessage}}`, plan requirement), lemlist API push, sending email (readiness checklist, warm-up, caps, unsubscribe handling).
 - `docs/user/COMPLIANCE.md`: generated from `core/compliance.py` (add `leadgen compliance --markdown` CLI to render it), with the "not legal advice" note and LinkedIn terms reminder.

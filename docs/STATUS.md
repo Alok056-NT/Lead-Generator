@@ -24,6 +24,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T18 | User documentation | todo | |
 | T19 | End-to-end test and v1.0 release | todo | |
 | T20 | Claude Desktop extension (.mcpb), optional | todo | |
+| T21 | AI search fallback (free mode), **build right after T11** | todo | |
 
 ## Task summaries
 (Builder adds a short summary per task here.)

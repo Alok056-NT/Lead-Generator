@@ -7,7 +7,7 @@ A rigorous, explainable check of every lead and every message, plus a structured
 
 ## Deliverables
 ### `services/qa_leads.py`
-- `check_person(person, company, campaign, email_row=None, context) -> list[Issue]` implementing L01–L20 exactly as PLAN section 14. `Issue(code, severity, detail)`.
+- `check_person(person, company, campaign, email_row=None, context) -> list[Issue]` implementing L01–L20 and L23 exactly as PLAN section 14. `Issue(code, severity, detail)`. L21 and L22 (AI-search evidence) are added in T21; leave a clearly named extension point (`EXTRA_LEAD_CHECKS` list) so T21 can register them.
 - Reuse `confirm.py` logic instead of duplicating it (call `parse_result` on stored evidence and translate reasons to codes). L12/L13/L15/L20 are new heuristics; define their patterns as module constants with comments.
 - L02 duplicates across the whole campaign (URL canonical, email, name+company case-insensitive).
 

@@ -144,9 +144,10 @@ All tables have `id INTEGER PRIMARY KEY`, `created_at`, `updated_at` (ISO UTC te
 | Table | Key columns | Notes |
 |---|---|---|
 | `offers` | name, source_type (url/text/file), source_ref, raw_text, profile_json | `profile_json` validated by `OfferProfile` (below) |
-| `campaigns` | name, offer_id, countries_json, sectors_json, company_size, channels_json, designations_json, seniority_min, exclusions_json, budget_json, options_json, locale, status | status: draft/active/archived; options: `{invite_note: false, allow_risky_emails: false}` |
+| `campaigns` | name, offer_id, countries_json, sectors_json, company_size, channels_json, designations_json, seniority_min, exclusions_json, budget_json, options_json, locale, status | status: draft/active/archived; options: `{invite_note: false, allow_risky_emails: false, allow_guess_emails: false, search_mode: "auto"}` |
 | `companies` | campaign_id, name, aliases_json, domain, country, sector, size_note, source, domain_ok, status, notes | unique(campaign_id, domain); status: candidate/approved/excluded |
-| `people` | campaign_id, company_id, first_name, last_name, greeting_name, raw_name, title, designation, seniority, country, linkedin_url, evidence_title, evidence_snippet, source_query, confirmed, reasons_json, status | unique(campaign_id, linkedin_url); status: confirmed/review/rejected/removed |
+| `people` | campaign_id, company_id, first_name, last_name, greeting_name, raw_name, title, designation, seniority, country, linkedin_url, evidence_title, evidence_snippet, source_query, evidence_origin, spot_check, confirmed, reasons_json, status | unique(campaign_id, linkedin_url); status: confirmed/review/rejected/removed; evidence_origin: `api` (Serper/Brave) / `ai_web_search` (host AI's own search) / `user` (pasted); spot_check: null/`pending`/`ok`/`wrong` |
+| `search_tasks` | campaign_id, kind (people/email/company), company_id, group_label, query, status, submitted_at, result_count | AI-search fallback queue (section 7a); status: open/submitted/skipped |
 | `emails` | person_id, email, method, pattern, status, verifier, checked_at | status: verified/risky/guess/invalid/unknown |
 | `messages` | person_id, channel, subject, body, status, qa_json, ai_review, ai_review_notes | channel: email/linkedin_invite/linkedin_message; status: draft/qa_fail/qa_pass/approved/sent |
 | `qa_issues` | entity_type, entity_id, code, severity, detail | severity: block/warn; recomputed by each QA run |
@@ -207,6 +208,28 @@ Rules:
 - Search results are cached by `(provider, normalized query, country)` for 30 days; cached hits cost nothing.
 - Budgets: per campaign `budget_json = {"search": 300, "hunter": 25, "verify": 200}` defaults; services refuse to exceed without `confirm=true`.
 - When a key is missing, tools return a structured `needs_key` response: provider, why, free allowance, signup URL, and the two ways to add it (dashboard Keys page, recommended, or `save_api_key`).
+- When a key is missing, credits are exhausted (`quota` error) or the campaign budget is reached, the response also carries `fallback_available: "ai_web_search"` with one line explaining it (section 7a), so the AI can offer the user the free path.
+
+## 7a. Free fallback: the AI's own web search ("AI search mode")
+
+When the user has no search/email credits left, or doesn't want to pay, the **host AI uses its own web search tool** (Claude's web search, ChatGPT's search) to run the queries, and hands the raw results to the Lead Generator, which applies exactly the same confirmation and QA rules. No API key is needed.
+
+How it works:
+1. Campaign setting `search_mode`: `api` (default when a search key exists), `ai` (always use the AI's search), or `auto` (API until credits/budget run out, then ask the user to switch to `ai`).
+2. The tool creates a queue of **search tasks** (`search_tasks` table): the exact query strings the API path would have run (people: `site:linkedin.com/in ("Head of Training" OR …) "Company" Country`; email: `"@domain.com"`, `site:domain.com contact email`; companies: research queries).
+3. The AI fetches tasks with `get_search_tasks`, runs each with **its own** web search tool, and submits the results with `submit_search_results(task_id, results=[{title, url, snippet}], tool_name)`, copying titles, URLs and snippets **verbatim** from the search tool output. It must never build, guess or "fix" a URL, and must submit an empty list when the search found nothing.
+4. The tool treats submitted results exactly like API results (same `parse_result` rules, PLAN section 11), stores them with `evidence_origin = "ai_web_search"`, and adds anti-fabrication checks:
+   - URL must be a well-formed personal profile URL (L01) and its slug must be consistent with the person's name (L22: at least one name token, or its transliteration, appears in the slug; slugs that are random IDs are allowed but flagged);
+   - the company alias must appear in the submitted title or snippet (same as L04);
+   - snippet must be ≥ 40 characters and not a paraphrase marker ("appears to be", "likely", "probably", "I found");
+   - the same URL submitted for two different names → both go to review;
+   - a submission whose results all fail the URL check is rejected with a message telling the AI to copy results verbatim.
+5. **Spot check**: for AI-search campaigns, before export the tool picks a random sample (5 people or 5%, whichever is larger, max 15) with `spot_check = pending`; the AI asks the user to click each LinkedIn link and say if it's the right person and job. Any `wrong` answer moves that person to review and, if ≥ 2 are wrong, flags the whole AI-search batch for a second look (warn on every AI-search lead until the user re-confirms).
+6. **Emails in AI mode**: the AI searches for published addresses at the company's domain; the tool also scrapes the company's own contact/about pages itself (free, no key) and infers the pattern from any real addresses found. Without a verifier key, emails stay `guess`: exportable with a clear `guess` label, **never** sent by the built-in sender unless the user explicitly enables `allow_guess_emails` for that campaign after a warning.
+7. Speed and limits: each AI search is one tool call in the conversation, so AI mode suits ~20–40 companies per session (the guide tells the AI to work in batches of 10 tasks and report progress). For bigger runs the guide recommends a search key.
+8. Capability check: before starting AI mode, the AI must confirm it has a web search tool in this conversation. If not, it tells the user how to enable it (Claude: turn on web search in the chat's tools menu; ChatGPT: make sure search is available alongside the connector; verify exact steps in T21) or to add a key instead.
+
+Exports and the dashboard show `evidence_origin` per lead so users always know which leads came from AI search.
 
 ---
 
@@ -218,8 +241,8 @@ Shipped as `guides/workflow.md`, exposed as MCP prompt `lead_generation` and too
 1. **Offer**: ask for URL/text/file → `ingest_offer_source` → read returned text → draft an `OfferProfile` → show the user the *confirmed claims* and *forbidden claims* lists and ask them to confirm/correct → `save_offer_profile`. Never treat marketing copy marked "to confirm" as confirmed.
 2. **Targeting**: ask country(ies), sectors, company size, channels; propose designation groups from templates → user confirms → `create_campaign`.
 3. **Companies**: AI proposes companies from its own knowledge, *plus* uses `search_web` for "largest X companies in Y" style research → `add_companies` (verifies domains) → show list → user removes/adds → `approve_companies`.
-4. **Keys**: when a step needs a provider, call `list_providers`; ask the user to add the key (dashboard link preferred).
-5. **People**: `estimate_people_search` → tell the user the credit cost → `find_people(confirm=true)` in chunks → report confirmed vs review counts → optionally walk the review list.
+4. **Keys**: when a step needs a provider, call `list_providers`; ask the user to add the key (dashboard link preferred). If they have no credits left or don't want to pay, offer **AI search mode** (section 7a) and set it with `update_campaign(search_mode=...)`.
+5. **People**: `estimate_people_search` → tell the user the credit cost → `find_people(confirm=true)` in chunks → report confirmed vs review counts → optionally walk the review list. In AI search mode instead: `get_search_tasks` → run each query with the AI's own web search → `submit_search_results` verbatim → repeat in batches of 10 → spot check before export.
 6. **Emails** (if email channel): `estimate_email_search` → `find_emails` in chunks → report verified/risky/guess.
 7. **Drafting**: loop `get_drafting_batch` → write messages following `guides/messaging_style.md` and the offer's confirmed claims → `save_drafts` (instant deterministic QA; fix and resave failures).
 8. **QA**: `run_qa` → fix blockers → `get_review_batch` → the AI *reads every message with its lead details* and records `pass/fix/reject` via `record_review` → repeat until every message is reviewed.
@@ -281,6 +304,9 @@ All tools return JSON objects. Errors return `{"ok": false, "error": {"code", "m
 | 34 | `get_analytics(campaign_id, group_by?)` | Sent, bounced, replied, unsubscribed, rates by designation/sector/company/day |
 | 35 | `add_suppression(values[], kind, reason)` | Do-not-contact |
 | 36 | `open_dashboard()` | Starts dashboard if needed; returns local URL |
+| 37 | `get_search_tasks(campaign_id, kind, batch_size=10, cursor?)` | AI search mode: queries for the AI to run with its own web search |
+| 38 | `submit_search_results(task_id, results[], tool_name)` | AI search mode: verbatim results in; same confirmation rules + anti-fabrication checks |
+| 39 | `get_spot_check(campaign_id)` / 40 `record_spot_check(results[])` | Random sample of AI-search leads for the user to click-check |
 
 ---
 
@@ -355,6 +381,9 @@ Deterministic checks run on save and on `run_qa`. `block` issues prevent export/
 | L18 | Email domain ≠ company domain (or known alias domain) | warn |
 | L19 | Role-based email address | block |
 | L20 | Profile language/location hint mismatch (e.g. Spanish profile, overseas city) | warn |
+| L21 | Evidence came from AI web search (lower confidence) | warn; **block** if the campaign's spot check is incomplete or failed |
+| L22 | LinkedIn URL slug inconsistent with the person's name (possible fabricated or mismatched URL) | block for AI-search leads, warn for API leads |
+| L23 | Email is a `guess` (unverified) | warn for export; block for sending unless `allow_guess_emails` |
 
 **Message checks (M)**
 | Code | Check | Severity |
@@ -424,11 +453,11 @@ FastAPI on `127.0.0.1:8765`, static HTML/CSS/JS (no build step). Pages: Home (st
 | A. Foundation | T01 scaffold+config, T02 database, T03 countries+compliance | Installable package, workspace, schema |
 | B. Data | T04 providers+search, T05 offer intake, T06 campaigns+designations, T07 companies | Can learn an offer and build a company list |
 | C. People & email | T08 people finder+confirmation, T09 email finder+verify | Confirmed leads with LinkedIn + email |
-| D. Messages & QA | T10 drafting, T11 QA engine+AI review | Every lead/message checked |
+| D. Messages & QA | T10 drafting, T11 QA engine+AI review, T21 AI search fallback | Every lead/message checked; free path when credits run out |
 | E. Delivery | T12 export+lemlist, T14 sending, T15 mailbox+analytics | All three delivery options |
 | F. Interfaces | T13 MCP server, T16 dashboard, T17 installers+connectors | Plug-and-play for Claude + ChatGPT |
 | G. Ship | T18 user docs, T19 e2e + release, T20 .mcpb (optional) | v1.0 |
 
-Order: T01 → T02 → T03 → T04 → T05 → T06 → T07 → T08 → T09 → T10 → T11 → T12 → T13 → T14 → T15 → T16 → T17 → T18 → T19 (→ T20). T13 can start after T11 with stubs for later tools.
+Order: T01 → T02 → T03 → T04 → T05 → T06 → T07 → T08 → T09 → T10 → T11 → **T21** → T12 → T13 → T14 → T15 → T16 → T17 → T18 → T19 (→ T20). T13 can start after T21 with stubs for later tools. (T21 is numbered last because it was added after the plan was written; it is built right after T11.)
 
 Review gate: after each task the builder stops; the reviewer (Opus) checks the diff against the card's acceptance criteria before the next task starts. Push to GitHub only after review.

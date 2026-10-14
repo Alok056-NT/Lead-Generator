@@ -14,6 +14,7 @@ Every external fact the code depends on must be recorded here with a source and 
 | D7 | Email sending is opt-in, capped, with compliance acknowledgement per country | Protects the user's domain and reputation and keeps sending lawful |
 | D8 | Open/click tracking off in v1 | Needs a public server; unreliable due to mail privacy features |
 | D9 | Reuse Harvey (MIT) code by porting, with attribution | Saves time; the confirmation rules were tuned on a real 75-company run |
+| D10 | Free fallback: host AI's own web search runs the queries, tool confirms (AI search mode) with verbatim-copy rules, slug–name checks and a user spot check | Owner wants a no-cost path when API credits run out; AI-copied results can be paraphrased or fabricated, so extra guards are needed |
 
 ## External facts (secondary sources, 2026-10-14, re-verify in the named task)
 | Fact | Source(s) | Verify in |

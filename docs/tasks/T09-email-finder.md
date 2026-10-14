@@ -24,6 +24,7 @@ Implement `Provider` (T04) + methods: Hunter `domain_pattern(domain) -> (pattern
 - `estimate_email_search(campaign_id) -> {"people", "domains", "hunter_credits", "verify_credits", "budget_left"}`.
 - `find_emails(campaign_id, person_ids=None, confirm=False, cursor=None, max_people_per_call=25) -> dict`: chunked like T08; stores into `emails` table; returns counts by status.
 - Suppression check before storing.
+- Keep pattern derivation pluggable (`derive_pattern` takes an optional list of known example addresses) so T21 can feed in addresses the AI found and addresses scraped from the company site when there are no Hunter credits.
 
 ## Tests
 - Pattern building table (accents, hyphens, apostrophes, multi-part surnames, single-letter first names).

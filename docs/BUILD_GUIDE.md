@@ -1,6 +1,6 @@
 # How to build Lead Generator, task by task (for Alok)
 
-The build is split into 20 small tasks (`docs/tasks/T01…T20`). Sonnet does each task; Opus reviews it before the next one starts. Do them **in order**, one per session.
+The build is split into 21 small tasks (`docs/tasks/T01…T21`). Sonnet does each task; Opus reviews it before the next one starts. Do them **in order**, one per session. Exception: **T21 comes right after T11** (it was added later): T01 … T11, T21, T12 … T20.
 
 ## For each task
 
