@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Never commit user data or secrets (the repo is public)
+.env
+*.env
+secrets.env
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+exports/
+logs/
+cache/
+LeadGenerator/
+*.csv
+!tests/fixtures/**/*.csv
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
