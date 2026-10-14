@@ -458,10 +458,30 @@ def test_company_flags_are_skipped_when_the_sectors_name_that_firm(ready_db):
     assert flags[hr] == [] and flags[buyer] == []
 
 
-def test_agency_title_is_flagged_even_in_a_staffing_campaign(ready_db):
+def test_title_flags_are_skipped_when_the_sectors_name_that_firm(ready_db):
+    # a campaign selling to staffing firms: an agency title is the prospect, not a recruiter flag
     c = make_campaign(sectors=("staffing",))
-    p = add_person(c["id"], add_company(c["id"]), "Aria", "Tan", title="Executive Search Partner")
-    assert _flag_map(c["id"])[p] == ["recruiter"]
+    co = add_company(c["id"])
+    p = add_person(c["id"], co, "Aria", "Tan", title="Executive Search Partner")
+    q = add_person(c["id"], co, "Sam", "Ong", title="Recruitment Consultant")
+    flags = _flag_map(c["id"])
+    assert flags[p] == [] and flags[q] == []
+    # the same titles in an unrelated campaign are still flagged
+    o = make_campaign()
+    r = add_person(o["id"], add_company(o["id"]), "Aria", "Tan", title="Executive Search Partner")
+    assert _flag_map(o["id"])[r] == ["recruiter"]
+
+
+def test_partner_title_is_not_flagged_in_a_reseller_campaign(ready_db):
+    c = make_campaign(sectors=("resellers",))
+    co = add_company(c["id"])
+    p = add_person(c["id"], co, "Marcus", "Lim", title="Head of Partnerships")
+    q = add_person(c["id"], co, "Zoe", "Lau", title="Channel Partner Manager")
+    flags = _flag_map(c["id"])
+    assert flags[p] == [] and flags[q] == []
+    o = make_campaign()
+    r = add_person(o["id"], add_company(o["id"]), "Marcus", "Lim", title="Head of Partnerships")
+    assert _flag_map(o["id"])[r] == ["partner"]
 
 
 def test_redraft_payload_lists_previous_issues(world):

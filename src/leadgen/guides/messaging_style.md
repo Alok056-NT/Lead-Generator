@@ -72,7 +72,8 @@ The batch repeats the limits in `channel_spec`. The tool rejects a draft outside
 A person can carry `flags`. Flags are **keyword hints** from the title and company text, so they
 can be wrong. What each one means:
 
-- `partner`: the title or company looks like a partnership, alliance, channel or reseller role.
+- `partner`: the title contains partnership(s), alliance(s), channel partner/manager, reseller or
+  affiliate, or the company looks like a reseller. So a "Head of Partnerships" is flagged.
 - `competitor`: the company is on the campaign's competitor list.
 - `recruiter`: the company looks like a recruitment or staffing agency, or the title is an
   agency role (headhunter, executive search).
@@ -87,8 +88,10 @@ What to do:
 - `job_seeker`: do not mention their job search. Keep the note short and neutral, and tell the
   user in your final summary that these leads may be poor fits.
 - No flag: write the normal message. In-house recruiters, HR heads and talent leaders, and sales
-  or partnership leaders at the companies the campaign targets, are ordinary prospects, so give
-  them the normal message even if their title contains a word like "recruitment" or "sales".
+  leaders, are ordinary prospects, so give them the normal message even if their title contains
+  a word like "recruitment" or "sales". Likewise, when the campaign itself sells to staffing or
+  recruitment firms, or to resellers, the tool sets no `recruiter` or `partner` flag, because
+  those people are the prospects: write the normal message.
 
 If the evidence clearly shows a person is at a recruitment agency, a partner firm or a
 competitor and no flag is set, treat them the same way and tell the user. If a flag looks wrong

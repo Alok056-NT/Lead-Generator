@@ -242,15 +242,17 @@ _PARTNER_RE = re.compile(
     r"strategic partner|business partner programme|business partner program)\b",
     re.IGNORECASE,
 )
-_PARTNER_COMPANY_RE = re.compile(r"\b(?:reseller|channel partner)\b", re.IGNORECASE)
+_PARTNER_COMPANY_RE = re.compile(r"\b(?:resellers?|channel partners?)\b", re.IGNORECASE)
 
 
 def _flags(row: Mapping[str, Any], camp: Mapping[str, Any]) -> list[str]:
     """Keyword-hint flags: partner, competitor, recruiter, job_seeker (see the style guide).
 
     `recruiter` needs an agency signal (company name, sector or notes, or an agency-only title
-    word); `partner` comes from the title or a reseller company. A company-based flag is not
-    set when the campaign's own `sectors` name that kind of firm (it is the target).
+    word); `partner` comes from a partnership/alliance/channel/reseller title or a reseller
+    company. When the campaign's own `sectors` name that kind of firm (staffing or recruitment
+    firms, resellers) those people are the target, so that flag is not set at all, from the
+    title or from the company.
     """
     flags: list[str] = []
     title = str(row.get("title") or "")
@@ -258,12 +260,12 @@ def _flags(row: Mapping[str, Any], camp: Mapping[str, Any]) -> list[str]:
         str(row.get(k) or "") for k in ("c_name", "c_sector", "c_notes")
     )
     sectors = " ".join(str(s) for s in camp.get("sectors") or [])
-    if _AGENCY_TITLE_RE.search(title) or (
-        _RECRUITER_COMPANY_RE.search(company_text) and not _RECRUITER_COMPANY_RE.search(sectors)
+    if not _RECRUITER_COMPANY_RE.search(sectors) and (
+        _AGENCY_TITLE_RE.search(title) or _RECRUITER_COMPANY_RE.search(company_text)
     ):
         flags.append("recruiter")
-    if _PARTNER_RE.search(title) or (
-        _PARTNER_COMPANY_RE.search(company_text) and not _PARTNER_COMPANY_RE.search(sectors)
+    if not _PARTNER_COMPANY_RE.search(sectors) and (
+        _PARTNER_RE.search(title) or _PARTNER_COMPANY_RE.search(company_text)
     ):
         flags.append("partner")
     competitors = (camp.get("exclusions") or {}).get("competitors", [])
