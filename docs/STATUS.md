@@ -6,7 +6,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 |---|---|---|---|
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
-| T03 | Countries and compliance tables | todo | |
+| T03 | Countries and compliance tables | review | Builder done 2026-10-14 |
 | T04 | Provider framework and search providers | todo | |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
 | T06 | Campaigns and designations | todo | |
@@ -39,6 +39,11 @@ SQLite layer: `schema.sql` holds all 15 PLAN section 6 tables (cascades, unique 
 Files: src/leadgen/{schema.sql,db.py,cli.py}, tests/{test_db.py,test_cli.py}, docs/{DECISIONS.md,STATUS.md}.
 Extra beyond card: `current_version()`; `session(path)`/`init_db(path)` accept an explicit path (used by tests); helpers take `conn` as first argument.
 
+### T03 (review)
+`core/countries.py` holds the 40-country table (dataclass `Country`, `COUNTRIES`, `get`, `all_countries`, `matches_location`) built from the worker's `countries_data.py`; matching is accent- and case-insensitive, whole-word, longest-name-first, and follows the card's three rules (explicit `Location:` value, then LinkedIn subdomain, then names/cities). `core/compliance.py` has one researched `EmailRule` per country (EU/EEA share a base with national overrides; DE, AT, NL, ES, PL, CH and 9 non-EU countries default to `block_without_consent`), plus `rule_for` and `send_gate`. Sources, read/secondary status and dates are in DECISIONS.md "Compliance sources". Added `tzdata; sys_platform == "win32"` to pyproject. 154 tests pass (1 POSIX-only skip), ruff clean.
+Files: pyproject.toml, src/leadgen/core/{countries,countries_data,compliance}.py, tests/{test_countries,test_compliance}.py, docs/{DECISIONS,STATUS}.md.
+Corrections to the worker draft: removed ambiguous aliases (RSA, ROC/Republic of China, Holland, Nippon) and the city Salvador; added AU alias "New South Wales" and US aliases "New Mexico", "New England" so longer place names are not mistaken for Wales, Mexico, England.
+
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
 - T01: `guides/*.md` and `schema.sql` are listed as package data but do not exist yet (T02/T18 create them).
@@ -51,3 +56,7 @@ Extra beyond card: `current_version()`; `session(path)`/`init_db(path)` accept a
 - T02: no `delete` helper yet (cascades are done with plain SQL); add one in the first service that needs it. `qa_issues` and `search_cache` have no foreign keys, so services must clear a deleted entity's `qa_issues` rows.
 - T02: `upsert` conflict targets for partial unique indexes are listed in `db._PARTIAL_CONFLICT`; add an entry if a later migration adds another partial unique index.
 - T02: the migration runner is not safe when two processes start at the same time (MCP server and dashboard both run `init_db`). Once a migration exists, both can read the same applied version and the second fails (e.g. "duplicate column"). Whoever adds the first migration should use `BEGIN IMMEDIATE` and re-read `current_version` inside the transaction. No code change is needed now because `MIGRATIONS` is empty.
+- T03: LinkedIn subdomains are unverified (see DECISIONS); check against real Serper results in T08's pilot. T04 must confirm Serper accepts `gl=uk` for GB (Google accepts `uk` and `gb`).
+- T03: most non-core compliance rows rest on DLA Piper summaries (type S in DECISIONS); several official sites blocked automated fetches (EUR-Lex, legislation.gov.uk, ACMA, CRTC, Swiss/Austrian portals). An owner or lawyer spot-check of the `block_without_consent` and `warn` rows is advisable before sending, and rows older than 6 months must be re-checked.
+- T03: South Korea's subject-line marking rule and Hong Kong's UEMO section detail were not verified from primary text; Singapore's `<ADV>` label legally applies to bulk sending only, but the table applies it to all SG email (T14 should add it to every SG subject).
+- T14: `send_gate` takes ISO codes or names and returns `EmailRule`s; `block_without_consent` means a recorded per-recipient basis is needed (guessed or scraped addresses do not qualify under CA, AU, NZ, JP etc.); `required_elements` lists what each message template must carry.

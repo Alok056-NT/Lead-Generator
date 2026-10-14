@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1,<2",
     "dnspython>=2.6,<3",
     "beautifulsoup4>=4.12,<5",
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
