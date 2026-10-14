@@ -9,7 +9,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
 | T04 | Provider framework and search providers | done | Reviewed 2026-10-14 (fix round 2). manual check pending: `leadgen keys set serper` + `leadgen keys test serper` with the owner's real key (1 credit); note the status/body a wrong key returns |
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
-| T06 | Campaigns and designations | todo | |
+| T06 | Campaigns and designations | review | |
 | T07 | Companies: add, verify, approve | todo | |
 | T08 | People finder and confirmation engine | todo | |
 | T09 | Email finder and verification | todo | |
@@ -55,6 +55,11 @@ Extra beyond card: `secrets.stored()`, `registry.check_provider`/`error_response
 Files: pyproject.toml, src/leadgen/services/{offer,offer_web,offer_files}.py, src/leadgen/guides/offer_profile.md, tests/{test_offer,test_offer_web,test_offer_files}.py, docs/{DECISIONS,STATUS}.md.
 Extra beyond card: `guide_text()`, `find_unconfirmed()`, hard URL checks (no localhost/private IPs, also on redirects), Crawl-delay support, `[HIGHLIGHT: ...]` marking in DOCX text. `ingest_*` return a dict, not a bare id (see DECISIONS).
 
+### T06 (review)
+`services/designations.py` has `DesignationGroup`, the 11 `TEMPLATES` (data in `designation_templates.py`; ld/hr/safety_ops/owners keep Harvey's keyword lists), `list_templates`, `resolve_groups`, `matches` and `classify` (Harvey's whole-word rules: false friends removed first, `vice president` -> `vp`, role part before ` at `/`@` only, `L&D` spellings). `services/seniority.py` has `seniority`, `meets`, `is_top_leader` and `LEVELS`. `services/campaign.py` has `create_campaign`, `update_campaign`, `get_campaign` (with counts of companies, people, emails, messages by status), `list_campaigns`, `archive_campaign` and `CampaignError` (stable `code`, `as_response()`). 755 tests pass (1 POSIX-only skip), ruff clean, coverage designations 99%, seniority 100%, campaign 98%.
+Files: src/leadgen/services/{designations,designation_templates,seniority,campaign}.py, tests/{test_designations,test_seniority,test_campaign}.py, tests/fixtures/titles.py (121 synthetic titles), docs/{DECISIONS,STATUS}.md.
+Corrections to the worker drafts: finance, marketing, sales, procurement, facilities and customer_service keyword lists rewritten to drop redundant entries and ambiguous words (`seo*`, `cro`, bare `controller`); fixture "Accounts Payable Manager" now `finance`; fixture header comments updated; "IT Network Operations Manager" -> `it` is correct (the false friend leaves "IT Manager"). Extra beyond the card (see DECISIONS T06): CMO/CIO/CISO/CPO as c_suite, trailing "X Head" as vp, false-rank guards (product owner, lead generation, assistant to ...), `search_mode`/option shortcuts on `update_campaign`, unique export-folder names.
+
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
 - T01: `guides/*.md` and `schema.sql` are listed as package data but do not exist yet (T02/T18 create them).
@@ -62,7 +67,10 @@ Extra beyond card: `guide_text()`, `find_unconfirmed()`, hard URL checks (no loc
 - T01: CLI output on Windows: when stdout is piped it uses the ANSI code page (e.g. cp1252), so an unencodable character (e.g. in a workspace path) would raise UnicodeEncodeError. Consider `sys.stdout.reconfigure(errors="replace")` in T17.
 - T01: the hand-rolled secrets.env parser keeps inline `# comments` as part of an unquoted value.
 - T13: the MCP set-key tool should accept only known/provider keys, because `secrets.set` accepts any UPPER_CASE name.
-- T06: campaign slugs must be unique, because `exports_dir()` slugifies and two names can map to the same folder.
+- T06 (done in T06): campaign names are checked for a unique export-folder slug.
+- T06: "General Manager"/"Country Manager" have seniority `manager` (the card gives no rank); owner to decide if `director` is better for `seniority_min=director` campaigns. T08 must apply the PLAN 11.6 weak-fit rule and the 11.7 owner rule itself (`seniority.is_top_leader` is provided).
+- T06: after `update_campaign` changes countries, designations or seniority, people already found are not re-classified; T08 should offer a re-classify step.
+- T06: `create_campaign` does not require the offer to have a saved profile; T10 must check it before drafting.
 - T02: adapters (MCP server T13, dashboard T16) must call `db.init_db()` at startup; `connect()`/`session()` do not create the schema.
 - T02: no `delete` helper yet (cascades are done with plain SQL); add one in the first service that needs it. `qa_issues` and `search_cache` have no foreign keys, so services must clear a deleted entity's `qa_issues` rows.
 - T02: `upsert` conflict targets for partial unique indexes are listed in `db._PARTIAL_CONFLICT`; add an entry if a later migration adds another partial unique index.
