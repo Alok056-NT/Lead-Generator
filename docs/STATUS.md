@@ -12,7 +12,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
 | T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
 | T08 | People finder and confirmation engine | done | Reviewed 2026-10-15 (fix round 3). manual check pending: real 3-company search (owner, spends ~6 Serper credits; no key configured during review) and compare with the NXT pilot |
-| T09 | Email finder and verification | review | Reviewer fixes applied 2026-10-15 (Hunter once per domain; SMTP probe no longer says `invalid` for sender/policy refusals; no retry of timed-out paid checks; test domains). manual check pending: 3 real people with free Hunter/Reoon keys (owner), statuses should look honest |
+| T09 | Email finder and verification | changes | Re-review 2026-10-15 (fix round 1): earlier fixes verified; 2 fixes requested (first person of a call stored as an unchecked `guess` when its pattern step passes the 30 s verify deadline; `x.com` left in tests/test_email_providers.py). manual check pending: 3 real people with free Hunter/Reoon keys (owner), statuses should look honest |
 | T10 | Drafting workflow | todo | |
 | T11 | QA engine and AI review | todo | |
 | T12 | Export (CSV) and lemlist push | todo | |
