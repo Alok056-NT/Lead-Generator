@@ -120,3 +120,13 @@ def test_fake_provider_dict_callable_and_errors():
 
 def test_fake_satisfies_search_protocol():
     assert isinstance(FakeSearchProvider(), search.SearchProvider)
+
+
+def test_is_cached_matches_cached_search(ready_db):
+    fake = FakeSearchProvider({"q": [R1]})
+    assert search.is_cached("fake", "q") is False
+    cached_search(fake, "q", "sg", 10)
+    assert search.is_cached("fake", "  Q ", "SG", 10) is True
+    assert search.is_cached("fake", "q", "gb", 10) is False
+    assert search.is_cached("fake", "q", "sg", 10, ttl_days=0) is False
+    assert len(fake.calls) == 1  # asking does not search

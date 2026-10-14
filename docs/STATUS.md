@@ -11,7 +11,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
 | T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
-| T08 | People finder and confirmation engine | todo | |
+| T08 | People finder and confirmation engine | review | manual check pending: real 3-company search (reviewer/owner, spends ~6 Serper credits) and compare with the NXT pilot |
 | T09 | Email finder and verification | todo | |
 | T10 | Drafting workflow | todo | |
 | T11 | QA engine and AI review | todo | |
@@ -66,6 +66,12 @@ Files: src/leadgen/services/{companies,budget}.py, tests/test_companies.py, docs
 Reviewer fixes: IDN domains are compared in punycode (no false redirect warning; `straße.de` -> `xn--strae-oqa.de` via `idna` with UTS 46, now declared in pyproject), competitor/excluded-company entries that look like domains also match by name, domain checks stop waiting at the 45 s limit (in-flight ones are left unchecked), parallel-threads test uses a barrier; 936 tests pass (1 POSIX-only skip).
 Extra beyond card: `check_domains(campaign_id, company_ids=None)` (finishes or repeats domain checks when the 45 s time limit cut a big batch short), `CompanyError`, `normalize_domain`, optional `country` per company, `rejected` list for bad input items, `provider`/`campaign_id`/`confirm` arguments on `search_web`.
 
+### T08 (review)
+`services/confirm.py` is the pure confirmation engine: `parse_result(result, CompanyCtx, CampaignCtx) -> Candidate | None` applies PLAN 11 (profile URL, name and greeting-name rules, current employer in the Google snippet shapes, country, former role, designation incl. the weak-fit rule, seniority, owner/MD rule, exclusions, suppression, job-seeker hint) and records `Lnn:text` reasons; `Candidate.confirmed` is "no reasons". `services/people.py` has `build_queries`, `estimate_people_search`, `process_results` (reusable by T21, `origin` argument), chunked `find_people` (cursor, confirmation threshold, per-search budget via `services/budget.py`, `needs_key` / `quota_exhausted` replies), `list_people`, `set_person_status` (hand promotion needs a reason, stored as `MANUAL:`) and `recheck_people` (re-runs the rules on stored evidence; also the T06 re-classify step). `providers/search.is_cached` is new. 51 synthetic snippet cases run through the engine plus rule tests; coverage confirm 99%, people 99%. Real Serper search for 3 companies: **manual check pending** (reviewer/owner).
+Files: src/leadgen/services/{confirm,people,name_data}.py, src/leadgen/providers/search.py, tests/{test_confirm,test_people,test_search_cache}.py, tests/fixtures/snippets.py, docs/{DECISIONS,STATUS}.md.
+Corrections to the worker drafts: fixture 12-a now expects L06 and L13 (card: "L13/L06"; the weak-fit rule of PLAN 11.6 adds L13 when an IT/finance/sales/... "operations" title meets an operations group); fixture header documents how the campaign override keys map onto `CampaignCtx`; the other expectations (13-a L07+L14, 18-c L08+L10, 24-a company = excluded competitor) were checked against PLAN 11 and kept; L11/L12 are reasons only for an unusable name/headline, L20 is QA. `name_data.py` kept as drafted (overlap check in DECISIONS).
+Extra beyond card: `PeopleError`, `canonical_url`/`url_key`/`name_key`, `parse_name`, `L12` (garbled headline) and `L11` (no first+last name) as reasons, manual-promotion refusal for L03/L16 people.
+
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
 - T07: the card's "drop aliases under 3 characters" rule also drops 2-character CJK names such as 华为. The owner may want an exception for non-Latin scripts.
@@ -108,3 +114,9 @@ Extra beyond card: `check_domains(campaign_id, company_ids=None)` (finishes or r
 - T07: duplicates are reported but not merged (a duplicate's new aliases/notes are not added to the existing company). Add a merge step if owners ask for it.
 - T07: no company delete/remove tool yet (the card has none); use status `excluded`.
 - T07 (review): a domain whose own check takes longer than the 45 s limit (e.g. a long chain of slow redirects) is never finished: it stays `domain_ok = NULL` and `check_domains` retries it first every time. If that shows up in real use, record such a check as failed (timed out) instead of unchecked. Abandoned check threads also delay process exit until they end (fine for the long-running MCP server).
+- T08: the owners template has no `chief executive` keyword (open owner decision, not acted on): "Chief Executive Officer" titles are classified Other and fail L06 in an owners campaign (a plain "CEO" works).
+- T08: after `update_campaign` changes countries, designations or seniority, call `people.recheck_people(campaign_id)`; T13 should expose it (tool or option) and tell the AI to run it, since `update_campaign` itself does not.
+- T08: the LinkedIn country subdomains (T03) are still unverified; the reviewer's 3-company search should check `ca`/`sg`/`uk` hosts and whether Google returns links like `/in/<slug>/de` (PLAN 11.1 regex drops them as non-profiles, no review row is stored).
+- T08: L20 (profile language/location hint), L21 and L22 (AI-search slug check) are QA/T21 checks and are not produced here. T21 should call `people.process_results(..., origin="ai_web_search")` and add the anti-fabrication checks on top.
+- T08: name heuristics are guesses: "Lee Min Ho" (both ends surnames) reads as "Lee Min", "Tan Wei" as "Tan"; "Ex-<Company>" in a headline counts as a former role (review). The message QA (M01) and the AI review catch wrong greetings.
+- T08: `find_people` searches each campaign country for a company without its own `country`; for many-country campaigns set a company country in `add_companies` to cut searches.

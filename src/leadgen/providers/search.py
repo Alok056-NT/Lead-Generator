@@ -84,6 +84,14 @@ def _write_cache(
         )
 
 
+def is_cached(
+    provider_key: str, query: str, country_gl: str = "", num: int = 10, ttl_days: int = 30
+) -> bool:
+    """True when `cached_search` would answer from the cache (no HTTP call, no credit)."""
+    key = cache_key(provider_key, query, country_gl, num)
+    return _read_cache(provider_key, key, ttl_days) is not None
+
+
 def cached_search(
     provider: SearchProvider,
     query: str,
@@ -110,5 +118,6 @@ __all__ = [
     "SearchResult",
     "cache_key",
     "cached_search",
+    "is_cached",
     "normalize_query",
 ]
