@@ -364,7 +364,8 @@ def _snippet_layouts(name: str, snippet: str) -> tuple[str, str, str]:
     for candidate in dict.fromkeys((name, name.split(",")[0].strip())):
         if candidate and snippet.casefold().startswith(candidate.casefold() + "."):
             rest = snippet[len(candidate) + 1 :].strip()
-            lead, _, after = rest.partition(". ")
+            ends = _sentence_ends(rest)
+            lead, after = (rest[: ends[0] - 2], rest[ends[0] :]) if ends else (rest, "")
             break
     segment = snippet.split(" · ")[0].strip()
     return _clean(lead), after.strip(), segment
@@ -394,12 +395,33 @@ _AT_ALIAS = r"(?:(?<![A-Za-z])(?i:at)\s+|@\s*){A}"
 _PRESENT = r"{A}\s*[.·,]?\s*(?:[A-Za-z]{3,9}\.?\s+)?\d{4}\s*[·\-–]?\s*(?i:Present)(?![A-Za-z])"
 
 
+_ABBREVIATIONS = frozenset(
+    "sr snr jr asst dy dep mgr exec assoc dir gen st dept co corp ltd inc pte bhd intl "
+    "eng admin coord supt supv rep prof dr mr mrs ms".split()
+)
+_DOT_SPACE_RE = re.compile(r"([A-Za-z]*)\. ")
+
+
+def _sentence_ends(text: str) -> list[int]:
+    """Index just after each `. ` in `text` that ends a sentence. A dot after a common title or
+    company abbreviation (`Sr.`, `Asst.`, `Mgr.`, `Corp.`) or a single-letter initial does not."""
+    ends: list[int] = []
+    for m in _DOT_SPACE_RE.finditer(text):
+        word = m.group(1).lower()
+        if len(word) == 1 or word in _ABBREVIATIONS:
+            continue
+        ends.append(m.end())
+    return ends
+
+
 def _at_alias_is_current(alias: str, text: str) -> bool:
     """True when some `at <alias>` / `@ <alias>` match is not preceded, in its own segment or
     sentence, by a former-role word (PLAN 11.5: when unsure, review)."""
     for m in _compiled(alias, _AT_ALIAS).finditer(text):
-        start = max(text.rfind(" · ", 0, m.start()), text.rfind(". ", 0, m.start()))
-        if not _FORMER_BEFORE_RE.search(text[start + 1 : m.start()]):
+        before = text[: m.start()]
+        ends = _sentence_ends(before)
+        start = max(before.rfind(" · ") + 1, ends[-1] if ends else 0)
+        if not _FORMER_BEFORE_RE.search(before[start:]):
             return True
     return False
 

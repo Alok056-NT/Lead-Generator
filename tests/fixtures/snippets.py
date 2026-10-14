@@ -272,6 +272,16 @@ SNIPPET_CASES: list[dict] = [
         },
         "expect": {"confirmed": False, "reasons": ["L04"], "greeting_name": "Aria"},
     },
+    {
+        "case": "6-e",
+        "company": NORTHWIND,
+        "result": {
+            "title": "Aria Tan - Senior HR Manager | LinkedIn",
+            "link": "https://www.linkedin.com/in/aria-tan-4",
+            "snippet": "Singapore · Previously Sr. HR Manager at Northwind Health",
+        },
+        "expect": {"confirmed": False, "reasons": ["L04"], "greeting_name": "Aria"},
+    },
     # 7. Headline names another employer while the snippet mentions the company -> L09.
     {
         "case": "7-a",

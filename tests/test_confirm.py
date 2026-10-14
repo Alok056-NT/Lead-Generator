@@ -330,6 +330,35 @@ def test_at_company_after_a_former_word_is_not_current(snippet):
     assert codes(cand) == ["L04"]
 
 
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "Singapore · Previously Sr. HR Manager at Northwind Health",
+        "Singapore · Formerly Asst. Director, HR at Northwind Health",
+        "Singapore · Ex-Snr. Manager @ Northwind Health",
+        "Singapore · Previously HR Mgr. at Northwind Health",
+    ],
+)
+def test_abbreviation_dot_does_not_end_the_former_role_lookback(snippet):
+    cand = parse("Ben Adler - Senior HR Manager | LinkedIn", snippet)
+    assert codes(cand) == ["L04"]
+
+
+def test_abbreviation_in_layout_a_headline_does_not_split_it():
+    name, snippet = "Ben Adler", "Ben Adler. Sr. HR Manager. Northwind Health School. Singapore"
+    lead, after, _ = confirm._snippet_layouts(name, snippet)
+    assert lead == "Sr. HR Manager"
+    assert after.startswith("Northwind Health")
+
+
+def test_real_sentence_end_still_limits_the_former_word():
+    cand = parse(
+        "Ben Adler - HR Manager | LinkedIn",
+        "Singapore · Formerly HR lead at Acme Health. HR Manager at Northwind Health",
+    )
+    assert cand.confirmed, cand.reasons
+
+
 def test_former_word_in_another_segment_does_not_block_at_company():
     cand = parse(
         "Ben Adler - HR Manager | LinkedIn",
