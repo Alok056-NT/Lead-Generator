@@ -31,6 +31,8 @@ required footer when an email is sent.
 - **Never** state anything in `offer.forbidden_claims`, even in other words.
 - No client or brand names unless they are listed in `confirmed_claims`.
 - No numbers, percentages, years or "X clients" unless the same figure is in `proof_points`.
+  One exception: a call length that appears in the offer's `ctas` (for example "15-minute
+  call") may be used as written.
 - No guarantees or absolutes: "guaranteed", "100%", "risk-free", "best in class".
 - If the evidence is thin, write a shorter message. Never invent a detail to fill space.
 
@@ -51,8 +53,11 @@ The batch repeats the limits in `channel_spec`. The tool rejects a draft outside
 
 ## 4. Tone and style
 
-- Follow `offer.tone`. Use the spelling in `offer.language` and `locale` (for en-GB write
-  "organise" and "programme"; for en-US "organize" and "program").
+- Follow `offer.tone`.
+- The campaign `locale` in the batch decides the language and the spelling, and it wins when it
+  differs from `offer.language` (the tool's spelling check, M13, uses the `locale`). Write in the
+  language of the `locale` (`en-GB` and `en-US` are English; `es-MX` is Spanish) and spell for
+  its region: en-GB "organise" and "programme", en-US "organize" and "program".
 - No emojis. At most one exclamation mark in a whole message, and usually none.
 - Never claim to have read their posts, articles or profile in detail, watched a talk, or met
   them. Never write "Loved your post", "I saw your talk", "We met at ...", "Following your journey".
@@ -64,16 +69,31 @@ The batch repeats the limits in `channel_spec`. The tool rejects a draft outside
 
 ## 5. Leads with flags
 
-A person can carry `flags`. These are not sales prospects, so do not pitch:
+A person can carry `flags`. Flags are **keyword hints** from the title and company text, so they
+can be wrong. What each one means:
 
-- `partner`, `competitor` or `recruiter`: write a short **partnership-style note**. Say who you
-  are, name one thing the two companies have in common from the evidence, and ask whether a
-  conversation about working together makes sense. No service pitch, no price, no claims.
+- `partner`: the title or company looks like a partnership, alliance, channel or reseller role.
+- `competitor`: the company is on the campaign's competitor list.
+- `recruiter`: the company looks like a recruitment or staffing agency, or the title is an
+  agency role (headhunter, executive search).
+- `job_seeker`: the lead looks like someone searching for a job.
+
+What to do:
+
+- `partner`, `competitor` or `recruiter`: write a short **partnership-style note** instead of a
+  sales pitch. Say who you are, name one thing the two companies have in common from the
+  evidence, and ask whether a conversation about working together makes sense. No service
+  pitch, no price, no claims.
 - `job_seeker`: do not mention their job search. Keep the note short and neutral, and tell the
   user in your final summary that these leads may be poor fits.
+- No flag: write the normal message. In-house recruiters, HR heads and talent leaders, and sales
+  or partnership leaders at the companies the campaign targets, are ordinary prospects, so give
+  them the normal message even if their title contains a word like "recruitment" or "sales".
 
-If the evidence clearly shows the person is a recruiter, a partner or a competitor and no flag
-is set, treat them the same way and tell the user.
+If the evidence clearly shows a person is at a recruitment agency, a partner firm or a
+competitor and no flag is set, treat them the same way and tell the user. If a flag looks wrong
+for the evidence (for example `recruiter` on someone who works in-house), use your judgement
+and write the normal message.
 
 ## 6. Redrafting
 
@@ -83,14 +103,19 @@ resubmit the same text. Save only the drafts that failed.
 
 ## 7. Examples
 
-The people and companies below are invented. Each good example is checked by the tool's own
-rules (length, greeting, no placeholders).
+The people and companies below are invented. Each good example lists the batch data it was
+written from, and every statement in the message comes from that data. Each good example is
+checked by the tool's own rules (length, greeting, no placeholders).
 
 ### Good examples
 
-**Good 1 (LinkedIn invite).** Evidence: "Head of Learning & Development at Northwind Logistics".
-Offer service: leadership programmes for first-time managers. One specific line, one offer
-line, short and plain.
+**Good 1 (LinkedIn invite).**
+
+- Batch data: `greeting_name` Aria; `evidence` "Head of Learning & Development at Northwind
+  Logistics"; chosen service "Leadership programmes: practical programmes for first-time
+  managers" (`best_for` L&D); sender Priya.
+- Used: the role and company from the evidence, then the one service. No question is needed
+  because the space is tight.
 
 ```text
 channel: linkedin_invite
@@ -98,18 +123,32 @@ channel: linkedin_invite
 Hi Aria, I see you lead learning and development at Northwind Logistics. I help L&D teams with practical programmes for first-time managers. Glad to connect. Priya
 ```
 
-**Good 2 (LinkedIn message).** Evidence: "HR Director at Contoso Foods, Singapore". The offer
-line is the service that fits an HR director, taken from `confirmed_claims`. Ends with a soft
-question.
+**Good 2 (LinkedIn message).**
+
+- Batch data: `greeting_name` Marcus; `evidence` "HR Director at Contoso Foods, Singapore";
+  chosen service "On-site safety refreshers: short sessions at the client's site";
+  `confirmed_claims` "Sessions are delivered by certified trainers"; `ctas` "send a one-page
+  outline"; sender Priya.
+- Used: the role, company and city from the evidence, the service, the confirmed claim and the
+  cta as the soft question. Nothing is said about Contoso's workforce because the evidence does
+  not mention it.
 
 ```text
 channel: linkedin_message
 
-Hi Marcus, thanks for connecting. I noticed you are HR Director at Contoso Foods, which has a large shift-based workforce. We run short, on-site safety refreshers for teams like that, and our work is delivered by certified trainers. Would it be useful if I sent a one-page outline of how a session runs? Priya
+Hi Marcus, thanks for connecting. I noticed you are HR Director at Contoso Foods in Singapore. We run short, on-site safety refreshers, and our sessions are delivered by certified trainers. Would it be useful if I sent a one-page outline of how a session runs? Priya
 ```
 
-**Good 3 (email).** Evidence: "Operations Head at Fabrikam Freight". The offer line is the one
-that fits operations; the question is soft; nothing is claimed beyond the offer profile.
+**Good 3 (email).**
+
+- Batch data: `greeting_name` Devika; `evidence` "Operations Head at Fabrikam Freight";
+  chosen service "Supervisor courses: short, practical courses that fit around shift rosters,
+  for teams that cannot leave site for long" (`best_for` ops); `confirmed_claims` "Courses are
+  taught by working trainers"; `ctas` "15-minute call"; sender Priya; company
+  `Bright Harbour Training` from `offer.sender.company`.
+- Used: the role and company from the evidence, the service description, the confirmed claim,
+  and the cta (its "15-minute" is allowed because it is in `ctas`). Nothing is guessed about
+  her team or her day.
 
 ```text
 channel: email
@@ -117,9 +156,9 @@ subject: Training for Fabrikam Freight's operations teams
 
 Hi Devika,
 
-I saw that you head operations at Fabrikam Freight, so shift supervisors and depot leads are probably a big part of your day.
+I saw that you head operations at Fabrikam Freight.
 
-At Bright Harbour Training we run short supervisor courses that depots can fit around their rosters. The courses are practical, taught by working trainers, and designed for teams that cannot leave site for long.
+At Bright Harbour Training we run short supervisor courses that fit around shift rosters. The courses are practical and taught by working trainers, and they are designed for teams that cannot leave site for long.
 
 If supervisor skills are on your list this year, would a 15-minute call to compare notes be useful? If not, no problem at all.
 
@@ -162,5 +201,13 @@ instead of a soft question.
 Check each draft against this list: right `greeting_name`; one evidence line; one service;
 one soft question; every fact is in the offer profile; nothing from `forbidden_claims`; no
 numbers outside `proof_points`; length inside `channel_spec`; spelling matches `locale`; no
-emoji; at most one exclamation mark. Then call `save_drafts` and fix only the drafts the tool
-marks `qa_fail`.
+emoji; at most one exclamation mark. Then call `save_drafts`.
+
+Read the result for each draft:
+
+- `qa_pass`: done.
+- `qa_fail`: fix the draft using its `issues` and save only those drafts again.
+- `not_saved` with `invalid_draft` or `duplicate_in_call`: correct the request and send it again.
+- `not_saved` with `no_sendable_email`, `person_not_confirmed`, `already_sent`,
+  `channel_not_enabled` or `unknown_person`: rewriting cannot fix these. Skip the person and
+  tell the user which people were skipped and why.

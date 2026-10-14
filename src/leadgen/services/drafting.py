@@ -30,6 +30,11 @@ DEFAULT_BATCH = 20
 MAX_DRAFTS_PER_CALL = 50
 EVIDENCE_CHARS = 300
 HISTORY_KEEP = 3
+# `not_saved` reasons that rewriting the text cannot fix: skip the person and tell the user.
+UNFIXABLE_CODES = frozenset(
+    {"no_sendable_email", "person_not_confirmed", "already_sent", "channel_not_enabled",
+     "unknown_person"}
+)  # fmt: skip
 CHECKER = "basic"  # replaced by "qa_messages" when T11 plugs in its checks (see _check_message)
 
 
@@ -123,9 +128,16 @@ def guide_text() -> str:
 
 
 def sendable_email_statuses(campaign: Mapping[str, Any]) -> tuple[str, ...]:
-    """Email statuses that count as sendable: `verified`, plus `risky` if the campaign allows."""
+    """Email statuses that count as sendable: `verified`, plus `risky` if the campaign has
+    `options.allow_risky_emails` and `guess` if it has `options.allow_guess_emails` (PLAN 7a.6,
+    L23). T11's L17 uses this too, so drafting and the lead checks agree."""
     options = campaign.get("options") or {}
-    return ("verified", "risky") if options.get("allow_risky_emails") else ("verified",)
+    statuses = ["verified"]
+    if options.get("allow_risky_emails"):
+        statuses.append("risky")
+    if options.get("allow_guess_emails"):
+        statuses.append("guess")
+    return tuple(statuses)
 
 
 def channels_for(campaign: Mapping[str, Any]) -> list[str]:
@@ -213,31 +225,46 @@ def _clean_evidence(snippet: Any, title: Any) -> str:
 
 # --- flags ----------------------------------------------------------------------------------------
 
-_RECRUITER_RE = re.compile(
+# `recruiter` is for recruitment AGENCIES (headhunters, staffing firms). In-house recruiters,
+# HR and talent leaders are normal prospects and get no flag.
+_AGENCY_TITLE_RE = re.compile(
+    r"\b(?:headhunters?|head[- ]hunting|executive search|"
+    r"(?:recruitment|recruiting|staffing|talent acquisition) (?:agency|consultant))\b",
+    re.IGNORECASE,
+)
+_RECRUITER_COMPANY_RE = re.compile(
     r"\b(?:recruiters?|recruitment|recruiting|headhunters?|head[- ]hunting|talent acquisition "
     r"(?:agency|consultant)|staffing|executive search|manpower)\b",
     re.IGNORECASE,
 )
 _PARTNER_RE = re.compile(
-    r"\b(?:partnerships?|alliances?|channel (?:partner|manager|sales)|resellers?|affiliates?|"
+    r"\b(?:partnerships?|alliances?|channel (?:partner|manager)|resellers?|affiliates?|"
     r"strategic partner|business partner programme|business partner program)\b",
     re.IGNORECASE,
 )
-
-
 _PARTNER_COMPANY_RE = re.compile(r"\b(?:reseller|channel partner)\b", re.IGNORECASE)
 
 
 def _flags(row: Mapping[str, Any], camp: Mapping[str, Any]) -> list[str]:
-    """Heuristic flags: partner, competitor, recruiter, job_seeker (see the style guide)."""
+    """Keyword-hint flags: partner, competitor, recruiter, job_seeker (see the style guide).
+
+    `recruiter` needs an agency signal (company name, sector or notes, or an agency-only title
+    word); `partner` comes from the title or a reseller company. A company-based flag is not
+    set when the campaign's own `sectors` name that kind of firm (it is the target).
+    """
     flags: list[str] = []
     title = str(row.get("title") or "")
     company_text = " ".join(
         str(row.get(k) or "") for k in ("c_name", "c_sector", "c_notes")
     )
-    if _RECRUITER_RE.search(title) or _RECRUITER_RE.search(company_text):
+    sectors = " ".join(str(s) for s in camp.get("sectors") or [])
+    if _AGENCY_TITLE_RE.search(title) or (
+        _RECRUITER_COMPANY_RE.search(company_text) and not _RECRUITER_COMPANY_RE.search(sectors)
+    ):
         flags.append("recruiter")
-    if _PARTNER_RE.search(title) or _PARTNER_COMPANY_RE.search(company_text):
+    if _PARTNER_RE.search(title) or (
+        _PARTNER_COMPANY_RE.search(company_text) and not _PARTNER_COMPANY_RE.search(sectors)
+    ):
         flags.append("partner")
     competitors = (camp.get("exclusions") or {}).get("competitors", [])
     if competitors:
@@ -340,11 +367,12 @@ def get_drafting_batch(
     """People to write a `channel` message for, with the offer and the channel limits.
 
     Eligible people are `confirmed`, have no message for this channel yet (or one in `qa_fail`,
-    or one the AI review marked `fix`), and for `email` have a sendable email (`verified`, or
-    `risky` if the campaign allows it). Each batch has the offer profile and `channel_spec`;
-    `guide` (the style guide) is included on the first batch (no `cursor`) unless
-    `include_guide` says otherwise. Call again with `next_cursor` until `done`. Raises
-    `DraftError` (`no_offer_profile`, `invalid_channel`, `channel_not_enabled`, ...).
+    or one the AI review marked `fix`), and for `email` have a sendable email (`verified`, plus
+    `risky` / `guess` when the campaign options `allow_risky_emails` / `allow_guess_emails` are
+    on). Each batch has the offer profile and `channel_spec`; `guide` (the style guide) is
+    included on the first batch (no `cursor`) unless `include_guide` says otherwise. Call again
+    with `next_cursor` until `done`. Raises `DraftError` (`no_offer_profile`, `invalid_channel`,
+    `channel_not_enabled`, ...).
     """
     camp = _campaign(campaign_id)
     profile = _offer_profile(camp)
@@ -400,7 +428,7 @@ def get_drafting_batch(
 
 _PLACEHOLDER_RE = re.compile(
     r"\{\{|\}\}|\{[^{}\s][^{}]*\}|\[[^\]\n]{1,60}\]|<[^<>\n]{1,60}>|"
-    r"\b(?:TODO|TBC|TBD|lorem ipsum)\b|(?-i:\bX{3,}\b)",
+    r"(?-i:\b(?:TODO|TBC|TBD)\b)|\blorem ipsum\b|(?-i:\bX{3,}\b)",
     re.IGNORECASE,
 )
 _SUBJECT_FAKE_RE = re.compile(r"^\s*(?:re|fwd?|fw)\s*:", re.IGNORECASE)
@@ -661,7 +689,8 @@ def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any
     One message exists per person per channel: saving again replaces the text and keeps the
     last three versions in `qa_json.history`. A replaced draft needs its AI review again.
     Returns one entry per draft: `status` is `qa_pass` or `qa_fail` (with `issues` to fix; only
-    resave the failures) or `not_saved` (the draft was refused, see `issues`). Raises
+    resave the failures) or `not_saved` (the draft was refused, see `issues`; codes in
+    `UNFIXABLE_CODES` cannot be fixed by rewriting, so skip those people). Raises
     `DraftError` for a missing offer profile or a bad `drafts` list.
     """
     camp = _campaign(campaign_id)
@@ -685,9 +714,25 @@ def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any
         s: sum(1 for r in results if r["status"] == s) for s in ("qa_pass", "qa_fail", "not_saved")
     }
     reply: dict[str, Any] = {"ok": True, **counts, "results": results}
-    if counts["qa_fail"] or counts["not_saved"]:
-        reply["next_step"] = (
-            "Fix the drafts marked qa_fail or not_saved using their issues and save only "
+    skipped = sorted({
+        i["code"] for r in results if r["status"] == "not_saved"
+        for i in r["issues"] if i["code"] in UNFIXABLE_CODES
+    })  # fmt: skip
+    steps: list[str] = []
+    if counts["qa_fail"] or any(
+        r["status"] == "not_saved" and r["issues"][0]["code"] not in UNFIXABLE_CODES
+        for r in results
+    ):
+        steps.append(
+            "Fix the drafts marked qa_fail, and any not_saved draft whose issue is about the "
+            "draft itself (invalid_draft, duplicate_in_call), using their issues, and save only "
             "those again."
         )
+    if skipped:
+        steps.append(
+            f"Do not rewrite the not_saved drafts with {', '.join(skipped)}: rewriting cannot "
+            "fix them. Skip those people and tell the user why."
+        )
+    if steps:
+        reply["next_step"] = " ".join(steps)
     return reply

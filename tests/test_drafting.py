@@ -36,7 +36,9 @@ PROFILE = {
 _n = itertools.count(1)
 
 
-def make_campaign(channels=("email", "linkedin"), options=None, profile=True, **extra):
+def make_campaign(
+    channels=("email", "linkedin"), options=None, profile=True, sectors=("logistics",), **extra
+):
     with db.session() as conn:
         offer_id = db.insert(conn, "offers", name="Bright Harbour", source_type="text")
     if profile:
@@ -45,7 +47,7 @@ def make_campaign(channels=("email", "linkedin"), options=None, profile=True, **
         name=f"SG logistics {next(_n)}",
         offer_id=offer_id,
         countries=["SG"],
-        sectors=["logistics"],
+        sectors=list(sectors),
         company_size="200-1000",
         channels=list(channels),
         designations=["ld", "hr"],
@@ -158,6 +160,13 @@ def test_sendable_statuses_follow_the_campaign_option():
         "verified",
         "risky",
     )
+    assert drafting.sendable_email_statuses({"options": {"allow_guess_emails": True}}) == (
+        "verified",
+        "guess",
+    )
+    both = {"allow_risky_emails": True, "allow_guess_emails": True}
+    assert drafting.sendable_email_statuses({"options": both}) == ("verified", "risky", "guess")
+    assert drafting.sendable_email_statuses({}) == ("verified",)
 
 
 # --- errors ---------------------------------------------------------------------------
@@ -284,6 +293,18 @@ def test_email_batch_includes_risky_when_the_campaign_allows(ready_db):
     assert ids(drafting.get_drafting_batch(c["id"], "email")) == [verified, risky]
 
 
+def test_email_batch_includes_guess_only_when_allowed(ready_db):
+    c = make_campaign(options={"allow_guess_emails": True})
+    co = add_company(c["id"])
+    verified = add_person(c["id"], co)
+    risky = add_person(c["id"], co, "Marcus", "Lim")
+    guess = add_person(c["id"], co, "Devika", "Rao")
+    add_email(verified)
+    add_email(risky, "risky")
+    add_email(guess, "guess")
+    assert ids(drafting.get_drafting_batch(c["id"], "email")) == [verified, guess]
+
+
 def test_only_this_campaigns_people(world):
     cid, co = world
     mine = add_person(cid, co)
@@ -370,6 +391,12 @@ def test_greeting_falls_back_to_first_name_and_evidence_to_title(world):
     assert person["evidence"].startswith("Aria Tan - Head of L&D")
 
 
+def _flag_map(cid, channel="linkedin_message"):
+    return {
+        p["person_id"]: p["flags"] for p in drafting.get_drafting_batch(cid, channel)["people"]
+    }
+
+
 def test_flags(ready_db):
     c = make_campaign(exclusions={"competitors": ["Rival Training", "rival.example"]})
     cid = c["id"]
@@ -378,22 +405,63 @@ def test_flags(ready_db):
     staffing = add_company(
         cid, "Contoso Staffing", "contoso.example", notes="Executive search firm"
     )
-    recruiter = add_person(cid, co, "Aria", "Tan", title="Senior Recruiter")
+    headhunter = add_person(cid, co, "Aria", "Tan", title="Headhunter")
     partner = add_person(cid, co, "Marcus", "Lim", title="Head of Partnerships")
     competitor = add_person(cid, rival, "Devika", "Rao")
     agency = add_person(cid, staffing, "Sam", "Ong")
     seeker = add_person(cid, co, "Lena", "Koh", reasons_json=["L15:job-seeking hint"])
     plain = add_person(cid, co, "Ben", "Yeo")
-    flags = {
-        p["person_id"]: p["flags"]
-        for p in drafting.get_drafting_batch(cid, "linkedin_message")["people"]
-    }
-    assert flags[recruiter] == ["recruiter"]
+    inhouse = add_person(cid, co, "Zoe", "Lau", title="Senior Recruiter")
+    flags = _flag_map(cid)
+    assert flags[headhunter] == ["recruiter"]
     assert flags[partner] == ["partner"]
     assert flags[competitor] == ["competitor"]
     assert flags[agency] == ["recruiter"]
     assert flags[seeker] == ["job_seeker"]
     assert flags[plain] == []
+    assert flags[inhouse] == []  # in-house recruiting titles are not flagged
+
+
+def test_flags_do_not_block_the_campaigns_own_targets(ready_db):
+    c = make_campaign()
+    cid = c["id"]
+    co = add_company(cid)
+    titles = [
+        "Head of Recruitment", "Recruitment Manager", "Talent Acquisition Director",
+        "Channel Sales Director", "Head of HR",
+    ]  # fmt: skip
+    people = [add_person(cid, co, f"P{i}", "Tan", title=t) for i, t in enumerate(titles)]
+    flags = _flag_map(cid)
+    assert all(flags[p] == [] for p in people)
+
+
+def test_company_flags_are_skipped_when_the_sectors_name_that_firm(ready_db):
+    staffing_note = {"notes": "Staffing and recruitment agency"}
+    reseller_note = {"notes": "Authorised reseller"}
+    # a logistics campaign: a staffing or reseller company is flagged
+    c = make_campaign()
+    cid = c["id"]
+    firm = add_company(cid, "Contoso Staffing", "contoso.example", **staffing_note)
+    shop = add_company(cid, "Fabrikam Resale", "fabrikam.example", **reseller_note)
+    hr = add_person(cid, firm, "Aria", "Tan", title="Head of HR")
+    buyer = add_person(cid, shop, "Marcus", "Lim", title="Operations Head")
+    flags = _flag_map(cid)
+    assert flags[hr] == ["recruiter"] and flags[buyer] == ["partner"]
+    # a campaign that targets those firms: no company-based flag
+    t = make_campaign(sectors=("staffing and recruitment", "reseller"))
+    tid = t["id"]
+    firm = add_company(tid, "Contoso Staffing", "contoso.example", **staffing_note)
+    shop = add_company(tid, "Fabrikam Resale", "fabrikam.example", **reseller_note)
+    hr = add_person(tid, firm, "Aria", "Tan", title="Head of HR")
+    buyer = add_person(tid, shop, "Marcus", "Lim", title="Operations Head")
+    flags = _flag_map(tid)
+    assert flags[hr] == [] and flags[buyer] == []
+
+
+def test_agency_title_is_flagged_even_in_a_staffing_campaign(ready_db):
+    c = make_campaign(sectors=("staffing",))
+    p = add_person(c["id"], add_company(c["id"]), "Aria", "Tan", title="Executive Search Partner")
+    assert _flag_map(c["id"])[p] == ["recruiter"]
 
 
 def test_redraft_payload_lists_previous_issues(world):
@@ -516,6 +584,8 @@ def test_subject_is_ignored_on_linkedin(world):
         ("linkedin_message", "Hi Aria, {{company}} " + "x" * 200, "", "M03", "{{"),
         ("linkedin_message", "Hi Aria, <company> " + "x" * 200, "", "M03", "<company>"),
         ("linkedin_message", "Hi Aria, TODO " + "x" * 200, "", "M03", "TODO"),
+        ("linkedin_message", "Hi Aria, TBD " + "x" * 200, "", "M03", "TBD"),
+        ("linkedin_message", "Hi Aria, Lorem Ipsum " + "x" * 200, "", "M03", "Lorem Ipsum"),
         ("email", email_body(), "RE: your enquiry", "M09", "Re:"),
         ("email", email_body(), "x" * 61, "M09", "61"),
         ("email", email_body(), "SPECIAL OFFER INSIDE", "M09", "ALL CAPS"),
@@ -578,9 +648,62 @@ def test_mixed_results_and_next_step(world):
     assert (reply["qa_pass"], reply["qa_fail"], reply["not_saved"]) == (1, 1, 0)
     assert [r["status"] for r in reply["results"]] == ["qa_pass", "qa_fail"]
     assert [r["index"] for r in reply["results"]] == [0, 1]
-    assert "qa_fail" in reply["next_step"]
+    assert "qa_fail" in reply["next_step"] and "Skip" not in reply["next_step"]
     # only the failure is offered again
     assert ids(drafting.get_drafting_batch(cid, "linkedin_message")) == [b]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "todo el equipo de operaciones y todo o time de vendas",
+        "vamos a tbd e tbc mais tarde",
+    ],
+)
+def test_lowercase_todo_words_are_not_placeholders(text):
+    body = "Hi Aria, " + text + " " + "equipo " * 30
+    assert drafting._check_message("linkedin_message", "", body, "Aria") == []
+    flagged = drafting._check_message("linkedin_message", "", body + " TODO", "Aria")
+    assert [i["code"] for i in flagged] == ["M03"]
+
+
+def test_guess_email_is_drafted_only_when_the_option_is_on(ready_db):
+    saved = {}
+    for label, options in (("off", None), ("on", {"allow_guess_emails": True})):
+        c = make_campaign(options=options)
+        p = add_person(c["id"], add_company(c["id"]))
+        add_email(p, "guess")
+        saved[label] = (c["id"], p)
+    draft = {"channel": "email", "subject": "Hello Aria", "body": email_body()}
+
+    cid, p = saved["off"]
+    refused = drafting.save_drafts(cid, [{"person_id": p, **draft}])["results"][0]
+    assert refused["status"] == "not_saved" and refused["issues"][0]["code"] == "no_sendable_email"
+    assert messages(p) == []
+
+    cid, p = saved["on"]
+    ok = drafting.save_drafts(cid, [{"person_id": p, **draft}])["results"][0]
+    assert ok["status"] == "qa_pass" and len(messages(p)) == 1
+
+
+def test_next_step_separates_fixable_from_unfixable(world):
+    cid, co = world
+    a = add_person(cid, co, "Aria", "Tan")
+    review = add_person(cid, co, "Marcus", "Lim", status="review")
+    only_unfixable = drafting.save_drafts(
+        cid, [{"person_id": review, "channel": "linkedin_message", "body": good_li("Marcus")}]
+    )
+    step = only_unfixable["next_step"]
+    assert "person_not_confirmed" in step and "Skip those people" in step
+    assert "Fix the drafts" not in step
+    mixed = drafting.save_drafts(cid, [
+        {"person_id": a, "channel": "linkedin_message", "body": "Hi"},
+        {"person_id": review, "channel": "linkedin_message", "body": good_li("Marcus")},
+        {"person_id": 9999, "channel": "linkedin_message", "body": good_li()},
+    ])  # fmt: skip
+    step = mixed["next_step"]
+    assert "Fix the drafts" in step and "Skip those people" in step
+    assert "person_not_confirmed" in step and "unknown_person" in step
 
 
 def test_refused_drafts_do_not_abort_the_rest(world):
