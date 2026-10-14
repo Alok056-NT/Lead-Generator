@@ -6,7 +6,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 |---|---|---|---|
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
-| T03 | Countries and compliance tables | review | Builder done 2026-10-14 |
+| T03 | Countries and compliance tables | changes | Builder done 2026-10-14; review 2026-10-14 asked for fixes (IT, DK policy; CA, CH elements; ROK alias) |
 | T04 | Provider framework and search providers | todo | |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
 | T06 | Campaigns and designations | todo | |
