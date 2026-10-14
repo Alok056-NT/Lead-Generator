@@ -114,10 +114,10 @@ TEMPLATE_DATA: dict[str, dict] = {
     "it": {
         "label": "IT / Technology leaders",
         "keywords": [
-            "cio", "cto", "chief information officer", "chief technology officer",
-            "it director", "it manager", "head of it", "head of technology",
-            "technology director", "technology manager",
-            "information technology director", "information technology manager",
+            "it", "information technology", "technology", "cio", "cto", "ciso",
+            "chief information officer", "chief technology officer",
+            "chief information security officer", "information security",
+            "cybersecurity", "cyber security",
         ],
         "search_terms": [
             "IT director",

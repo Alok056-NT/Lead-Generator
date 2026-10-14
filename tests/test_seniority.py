@@ -37,6 +37,19 @@ SENIORITY_CASES = [
     ("Head, Safety and Health", "vp"),
     ("Global Head of People", "vp"),
     ("HR Head", "vp"),  # trailing "Head"
+    ("Head, HR", "vp"),
+    ("Head - Learning & Development", "vp"),  # "Head" + separator, like "Head,"
+    ("Head – HR", "vp"),
+    ("Head — Safety", "vp"),
+    ("Head | Talent Development", "vp"),
+    ("Head: Training", "vp"),
+    ("Country Head", "vp"),
+    ("Country Head Singapore", "vp"),
+    ("Country Head - Singapore", "vp"),
+    ("Country Head | APAC", "vp"),
+    ("Country Head of HR", "vp"),
+    ("MD", "vp"),
+    ("MD - Sales", "vp"),
     ("Managing Director", "vp"),  # a rank, not the head of the company
     ("Group Managing Director", "vp"),
     # C-suite.
@@ -49,6 +62,7 @@ SENIORITY_CASES = [
     ("Chief Executive Officer", "c_suite"),
     ("Chief of Staff", "c_suite"),
     ("Founder", "c_suite"),
+    ("Cofounder at Northwind Logistics", "c_suite"),
     ("Co-Founder & Director", "c_suite"),
     ("Owner", "c_suite"),
     ("President", "c_suite"),
@@ -57,6 +71,7 @@ SENIORITY_CASES = [
     ("Senior Partner", "c_suite"),
     ("Equity Partner", "c_suite"),
     ("Group CEO and Managing Director", "c_suite"),
+    ("Group CEO & MD", "c_suite"),
     ("Managing Director and Chief Executive", "c_suite"),
     # Individuals.
     ("Junior Manager", "individual"),  # "Junior" before the rank word
@@ -119,6 +134,9 @@ def test_meets():
     assert meets("CEO", "c_suite")
     assert not meets("Managing Director", "c_suite")
     assert not meets("HR Executive", "manager")
+    assert meets("Head - Learning & Development", "manager")
+    assert meets("MD - Sales", "manager")
+    assert meets("Cofounder at Northwind Logistics", "manager")
     with pytest.raises(ValueError, match="unknown seniority level"):
         meets("CEO", "boss")
 
@@ -139,6 +157,16 @@ def test_meets():
         ("Managing Partner", True),
         ("Country Manager, Singapore", True),
         ("Country Head", True),
+        ("Country Head Singapore", True),
+        ("Country Head - Singapore", True),
+        ("Country Head | APAC", True),
+        ("Country Head, APAC", True),
+        ("Cofounder at Northwind Logistics", True),
+        ("Group CEO & MD", True),
+        ("MD - Sales", False),
+        ("Deputy Country Head", False),
+        ("Country Head of HR", False),  # a head of HR, not of the country
+        ("Head - Learning & Development", False),
         ("General Manager", True),
         ("Group CEO and Managing Director", True),
         ("Managing Director", False),  # a rank at large organisations

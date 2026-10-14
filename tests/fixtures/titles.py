@@ -88,12 +88,12 @@ TITLE_CASES: list[tuple[str, str, str]] = [
     ("Marketing Manager", "marketing", "manager"),  # base rule: plain Manager
     ("Head of Marketing at Example Training Ltd", "marketing", "vp"),  # company "Training" ignored
     ("Chief Marketing Officer", "marketing", "c_suite"),  # "Chief" = c_suite
-    ("Digital Marketing Director", "marketing", "director"),  # multi-word keyword
+    ("Digital Marketing Director", "marketing", "director"),  # keyword "marketing"
     ("Demand Generation Manager", "marketing", "manager"),  # multi-word keyword
-    ("SEO Manager", "marketing", "manager"),  # "seo*" prefix
+    ("SEO Manager", "marketing", "manager"),  # keyword "seo"
     ("Brand Manager", "marketing", "manager"),  # multi-word keyword "brand manager"
     # --- Sales (sales) ---
-    ("Sales Director", "sales", "director"),  # multi-word keyword
+    ("Sales Director", "sales", "director"),  # keyword "sales"
     ("Business Development Manager", "sales", "manager"),  # multi-word keyword
     ("Account Executive", "sales", "individual"),  # "Executive" alone = individual
     ("Sales Trainee", "sales", "individual"),  # "Trainee" is not an L&D word
@@ -103,21 +103,35 @@ TITLE_CASES: list[tuple[str, str, str]] = [
     ("Commercial Director", "sales", "director"),  # keyword "commercial director"
     # --- IT / Technology leaders (it) ---
     ("CTO at Example Software", "it", "c_suite"),  # "CTO" = c_suite
-    ("IT Director", "it", "director"),  # keyword "it director"
+    ("IT Director", "it", "director"),  # keyword "it"
     ("Head of Technology", "it", "vp"),  # "Head of" = vp
     ("Chief Information Officer", "it", "c_suite"),  # "Chief" = c_suite
-    ("Technology Manager", "it", "manager"),  # keyword "technology manager"
-    ("IT Manager", "it", "manager"),  # keyword "it manager"
+    ("Technology Manager", "it", "manager"),  # keyword "technology"
+    ("IT Manager", "it", "manager"),  # keyword "it"
+    ("Director of IT", "it", "director"),  # keyword "it"
+    ("Director, IT", "it", "director"),
+    ("VP of IT", "it", "vp"),
+    ("VP IT", "it", "vp"),
+    ("VP, Information Technology", "it", "vp"),  # keyword "information technology"
+    ("IT Head", "it", "vp"),  # trailing "Head" = vp
+    ("IT Lead", "it", "manager"),  # "Lead" = manager
+    ("Head of Information Technology", "it", "vp"),
+    ("Director of Information Technology", "it", "director"),
+    ("Director of Technology", "it", "director"),  # keyword "technology"
+    ("IT Infrastructure Manager", "it", "manager"),  # "infrastructure" only hurts with "operations"
+    ("CISO", "it", "c_suite"),
+    ("Chief Information Security Officer", "it", "c_suite"),
+    ("Head of Information Security", "it", "vp"),  # keyword "information security"
     # --- Finance (finance) ---
     ("CFO at Example Retail", "finance", "c_suite"),  # "CFO" = c_suite
-    ("Finance Manager", "finance", "manager"),  # keyword "finance manager"
+    ("Finance Manager", "finance", "manager"),  # keyword "finance"
     ("Head of Finance", "finance", "vp"),  # "Head of" = vp
     ("Chief Financial Officer", "finance", "c_suite"),  # "Chief" = c_suite
-    ("Financial Director", "finance", "director"),  # keyword "financial director"
+    ("Financial Director", "finance", "director"),  # keyword "financial*" prefix
     ("Finance Officer", "finance", "individual"),  # "Officer" without Chief = individual
     ("Accounts Payable Manager", "finance", "manager"),  # multi-word keyword "accounts payable"
     # --- Procurement (procurement) ---
-    ("Procurement Manager", "procurement", "manager"),  # keyword "procurement manager"
+    ("Procurement Manager", "procurement", "manager"),  # keyword "procurement"
     ("Head of Procurement", "procurement", "vp"),  # "Head of" = vp
     ("Purchasing Specialist", "procurement", "individual"),  # "Specialist" = individual
     ("Supply Chain Director", "procurement", "director"),  # multi-word keyword "supply chain"
@@ -126,7 +140,7 @@ TITLE_CASES: list[tuple[str, str, str]] = [
     ("Chief Procurement Officer", "procurement", "c_suite"),  # "Chief" = c_suite
     ("Supply Chain Coordinator", "procurement", "individual"),  # "Coordinator" = individual
     # --- Facilities (facilities); "Facilities Manager" avoided: also matches safety_ops ---
-    ("Estates Manager", "facilities", "manager"),  # keyword "estates manager"
+    ("Estates Manager", "facilities", "manager"),  # keyword "estates"
     ("Building Manager", "facilities", "manager"),  # keyword "building manager"
     ("Property Manager", "facilities", "manager"),  # keyword "property manager"
     ("Workplace Manager", "facilities", "manager"),  # keyword "workplace manager"

@@ -20,14 +20,17 @@ _FALSE_FRIENDS = re.compile(
     r"|\b(assistant|pa|secretary)\s+to\b.*"
 )
 _VICE_PRESIDENT = re.compile(r"\bvice[\s-]+president\b")
-# "Head of X" and "Head, X" are one marker; so is a trailing "X Head" (see _words).
-_HEAD_OF = re.compile(r"\bhead\s+of\b|\bhead\s*,")
+# "Head of X", "Head, X", "Head - X", "Head | X" and "Head: X" are one marker; so is a trailing
+# "X Head" (see _words).
+_HEAD_OF = re.compile(r"\bhead\s+of\b|\bhead\s*[,\-\u2013\u2014|:]")
+# "Country Head" is a top leader wherever it appears ("Country Head of HR" is only a vp).
+_COUNTRY_HEAD = re.compile(r"\bcountry\s+head\b(?!\s+of\b)")
 
 _C_SUITE_WORDS = frozenset(
-    "ceo coo cfo cto chro cmo cio ciso cpo chief founder owner proprietor chairman "
+    "ceo coo cfo cto chro cmo cio ciso cpo chief founder cofounder owner proprietor chairman "
     "chairwoman chairperson president".split()
 )
-_VP_WORDS = frozenset({"vp", "avp", "svp", "evp", "headof"})
+_VP_WORDS = frozenset({"vp", "avp", "svp", "evp", "headof", "countryhead", "md"})
 _C_SUITE_PHRASES = (("managing", "partner"), ("senior", "partner"), ("equity", "partner"))
 _VP_PHRASES = (("managing", "director"),)
 _DIRECTOR_WORDS = frozenset({"director"})
@@ -38,13 +41,13 @@ _JUNIOR_WORDS = frozenset({"junior", "jr", "intern", "trainee"})
 # Heads of a company (PLAN section 11.7). "Managing Director", "MD", "Principal" and
 # "Executive Director" are ranks at large organisations, so they are not on this list.
 _TOP_WORDS = frozenset(
-    "ceo founder owner proprietor chairman chairwoman chairperson president".split()
+    "ceo founder cofounder owner proprietor chairman chairwoman chairperson president "
+    "countryhead".split()
 )
 _TOP_PHRASES = (
     ("chief", "executive"),
     ("managing", "partner"),
     ("country", "manager"),
-    ("country", "headof"),  # "headof" is how _words writes a trailing "Head"
     ("general", "manager"),
 )
 _NOT_TOP_BEFORE = frozenset({"assistant", "deputy", "associate", "vice", "vp"})
@@ -53,6 +56,7 @@ _NOT_TOP_BEFORE = frozenset({"assistant", "deputy", "associate", "vice", "vp"})
 def _words(title: str) -> list[str]:
     t = _FALSE_FRIENDS.sub(" ", (role_part(title) or title or "").lower())
     t = _VICE_PRESIDENT.sub("vp", t)
+    t = _COUNTRY_HEAD.sub(" countryhead ", t)
     t = _HEAD_OF.sub(" headof ", t)
     words = re.sub(r"[^a-z0-9]+", " ", t).split()
     if words and words[-1] == "head":  # "HR Head", "Regional Head"
