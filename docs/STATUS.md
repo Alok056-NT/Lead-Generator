@@ -8,7 +8,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
 | T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
 | T04 | Provider framework and search providers | done | Reviewed 2026-10-14 (fix round 2). manual check pending: `leadgen keys set serper` + `leadgen keys test serper` with the owner's real key (1 credit); note the status/body a wrong key returns |
-| T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
+| T05 | Offer intake (URL, text, file) and OfferProfile | review | manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | todo | |
 | T07 | Companies: add, verify, approve | todo | |
 | T08 | People finder and confirmation engine | todo | |
@@ -50,6 +50,11 @@ Files: src/leadgen/providers/{__init__,base,search,serper,brave,ddg,fake,registr
 Reviewer fixes: `RateLimiter` uses `perf_counter` (Windows `monotonic` ticks every 15.6 ms); Brave `_quota_hit` pairs `X-RateLimit-Policy`/`Remaining` windows by position and reports quota only when a window over a day has 0 left; Brave `country` is sent only if in `BRAVE_COUNTRIES` (else `ALL`); DDG challenge is detected by markup (`anomaly-modal`/`anomaly.js`) and only when no results parse. Round 2: Brave `_quota_hit` ignores windows whose limit is 0 (Brave: "0 for unlimited"), so an uncapped plan's per-second 429 stays `rate_limited`; DECISIONS Brave row repaired.
 Extra beyond card: `secrets.stored()`, `registry.check_provider`/`error_response`/`get_provider`, `SearchResult.low_confidence`.
 
+### T05 (review)
+`services/offer.py` has `ingest_url` (website crawl or public Google Doc), `ingest_text`, `ingest_file` (PDF, DOCX incl. tables, TXT, MD; 20 MB), chunked `read_offer_text` (cursor, 40,000 chars, line-break aware), `save_profile`, `get_offer`, `list_offers` and the pydantic `OfferProfile` (whitespace normalised, lists de-duplicated, overlapping confirmed/forbidden claims rejected). `ingest_*` return `offer_id`, `unconfirmed_snippets` (lines with `[CONFIRM`, `TBC`, `TODO`, `XX%`, highlighted DOCX text, ...) and a structured error with a paste/file hint when a page is dead, blocked or empty. The crawler (`offer_web.py`, ported from Harvey's `FallbackCrawler`) is same-site, honours robots.txt and Crawl-delay, 1 request/s, max 15 pages, 50 s limit. `guides/offer_profile.md` tells the AI how to write the profile. 294 tests pass (1 POSIX-only skip), ruff clean, services coverage 97%. Real website, real DOCX and real Google Doc ingestion: **manual check pending** (owner).
+Files: pyproject.toml, src/leadgen/services/{offer,offer_web,offer_files}.py, src/leadgen/guides/offer_profile.md, tests/{test_offer,test_offer_web,test_offer_files}.py, docs/{DECISIONS,STATUS}.md.
+Extra beyond card: `guide_text()`, `find_unconfirmed()`, hard URL checks (no localhost/private IPs), Crawl-delay support, `[HIGHLIGHT: ...]` marking in DOCX text. `ingest_*` return a dict, not a bare id (see DECISIONS).
+
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
 - T01: `guides/*.md` and `schema.sql` are listed as package data but do not exist yet (T02/T18 create them).
@@ -71,3 +76,6 @@ Extra beyond card: `secrets.stored()`, `registry.check_provider`/`error_response
 - T04: Hunter, Reoon, ZeroBounce, lemlist and SMTP have `ProviderInfo` only; each task must add its class to `registry._FACTORIES` (then `save_api_key`/`keys test` work for it). Their sign-up URLs and free-tier text are unverified (T09/T12/T14).
 - T04: `record_usage`/`cached_search` need the schema; adapters must call `db.init_db()` first (the `keys` CLI commands do).
 - T04/T08: services must call `registry.error_response` so `ProviderError("quota")` and `not_configured` reach the AI as the structured `needs_key` / `quota_exhausted` replies. DDG ignores the country; put it in the query text.
+- T05: callers must run `db.init_db()` before the offer functions (same as T04). T13 should call `offer.OfferError.as_response()` to build error replies and expose `offer.guide_text()` with the workflow guide.
+- T05: JavaScript-only sites give little or no text (no rendering; Harvey's Cloudflare crawler was not ported). The error hint tells the AI to ask for pasted text or a file.
+- T05: `proof_points` claims are not checked against `forbidden_claims` (the card only asks for confirmed vs forbidden); T11 M05/M06 should treat both.
