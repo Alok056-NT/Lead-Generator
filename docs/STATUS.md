@@ -8,7 +8,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
 | T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
 | T04 | Provider framework and search providers | done | Reviewed 2026-10-14 (fix round 2). manual check pending: `leadgen keys set serper` + `leadgen keys test serper` with the owner's real key (1 credit); note the status/body a wrong key returns |
-| T05 | Offer intake (URL, text, file) and OfferProfile | review | manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
+| T05 | Offer intake (URL, text, file) and OfferProfile | changes | manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | todo | |
 | T07 | Companies: add, verify, approve | todo | |
 | T08 | People finder and confirmation engine | todo | |
