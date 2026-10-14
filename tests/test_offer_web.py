@@ -76,7 +76,19 @@ def test_html_to_text_empty_page():
 
 
 @pytest.mark.parametrize(
-    "url", ["", "ftp://example.com", "http://localhost:8000", "http://192.168.1.5/", "http://[::1]/"]
+    "url",
+    [
+        "",
+        "ftp://example.com",
+        "http://localhost:8000",
+        "http://192.168.1.5/",
+        "http://[::1]/",
+        "http://localhost./",
+        "http://foo.local./",
+        "http://127.1/",
+        "http://2130706433/",
+        "http://0x7f000001/",
+    ],
 )
 def test_invalid_start_urls(url):
     with pytest.raises(WebError) as info:
@@ -105,13 +117,16 @@ def test_crawl_start_url_redirecting_to_loopback_is_refused():
 
 @respx.mock
 def test_crawl_skips_subpage_redirecting_to_private_address():
-    mock_site({"/": page('<a href="/about">About</a>')}, robots="")
-    respx.get(f"{BASE}/about").mock(
+    # These routes must be registered before mock_site(): respx matches in registration order and
+    # mock_site adds a catch-all 404 that would otherwise swallow /about.
+    about = respx.get(f"{BASE}/about").mock(
         return_value=httpx.Response(301, headers={"location": "http://192.168.0.1/"})
     )
     internal = respx.get("http://192.168.0.1/").mock(return_value=httpx.Response(200))
+    mock_site({"/": page('<a href="/about">About</a>')}, robots="")
     pages, _warnings = offer_web.crawl(BASE)
     assert [p.url for p in pages] == [f"{BASE}/"]
+    assert about.called
     assert not internal.called
 
 

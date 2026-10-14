@@ -15,6 +15,7 @@ import ipaddress
 import itertools
 import logging
 import re
+import socket
 import time
 import urllib.robotparser
 from dataclasses import dataclass, field
@@ -145,19 +146,26 @@ def _check_public_url(url: str) -> None:
     """Raise `WebError("invalid_url")` unless `url` is http(s) and its host is public-looking.
 
     Checks the address as written only: `localhost`, `.local`/`.internal` names and IP literals
-    that are not global are refused. DNS is not resolved, so a hostname that points at a private
-    address is not caught.
+    that are not global are refused. A trailing dot on the host is ignored, and old-style IPv4
+    forms such as `127.1`, `2130706433` and `0x7f000001` are read the way the OS resolver reads
+    them. DNS is not resolved, so a hostname that points at a private address is not caught.
     """
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
+    if host.endswith("."):
+        host = host[:-1]
     if parsed.scheme not in ("http", "https") or not host:
         raise WebError("invalid_url", "That does not look like a web address (use https://...).")
     local = host == "localhost" or host.endswith((".local", ".internal", ".localhost"))
     try:
         ip = ipaddress.ip_address(host)
-        local = local or not ip.is_global
     except ValueError:
-        pass
+        try:
+            ip = ipaddress.ip_address(socket.inet_aton(host))
+        except OSError:
+            ip = None
+    if ip is not None:
+        local = local or not ip.is_global
     if local:
         raise WebError("invalid_url", "Local and private network addresses cannot be read.")
 
