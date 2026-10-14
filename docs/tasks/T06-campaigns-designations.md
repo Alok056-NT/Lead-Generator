@@ -33,6 +33,10 @@ Port and generalise `classify_designation` from `reference/harvey/export.py`:
   - locale default from offer profile, then settings.
 - `update_campaign(id, **changes)`, `get_campaign(id)` (with counts: companies by status, people by status, emails by status, messages by status), `list_campaigns()`, `archive_campaign(id)`.
 
+## Worker prep (Haiku)
+1. Write `src/leadgen/services/designation_templates.py`: a module docstring and one constant `TEMPLATE_DATA: dict[str, dict]` keyed `ld, hr, safety_ops, owners, marketing, sales, it, finance, procurement, facilities, customer_service`, each `{"label": str, "keywords": list[str], "search_terms": list[str]}`. For `ld`, `hr`, `safety_ops`, `owners` copy the keyword lists **exactly** from `DESIGNATION_RULES` in `reference/harvey/export.py`, then add `hrbp` to hr and `employee development`, `people development`, `staff development` to ld. For the other seven write 8-20 lower-case whole-word keywords (multi-word allowed, trailing `*` = prefix match) and 4-7 quoted-ready `search_terms` each. Data only.
+2. Write `tests/fixtures/titles.py`: `TITLE_CASES: list[tuple[str, str, str]]` of at least 60 synthetic job titles as `(title, expected_group_key_or_"other", expected_seniority)`, covering every rule bullet in this card's `designations.py` and `seniority.py` sections (false friends, "vice president", role-part-before-"at", "Partner" rules, junior words, Managing Director as a rank). Use invented company names after "at"/"@". Add a short comment on each tricky case naming the rule it tests. The builder will check every expected value against the rules.
+
 ## Tests
 - Classification table test with ≥40 synthetic titles covering every rule above (port the cases from the NXT pilot as *titles only*, no names: e.g. "Head of IT Operations" → Other for safety_ops; "CEO at Example Facility Services" → owners; "Senior Vice President, Human" → Other; "Training Manager@Example Utility" → ld; "Machine Learning Engineering Lead" → Other).
 - Seniority table test ≥30 titles.

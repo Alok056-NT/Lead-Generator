@@ -34,6 +34,9 @@ Research and cite, at minimum: US (CAN-SPAM), Canada (CASL), UK (PECR: corporate
 ### `docs/DECISIONS.md`
 Add a "Compliance sources" table: country, regime, source URL (official legislation or regulator page preferred), date checked, key point.
 
+## Worker prep (Haiku)
+1. Write `src/leadgen/core/countries_data.py`: a module docstring and one constant `COUNTRY_ROWS: list[dict]`, one dict per country listed under "Deliverables" (all 40), each with keys `name`, `iso2`, `gl`, `linkedin_subdomains` (list), `cities` (list, 5-15 largest business cities), `aliases` (list), `locale` (e.g. "en-SG", "de-DE"), `timezone` (IANA zone of the main business city). Use correct ISO 3166-1 codes. `gl` = lower-case iso2 except "uk" for GB (the builder will verify against Serper). Only list a LinkedIn subdomain you are confident appears in public profile URLs for that country (the US uses "www"); otherwise use an empty list. Check every timezone loads with `zoneinfo` (install `tzdata` into `.venv` if Windows needs it). Data only: no functions, no tests.
+
 ## Tests
 - `get("Singapore")`, `get("sg")`, `get("uk")`/`get("United Kingdom")` resolve; unknown raises a clear error.
 - `matches_location`: `https://sg.linkedin.com/in/x` + no text → True for SG; `www` URL + "Location: Singapore" → True; `https://sg.linkedin.com/in/x` + "Experience: Singapore Airlines · Location: Mumbai" → False for SG, True for IN (rule 1 wins over the subdomain); city match "Bengaluru" → IN; "Location: 228211" (postcode only) with an `sg` subdomain → True via rule 2 only if rule 1 found no country/city (treat unrecognised location values as "no location field").

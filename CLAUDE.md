@@ -3,10 +3,10 @@
 You are building **Lead Generator**, a local, AI-driven lead generation toolkit. Read `docs/PLAN.md` before any task. It is the source of truth.
 
 ## How work is organised
-- Automated loop: `/build` (see `docs/BUILD_GUIDE.md`) dispatches the `builder` agent (Sonnet) and the `reviewer` agent (Opus) defined in `.claude/agents/`. Their instructions add to these rules.
+- Automated loop: `/build` (see `docs/BUILD_GUIDE.md`) runs on Opus 5.5 (extra-high) and dispatches three agents defined in `.claude/agents/`: `worker` (Haiku 5.5: mechanical prep listed under `## Worker prep (Haiku)` in a card), `builder` (Sonnet 5.5, high: code, logic, tests) and `reviewer` (Opus 5.5, extra-high). Their instructions add to these rules.
 
 - Work is split into task cards: `docs/tasks/Txx-*.md`. Do **exactly one task card per session** unless told otherwise.
-- The builder is Claude Sonnet 5.5 (high). The reviewer is Claude Opus. The owner is Alok (non-technical; explain results in plain English).
+- The builder is Claude Sonnet 5.5 (high), helped by a Haiku 5.5 worker for mechanical prep. The reviewer and orchestrator are Claude Opus 5.5 (extra-high). The owner is Alok (non-technical; explain results in plain English).
 - Progress lives in `docs/STATUS.md`. Verified external facts and design decisions live in `docs/DECISIONS.md`.
 
 ## Task protocol (follow every time)

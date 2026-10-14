@@ -19,8 +19,14 @@ Detect replies, bounces and unsubscribes from the user's mailbox and turn them i
 - Time series per day for the dashboard.
 - Also include LinkedIn/lemlist side counts available locally (exported/pushed counts); note that LinkedIn acceptance/reply data lives in lemlist.
 
+### Line endings
+Add `tests/fixtures/mail/*.eml -text` to `.gitattributes` so the fixtures keep their CRLF line endings (the repo default normalises to LF).
+
 ### Suppression
 `services/suppression.py` (if not already present): `add(values, kind, reason)`, `is_suppressed(email=None, domain=None, linkedin_url=None)`, `list()`, `remove(value, kind)` (CLI only, not an MCP tool).
+
+## Worker prep (Haiku)
+1. Write synthetic RFC 5322 email files in `tests/fixtures/mail/`, all addresses on `example.com`/`example.org`/`example.net`, each with realistic headers (`From`, `To`, `Date`, `Subject`, `Message-ID`): `plain_reply.eml` (with `In-Reply-To` and `References` pointing at `<send-001@example.com>`), `reply_no_thread_headers.eml` (no In-Reply-To; From is a recipient of a previous send), `gmail_bounce_dsn.eml` (multipart/report; report-type=delivery-status with `Final-Recipient` and `Status: 5.1.1`, sender mailer-daemon), `outlook_ndr.eml` (Microsoft-style non-delivery report, 550 5.1.10), `out_of_office.eml` (`Auto-Submitted: auto-replied`, "Out of office" subject), `unsubscribe_reply.eml` (body starts "Please unsubscribe me" quoting the original), `not_interested_remove.eml` ("not interested, please remove me from your list"). Plain ASCII/UTF-8, CRLF line endings.
 
 ## Tests
 - Synthetic `.eml` fixtures: plain reply, Gmail bounce DSN, Outlook NDR, auto-reply (out of office: treat as reply type `auto_reply`, excluded from reply rate), unsubscribe reply.

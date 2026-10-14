@@ -14,6 +14,9 @@ Prove the whole workflow works through the MCP tools exactly as an AI would driv
 - `leadgen doctor --live`: real-provider smoke test spending ≤ 3 credits total (1 Serper search, 1 Reoon verify, Hunter account info call that costs 0 if available).
 - Release: bump to `1.0.0`, update CHANGELOG, tag `v1.0.0` (reviewer pushes the tag).
 
+## Worker prep (Haiku)
+1. Write `tests/e2e/universe.py` (data only): `OFFER_TEXT` (a fictional VR training studio, ~400 words, with two lines marked `[CONFIRM ...]`), `COMPANIES` (12 invented companies: 7 in Singapore, 5 in the UK, each with `name`, `aliases`, `domain` on example.com/.org, `sector`), and `SEARCH_RESULTS: dict[str, list[dict]]` keyed by `"<company name>|<designation group label>"` with about 120 results in total reusing the shapes from `tests/fixtures/snippets.py` (a mix of confirmable and review cases, plus 3 results marked `"fabricated": True` with mismatched slugs for the AI-search flow), `HUNTER_RESPONSES` and `REOON_RESPONSES` (synthetic JSON matching the shapes recorded in DECISIONS.md). The builder writes the flows and verifies the data.
+
 ## Acceptance
 - Full suite green on Windows + Ubuntu CI.
 - Reviewer runs a real mini campaign (5 companies, LinkedIn only) end-to-end from Claude Desktop and compares quality with the NXT pilot.

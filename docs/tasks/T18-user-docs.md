@@ -16,5 +16,10 @@ Clear, short guides so a non-technical person can install, connect, run a campai
 - `docs/user/TROUBLESHOOTING.md`: Claude doesn't show tools; ChatGPT can't connect; "needs_key"; out of credits; a site blocks crawling; Excel shows odd characters (UTF-8 BOM note); antivirus blocks cloudflared.
 - `CHANGELOG.md` started at `0.1.0`.
 
+## Worker prep (Haiku)
+1. Draft `docs/user/PROVIDERS.md` from PLAN sections 7 and 7a and the provider rows in `docs/DECISIONS.md`: one short section per provider (what it's for, free allowance, how to sign up, where to paste the key, what happens when credits run out), plus a "No credits? Use free mode" section linking FREE_MODE.md. Plain English, short sentences.
+2. Draft `docs/user/QUALITY_CHECKS.md` from PLAN section 14: one row per L and M code (including L21-L23) with a plain-English meaning, whether it blocks or warns, and what the user should do.
+The builder edits both drafts for accuracy and tone and writes the remaining docs.
+
 ## Acceptance
 Reviewer (and ideally the owner) follows GETTING_STARTED on a clean machine without help.

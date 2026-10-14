@@ -2,32 +2,37 @@
 
 The build is split into 21 small tasks (`docs/tasks/T01…T21`), built in this order: T01 … T11, **T21**, T12 … T20.
 
-Two helpers live in this repo (`.claude/agents/`):
-- **builder**: Claude Sonnet 5.5, high effort. Writes the code and tests for one task. Never pushes.
-- **reviewer**: Claude Opus. Checks the work against the task card and the safety rules, runs the tests itself, then either approves it (marks it done and pushes to GitHub) or sends back a fix list.
+## Who does what
+| Role | Model | Effort | Does |
+|---|---|---|---|
+| **Orchestrator** (the session you start) | Opus 5.5 | extra-high | Plans each task, decides which model does which part, runs the loop, reports to you |
+| **worker** | Haiku 5.5 | high | Repetitive, mechanical jobs listed in a task card under "Worker prep (Haiku)": data tables, synthetic test data, sample files, first drafts of reference docs |
+| **builder** | Sonnet 5.5 | high | All real code, logic, research and tests; checks and owns the worker's output |
+| **reviewer** | Opus 5.5 | extra-high | Runs the tests, checks the work against the task card and safety rules, approves and pushes to GitHub, or sends back fixes |
 
-The **`/build` command** runs them for you in a loop.
+Why Haiku at high effort: its jobs are mostly accurate data entry (time zones, country codes, exact test cases), where a careless mistake costs more than the small price difference. Everything Haiku writes is checked twice (Sonnet, then Opus).
 
-## Start the build (automatic, recommended)
-1. Open a **new Claude Code session** in the folder `D:\Claude Files\Lead-Generator`.
-2. Pick **Sonnet 5.5** for the session itself (it only coordinates, so it doesn't need Opus; the reviewer still runs on Opus).
-3. Type one of:
-   - `/build`: do the next task only, then stop (good for the first run, to see how it goes).
-   - `/build all`: keep going task after task until everything is done or something needs you.
+Settings live in `.claude/settings.json` (session model and effort) and `.claude/agents/*.md` (each helper's model and effort).
+
+## Start the build
+1. Open a **new Claude Code session** in `D:\Claude Files\Lead-Generator` (it picks Opus 5.5 extra-high automatically from the repo settings).
+2. Type one of:
+   - `/build`: do the next task only, then stop (good for the first run).
+   - `/build all`: keep going until everything is done or something needs you.
    - `/build T05`: do one specific task.
-4. The first time it pushes, Windows may open a **GitHub sign-in window**: sign in once.
+3. The first push may open a **GitHub sign-in window**: sign in once.
 
-What happens for each task: builder writes it → reviewer checks it → if there are problems, builder fixes them (up to 2 rounds) → reviewer approves and pushes → next task. You get a 2-3 line plain-English update after each task.
+For each task: (Haiku prep, if the task has any) → Sonnet builds → Opus reviews → fixes if needed (mechanical ones to Haiku, logic to Sonnet; up to 2 rounds) → Opus approves and pushes → next task. You get a 2-3 line plain-English update after each.
 
 **It stops and asks you when:**
 - it needs a key, account or click only you can do;
 - a task is stuck after 2 fix rounds;
 - a push fails;
-- before the optional task T20 and before the v1.0 release.
+- before the optional T20 and before the v1.0 release.
 
-Tests that need your real keys don't stop the build: they're listed as "manual check pending" in `docs/STATUS.md` for you to do later.
+Tests that need your real keys don't stop the build: they're listed as "manual check pending" in `docs/STATUS.md`.
 
-**To pause:** press Esc or close the session. Run `/build all` again later; it picks up from `docs/STATUS.md`.
+**To pause:** press Esc or close the session. `/build all` picks up from `docs/STATUS.md`.
 
 ## Things you'll be asked for along the way
 | When | What | Cost |
@@ -41,8 +46,8 @@ Tests that need your real keys don't stop the build: they're listed as "manual c
 Keys go into the tool's own key store (`leadgen keys set …` or the dashboard), **never** into the code or GitHub.
 
 ## Rough size
-About 21 tasks. Each needs one builder run and one reviewer run, plus fix rounds when needed: expect roughly 45–65 agent runs in total. T08 (people finder) and T11 (quality checks) are the biggest. Running `/build` a few tasks at a time lets you watch your usage.
+21 tasks; each has one Sonnet build and one Opus review, six tasks also have Haiku prep, plus fix rounds when needed: roughly 50–75 helper runs in total. Opus at extra-high effort is the most expensive part (orchestrating and reviewing), so running a few tasks at a time with `/build` lets you watch your usage.
 
-## Manual fallback (if you ever want to run a task by hand)
+## Manual fallback (to run a task by hand)
 - Sonnet session: `Read CLAUDE.md, then do task T05 (docs/tasks/T05-offer-intake.md). Follow the task protocol exactly. Don't push to GitHub.`
 - Opus session: `Review task T05 against its task card. If it's good, mark it done in docs/STATUS.md and push to GitHub. If not, list the fixes.`
