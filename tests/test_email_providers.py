@@ -72,17 +72,17 @@ def test_hunter_domain_pattern_missing_or_odd(keys):
     route = respx.get(f"{HUNTER}/domain-search")
     route.mock(
         return_value=httpx.Response(
-            200, json={"data": {"domain": "x.com", "pattern": None, "emails": []}}
+            200, json={"data": {"domain": "northwind.example", "pattern": None, "emails": []}}
         )
     )
-    assert hunter.HunterProvider().domain_pattern("x.com") is None
+    assert hunter.HunterProvider().domain_pattern("northwind.example") is None
     assert base.usage("hunter", "all")["credits"] == 0  # nothing found, nothing charged
     route.mock(
         return_value=httpx.Response(
             200, json={"data": {"pattern": "{middle}.{last}", "emails": [{}]}}
         )
     )
-    assert hunter.HunterProvider().domain_pattern("x.com") is None
+    assert hunter.HunterProvider().domain_pattern("northwind.example") is None
 
 
 @pytest.mark.parametrize(

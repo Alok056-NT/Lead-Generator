@@ -1271,14 +1271,54 @@ def test_person_is_deferred_when_the_deadline_passes_between_checks(cid, monkeyp
     assert {r["person_id"] for r in email_rows()} == set(ids)
 
 
-def test_first_person_is_never_deferred(cid, monkeypatch):
+def test_first_person_is_verified_even_if_the_pattern_step_passes_the_deadline(cid, monkeypatch):
     company = add_company(cid)
     person = add_person(cid, company)
     clock = {"now": 0.0}
     monkeypatch.setattr(emails.time, "monotonic", lambda: clock["now"])
-    run = emails._Run(deadline=-1.0)  # already past
-    result = emails.verify("a.b@northwind.example", "google", verifiers=[FakeVerifier("reoon")],
-                           run=run)  # fmt: skip
-    assert result.status == "guess" and result.timed_out
-    out = run_find(cid, verifiers=[FakeVerifier("reoon")])
-    assert out["this_call"]["verified"] == 1 and person
+
+    class SlowHunter(FakeHunter):
+        def domain_pattern(self, domain):
+            clock["now"] += emails.VERIFY_DEADLINE_S + 1  # e.g. Hunter plus a slow site scrape
+            return super().domain_pattern(domain)
+
+    reoon = FakeVerifier("reoon")
+    out = run_find(cid, hunter=SlowHunter("{first}.{last}"), verifiers=[reoon])
+    assert reoon.calls == ["aria.tan@northwind.example"]
+    assert out["this_call"]["verified"] == 1 and out["done"] is True
+    row = email_rows()[0]
+    assert row["person_id"] == person and row["status"] == "verified"
+    assert row["verifier"] == "reoon"
+
+
+def test_later_person_without_time_is_deferred_not_stored_as_guess(cid, monkeypatch):
+    first_co = add_company(cid)
+    second_co = add_company(cid, "Contoso Retail", "contoso.example")
+    ids = [add_person(cid, first_co, "Aria", "Tan"), add_person(cid, second_co, "Bob", "Lee")]
+    clock = {"now": 0.0}
+    monkeypatch.setattr(emails.time, "monotonic", lambda: clock["now"])
+
+    class SlowHunter(FakeHunter):
+        def domain_pattern(self, domain):
+            if domain == "contoso.example":  # Bob's pattern step eats the whole time budget
+                clock["now"] += emails.VERIFY_DEADLINE_S + 1
+            return super().domain_pattern(domain)
+
+    reoon = FakeVerifier("reoon")
+    out = run_find(cid, hunter=SlowHunter("{first}.{last}"), verifiers=[reoon])
+    assert reoon.calls == ["aria.tan@northwind.example"]  # Bob was never checked
+    assert out["people_done"] == 1 and out["done"] is False
+    assert [r["person_id"] for r in email_rows()] == [ids[0]]  # no unchecked guess for Bob
+    assert out["next_cursor"] == str(ids[1] - 1)
+    clock["now"] = 0.0  # the next call starts a fresh clock; Bob is now its first person
+    again = run_find(cid, hunter=FakeHunter("{first}.{last}"), verifiers=[reoon],
+                     cursor=out["next_cursor"])  # fmt: skip
+    assert again["done"] and again["this_call"]["verified"] == 1
+    assert reoon.calls[-1] == "bob.lee@contoso.example"
+    assert {r["person_id"] for r in email_rows()} == set(ids)
+    assert all(r["status"] == "verified" for r in email_rows())
+
+
+def test_verify_without_a_run_deadline_never_times_out(cid):
+    result = emails.verify("a.b@northwind.example", "google", verifiers=[FakeVerifier("reoon")])
+    assert result.status == "verified" and not result.timed_out

@@ -364,6 +364,7 @@ class _Run:
     spent: Counter = field(default_factory=Counter)
     http_failures: Counter = field(default_factory=Counter)
     deadline: float | None = None  # time.monotonic() after which no new verifier call starts
+    # (None = no limit; `find_emails` leaves it unset for the first person of a call)
 
     def failed(self, provider_key: str, exc: ProviderError) -> None:
         self.issues[provider_key] = registry.error_response(provider_key, exc)
@@ -943,7 +944,9 @@ def find_emails(
         if reason is not None:
             skipped[reason] += 1
             continue
-        run.deadline = began + VERIFY_DEADLINE_S
+        # The first person of a call always gets the whole verifier chain, however long its
+        # pattern step took (it is never deferred); the deadline only guards later people.
+        run.deadline = began + VERIFY_DEADLINE_S if done > 0 else None
         outcome = _process_person(
             camp, row, bool(ids), confirm, hunter, chain, run, patterns, can_defer=done > 0
         )
