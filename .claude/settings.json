@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(docs/**)",
+      "Edit(.github/**)",
+      "Edit(packaging/**)",
+      "Edit(pyproject.toml)",
+      "Edit(README.md)",
+      "Edit(CHANGELOG.md)",
+      "Edit(NOTICE.md)",
+      "Edit(.gitignore)",
+      "Edit(.gitattributes)",
+      "Edit(install.ps1)",
+      "Edit(install.sh)",
+      "Bash(python -m venv *)",
+      "Bash(python -m pip install *)",
+      "Bash(.venv/Scripts/python *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(.venv/Scripts/pip *)",
+      "Bash(.venv/Scripts/ruff *)",
+      "Bash(.venv/Scripts/leadgen *)",
+      "Bash(.venv/bin/python *)",
+      "Bash(.venv/bin/ruff *)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git rev-parse *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push origin main)",
+      "WebSearch",
+      "WebFetch"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(git rebase*)",
+      "Edit(.claude/**)"
+    ]
+  }
+}

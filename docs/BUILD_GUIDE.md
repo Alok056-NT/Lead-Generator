@@ -1,44 +1,48 @@
-# How to build Lead Generator, task by task (for Alok)
+# How to build Lead Generator (for Alok)
 
-The build is split into 21 small tasks (`docs/tasks/T01…T21`). Sonnet does each task; Opus reviews it before the next one starts. Do them **in order**, one per session. Exception: **T21 comes right after T11** (it was added later): T01 … T11, T21, T12 … T20.
+The build is split into 21 small tasks (`docs/tasks/T01…T21`), built in this order: T01 … T11, **T21**, T12 … T20.
 
-## For each task
+Two helpers live in this repo (`.claude/agents/`):
+- **builder**: Claude Sonnet 5.5, high effort. Writes the code and tests for one task. Never pushes.
+- **reviewer**: Claude Opus. Checks the work against the task card and the safety rules, runs the tests itself, then either approves it (marks it done and pushes to GitHub) or sends back a fix list.
 
-1. **Open a new Claude Code session** in the folder `D:\Claude Files\Lead-Generator`.
-2. **Pick the model**: Sonnet 5.5, effort **High** (model menu in the app).
-3. **Paste this message** (change the task number):
+The **`/build` command** runs them for you in a loop.
 
-   ```
-   Read CLAUDE.md, then do task T01 (docs/tasks/T01-scaffold-config.md).
-   Follow the task protocol exactly. Don't push to GitHub.
-   ```
+## Start the build (automatic, recommended)
+1. Open a **new Claude Code session** in the folder `D:\Claude Files\Lead-Generator`.
+2. Pick **Sonnet 5.5** for the session itself (it only coordinates, so it doesn't need Opus; the reviewer still runs on Opus).
+3. Type one of:
+   - `/build`: do the next task only, then stop (good for the first run, to see how it goes).
+   - `/build all`: keep going task after task until everything is done or something needs you.
+   - `/build T05`: do one specific task.
+4. The first time it pushes, Windows may open a **GitHub sign-in window**: sign in once.
 
-4. Let it work. If it asks you a question you can't answer, say: "Write the question into docs/STATUS.md under Follow-ups and stop."
-5. When it says it's done, **open a session with Opus** (or come back to the planning session) and paste:
+What happens for each task: builder writes it → reviewer checks it → if there are problems, builder fixes them (up to 2 rounds) → reviewer approves and pushes → next task. You get a 2-3 line plain-English update after each task.
 
-   ```
-   Review task T01 in D:\Claude Files\Lead-Generator against its task card.
-   If it's good, mark it done in docs/STATUS.md and push to GitHub. If not, list the fixes.
-   ```
+**It stops and asks you when:**
+- it needs a key, account or click only you can do;
+- a task is stuck after 2 fix rounds;
+- a push fails;
+- before the optional task T20 and before the v1.0 release.
 
-6. If the reviewer lists fixes, go back to a Sonnet session and paste:
+Tests that need your real keys don't stop the build: they're listed as "manual check pending" in `docs/STATUS.md` for you to do later.
 
-   ```
-   Read CLAUDE.md. The reviewer asked for these fixes to T01: <paste the list>. Make them, rerun the tests, update STATUS.md.
-   ```
-
-7. Repeat for the next task.
+**To pause:** press Esc or close the session. Run `/build all` again later; it picks up from `docs/STATUS.md`.
 
 ## Things you'll be asked for along the way
 | When | What | Cost |
 |---|---|---|
-| T04 test | Serper API key (serper.dev) | free (2,500 searches, one-time) |
-| T09 test | Hunter key (hunter.io), Reoon key (reoon.com) | free tiers |
-| T12 test | lemlist API key + a test lemlist campaign | needs a lemlist plan |
-| T14 test | A Gmail/Workspace app password for a test mailbox | free |
-| T17 test | ChatGPT paid plan with Developer Mode (for the ChatGPT connector) | your ChatGPT plan |
+| T04 check | Serper API key (serper.dev) | free (2,500 searches, one-time) |
+| T09 check | Hunter key (hunter.io), Reoon key (reoon.com) | free tiers |
+| T12 check | lemlist API key + a test lemlist campaign | needs a lemlist plan |
+| T14 check | A Gmail/Workspace app password for a test mailbox | free |
+| T17 check | ChatGPT paid plan with Developer Mode (for the ChatGPT connector) | your ChatGPT plan |
 
 Keys go into the tool's own key store (`leadgen keys set …` or the dashboard), **never** into the code or GitHub.
 
-## Rough effort
-Foundation and data (T01–T07): ~7 sessions. People, email, drafting, QA (T08–T11): ~4–6 sessions (T08 and T11 are the biggest). Delivery and interfaces (T12–T17): ~6–8 sessions. Docs and release (T18–T19): ~2 sessions.
+## Rough size
+About 21 tasks. Each needs one builder run and one reviewer run, plus fix rounds when needed: expect roughly 45–65 agent runs in total. T08 (people finder) and T11 (quality checks) are the biggest. Running `/build` a few tasks at a time lets you watch your usage.
+
+## Manual fallback (if you ever want to run a task by hand)
+- Sonnet session: `Read CLAUDE.md, then do task T05 (docs/tasks/T05-offer-intake.md). Follow the task protocol exactly. Don't push to GitHub.`
+- Opus session: `Review task T05 against its task card. If it's good, mark it done in docs/STATUS.md and push to GitHub. If not, list the fixes.`

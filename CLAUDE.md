@@ -3,6 +3,8 @@
 You are building **Lead Generator**, a local, AI-driven lead generation toolkit. Read `docs/PLAN.md` before any task. It is the source of truth.
 
 ## How work is organised
+- Automated loop: `/build` (see `docs/BUILD_GUIDE.md`) dispatches the `builder` agent (Sonnet) and the `reviewer` agent (Opus) defined in `.claude/agents/`. Their instructions add to these rules.
+
 - Work is split into task cards: `docs/tasks/Txx-*.md`. Do **exactly one task card per session** unless told otherwise.
 - The builder is Claude Sonnet 5.5 (high). The reviewer is Claude Opus. The owner is Alok (non-technical; explain results in plain English).
 - Progress lives in `docs/STATUS.md`. Verified external facts and design decisions live in `docs/DECISIONS.md`.
