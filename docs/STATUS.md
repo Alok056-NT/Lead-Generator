@@ -10,7 +10,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T04 | Provider framework and search providers | done | Reviewed 2026-10-14 (fix round 2). manual check pending: `leadgen keys set serper` + `leadgen keys test serper` with the owner's real key (1 credit); note the status/body a wrong key returns |
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
-| T07 | Companies: add, verify, approve | todo | |
+| T07 | Companies: add, verify, approve | review | manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
 | T08 | People finder and confirmation engine | todo | |
 | T09 | Email finder and verification | todo | |
 | T10 | Drafting workflow | todo | |
@@ -60,6 +60,11 @@ Extra beyond card: `guide_text()`, `find_unconfirmed()`, hard URL checks (no loc
 Files: src/leadgen/services/{designations,designation_templates,seniority,campaign}.py, tests/{test_designations,test_seniority,test_campaign}.py, tests/fixtures/titles.py (121 synthetic titles), docs/{DECISIONS,STATUS}.md.
 Corrections to the worker drafts: finance, marketing, sales, procurement, facilities and customer_service keyword lists rewritten to drop redundant entries and ambiguous words (`seo*`, `cro`, bare `controller`); fixture "Accounts Payable Manager" now `finance`; fixture header comments updated; "IT Network Operations Manager" -> `it` is correct (the false friend leaves "IT Manager"). Extra beyond the card (see DECISIONS T06): CMO/CIO/CISO/CPO as c_suite, trailing "X Head" as vp, false-rank guards (product owner, lead generation, assistant to ...), `search_mode`/option shortcuts on `update_campaign`, unique export-folder names.
 
+### T07 (review)
+`services/companies.py` has `search_web` (cached, counted against the campaign's `search` budget, structured `needs_key` / `quota_exhausted` / `budget_reached` replies via `CompanyError.as_response()`), `add_companies` (cleans names, aliases and domains, de-duplicates by domain then name, stores excluded/competitor matches as `excluded`, checks domains in 4 threads with a DNS A/AAAA/MX look-up then a HEAD/GET of the homepage, never blocks insertion), `list_companies`, `set_company_status`, `approve_all`, `import_companies_csv` (the NXT format) and `research_queries`. `services/budget.py` is new: per-campaign `limit` / `used` / `charge` / `check` (usage lives in the `settings` table; T08, T09 reuse it). Warnings that need a human (ambiguous alias, domain redirects to another site, invalid domain) are stored as `Warning: ...` lines in the company's `notes`, and `approve_all` skips any company with one. 928 tests pass (1 POSIX-only skip), ruff clean, coverage companies 98%, budget 100%. Adding 5 real companies and reading `domain_ok`: **manual check pending** (owner).
+Files: src/leadgen/services/{companies,budget}.py, tests/test_companies.py, docs/{DECISIONS,STATUS}.md.
+Extra beyond card: `check_domains(campaign_id, company_ids=None)` (finishes or repeats domain checks when the 45 s time limit cut a big batch short), `CompanyError`, `normalize_domain`, optional `country` per company, `rejected` list for bad input items, `provider`/`campaign_id`/`confirm` arguments on `search_web`.
+
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
 - T01: `guides/*.md` and `schema.sql` are listed as package data but do not exist yet (T02/T18 create them).
@@ -94,3 +99,9 @@ Corrections to the worker drafts: finance, marketing, sales, procurement, facili
 - T13/T17: for remote ChatGPT mode, resolve DNS for each requested host and redirect hop and refuse private/loopback/link-local IPs (the T05 URL guard checks only the typed address and redirect targets as written, not what a hostname resolves to).
 - T05: `proof_points` claims are not checked against `forbidden_claims` (the card only asks for confirmed vs forbidden); T11 M05/M06 should treat both.
 - T05: `offer_web._check_public_url` lets a `ValueError` escape (not `WebError`) when the typed host contains a NUL character (`socket.inet_aton` rejects it before the OSError path); `ingest_url` then raises instead of returning the structured error. Fails closed, so harmless; catch `ValueError` there too when next touching the module.
+- T07: `search_web(..., campaign_id, confirm)` counts searches in `budget.used(campaign_id, "search")`; T08 must use the same `budget.check`/`charge` for people searches (kind `search`), T09 for `hunter` and `verify`. The card's `search_web(query, country, num)` signature gained `campaign_id`, `confirm` and a test-only `provider`; T13 should expose the first three.
+- T07: `normalize_domain` keeps the full host minus `www.` (no public-suffix list), so `careers.example.com` and `example.com` are different domains for de-duplication. Redirects to a different site are flagged with a warning.
+- T07: the domain check does not resolve DNS to check for private IPs (same limit as T05); the homepage request itself refuses localhost/private addresses and redirects to them.
+- T07: `import_companies_csv(path)` reads any local path; for remote ChatGPT mode (T13/T17) restrict it to files under the workspace.
+- T07: duplicates are reported but not merged (a duplicate's new aliases/notes are not added to the existing company). Add a merge step if owners ask for it.
+- T07: no company delete/remove tool yet (the card has none); use status `excluded`.
