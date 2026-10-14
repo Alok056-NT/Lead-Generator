@@ -11,7 +11,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
 | T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
 | T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
-| T08 | People finder and confirmation engine | review | manual check pending: real 3-company search (reviewer/owner, spends ~6 Serper credits) and compare with the NXT pilot |
+| T08 | People finder and confirmation engine | changes | manual check pending: real 3-company search (reviewer/owner, spends ~6 Serper credits) and compare with the NXT pilot |
 | T09 | Email finder and verification | todo | |
 | T10 | Drafting workflow | todo | |
 | T11 | QA engine and AI review | todo | |
