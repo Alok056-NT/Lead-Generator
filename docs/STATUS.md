@@ -7,7 +7,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
 | T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
-| T04 | Provider framework and search providers | review | Reviewer fixes applied 2026-10-14 (rate-limiter timer, Brave quota pairing and country list, DDG challenge detection). Real-key check: manual check pending |
+| T04 | Provider framework and search providers | changes | Re-review 2026-10-14: round-1 fixes OK; 2 fixes (DECISIONS Brave row split/garbled, Brave quota ignores "limit 0 = unlimited"). Real-key check: manual check pending |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
 | T06 | Campaigns and designations | todo | |
 | T07 | Companies: add, verify, approve | todo | |
