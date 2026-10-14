@@ -67,3 +67,15 @@ def test_python_dash_m_runs(workspace):
     )
     assert result.returncode == 0
     assert result.stdout.strip() == __version__
+
+
+def test_doctor_creates_database_and_reports_version(capsys):
+    assert main(["doctor"]) == 0
+    assert "Database      : ok (schema v1)" in capsys.readouterr().out
+    assert paths.db_path().exists()
+
+
+def test_doctor_reports_broken_database(capsys):
+    paths.db_path().write_bytes(b"this is not a sqlite database" * 20)
+    assert main(["doctor"]) == 1
+    assert "Database      : PROBLEM" in capsys.readouterr().out

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
-from leadgen import __version__
+from leadgen import __version__, db
 from leadgen.core import config, paths, secrets
 from leadgen.core.logging import setup_logging
 
@@ -16,7 +17,6 @@ MIN_PYTHON = (3, 11)
 
 # Components built by later tasks; doctor lists them so the owner can see what is coming.
 _LATER_COMPONENTS = (
-    "database",
     "search and email providers",
     "MCP server",
     "dashboard",
@@ -82,6 +82,13 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     except config.ConfigError as exc:
         healthy = False
         print(f"Settings      : PROBLEM - {exc}")
+
+    try:
+        version = db.init_db()
+        print(f"Database      : ok (schema v{version})")
+    except (sqlite3.Error, OSError) as exc:
+        healthy = False
+        print(f"Database      : PROBLEM - {type(exc).__name__}")
 
     print("Later components:")
     for name in _LATER_COMPONENTS:
