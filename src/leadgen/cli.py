@@ -86,6 +86,9 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     try:
         version = db.init_db()
         print(f"Database      : ok (schema v{version})")
+    except RuntimeError as exc:  # db.connect(): SQLite too old (message is plain English)
+        healthy = False
+        print(f"Database      : PROBLEM - {exc}")
     except (sqlite3.Error, OSError) as exc:
         healthy = False
         print(f"Database      : PROBLEM - {type(exc).__name__}")

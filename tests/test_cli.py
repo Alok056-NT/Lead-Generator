@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from leadgen import __version__, cli
+from leadgen import __version__, cli, db
 from leadgen.cli import main
 from leadgen.core import paths, secrets
 
@@ -79,3 +79,11 @@ def test_doctor_reports_broken_database(capsys):
     paths.db_path().write_bytes(b"this is not a sqlite database" * 20)
     assert main(["doctor"]) == 1
     assert "Database      : PROBLEM" in capsys.readouterr().out
+
+
+def test_doctor_reports_old_sqlite(capsys, monkeypatch):
+    monkeypatch.setattr(db.sqlite3, "sqlite_version_info", (3, 30, 0))
+    assert main(["doctor"]) == 1
+    out = capsys.readouterr().out
+    assert "Database      : PROBLEM - SQLite" in out
+    assert "too old; 3.35 or newer is needed" in out

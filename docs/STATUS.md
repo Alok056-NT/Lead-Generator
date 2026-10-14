@@ -5,7 +5,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | Task | Title | Status | Notes |
 |---|---|---|---|
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
-| T02 | Database layer and schema | changes | |
+| T02 | Database layer and schema | review | |
 | T03 | Countries and compliance tables | todo | |
 | T04 | Provider framework and search providers | todo | |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
@@ -35,7 +35,7 @@ Files: pyproject.toml, .gitattributes, .github/workflows/tests.yml, src/leadgen/
 Extra beyond card: `core/fsutil.py` (shared atomic write helper), `shutdown_logging()`, `ConfigError`.
 
 ### T02 (review)
-SQLite layer: `schema.sql` holds all 15 PLAN section 6 tables (cascades, unique constraints incl. partial unique indexes for empty domain / LinkedIn URL, FK and lookup indexes). `db.py` has `connect` (foreign keys, WAL, 5 s busy timeout, Row factory), `session` (commit/rollback/close), `init_db` (idempotent, forward-only `MIGRATIONS` list tracked in `schema_version`, each migration atomic), `now`, and whitelisted helpers `insert/update/get/query/upsert` that auto-encode and decode `_json` columns. `leadgen doctor` now creates the database on first run and prints `Database : ok (schema v1)`. 80 tests pass (1 POSIX-only skip), ruff clean, db.py coverage 98%.
+SQLite layer: `schema.sql` holds all 15 PLAN section 6 tables (cascades, unique constraints incl. partial unique indexes for empty domain / LinkedIn URL, FK and lookup indexes). `db.py` has `connect` (foreign keys, WAL, 5 s busy timeout, Row factory), `session` (commit/rollback/close), `init_db` (idempotent, forward-only `MIGRATIONS` list tracked in `schema_version`, each migration atomic), `now`, and whitelisted helpers `insert/update/get/query/upsert` that auto-encode and decode `_json` columns. `leadgen doctor` now creates the database on first run and prints `Database : ok (schema v1)`. 81 tests pass (1 POSIX-only skip), ruff clean, db.py coverage 98%.
 Files: src/leadgen/{schema.sql,db.py,cli.py}, tests/{test_db.py,test_cli.py}, docs/{DECISIONS.md,STATUS.md}.
 Extra beyond card: `current_version()`; `session(path)`/`init_db(path)` accept an explicit path (used by tests); helpers take `conn` as first argument.
 
@@ -50,3 +50,4 @@ Extra beyond card: `current_version()`; `session(path)`/`init_db(path)` accept a
 - T02: adapters (MCP server T13, dashboard T16) must call `db.init_db()` at startup; `connect()`/`session()` do not create the schema.
 - T02: no `delete` helper yet (cascades are done with plain SQL); add one in the first service that needs it. `qa_issues` and `search_cache` have no foreign keys, so services must clear a deleted entity's `qa_issues` rows.
 - T02: `upsert` conflict targets for partial unique indexes are listed in `db._PARTIAL_CONFLICT`; add an entry if a later migration adds another partial unique index.
+- T02: the migration runner is not safe when two processes start at the same time (MCP server and dashboard both run `init_db`). Once a migration exists, both can read the same applied version and the second fails (e.g. "duplicate column"). Whoever adds the first migration should use `BEGIN IMMEDIATE` and re-read `current_version` inside the transaction. No code change is needed now because `MIGRATIONS` is empty.
