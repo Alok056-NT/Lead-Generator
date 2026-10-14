@@ -52,6 +52,17 @@ def test_brave_request_and_parse(brave_key):
 
 
 @respx.mock
+def test_brave_country_outside_allowed_list_sends_all(brave_key):
+    route = respx.get(BRAVE_URL).mock(return_value=httpx.Response(200, json=BRAVE_PAYLOAD))
+    brave.BraveProvider().search("q", "sg")
+    assert route.calls[0].request.url.params["country"] == "ALL"
+    brave.BraveProvider().search("q", "")
+    assert "country" not in route.calls[1].request.url.params
+    assert "GB" in brave.BRAVE_COUNTRIES and "SG" not in brave.BRAVE_COUNTRIES
+    assert len(brave.BRAVE_COUNTRIES) == 38
+
+
+@respx.mock
 def test_brave_no_web_section_is_empty(brave_key):
     respx.get(BRAVE_URL).mock(return_value=httpx.Response(200, json={"type": "search"}))
     assert brave.BraveProvider().search("q") == []
@@ -66,12 +77,50 @@ def test_brave_errors(brave_key, sleeps):
         provider.search("q")
     assert info.value.code == "auth"
 
-    route.mock(return_value=httpx.Response(429, headers={"x-ratelimit-reset": "1, 600000"}))
+    def limited(**headers):
+        return httpx.Response(429, headers=headers)
+
+    # Per-second window empty, monthly window fine: a plain rate limit, not quota.
+    route.mock(
+        return_value=limited(
+            **{
+                "x-ratelimit-policy": "1;w=1, 15000;w=2592000",
+                "x-ratelimit-remaining": "0, 500",
+                "x-ratelimit-reset": "1, 1419704",
+            }
+        )
+    )
+    with pytest.raises(ProviderError) as info:
+        provider.search("q")
+    assert info.value.code == "rate_limited"
+
+    # Monthly window empty: quota.
+    route.mock(
+        return_value=limited(
+            **{
+                "x-ratelimit-policy": "1;w=1, 15000;w=2592000",
+                "x-ratelimit-remaining": "1, 0",
+                "x-ratelimit-reset": "1, 1419704",
+            }
+        )
+    )
     with pytest.raises(ProviderError) as info:
         provider.search("q")
     assert info.value.code == "quota"
 
-    route.mock(return_value=httpx.Response(429, headers={"x-ratelimit-reset": "1, 300"}))
+    # Without a Policy header the windows are sized by their reset times.
+    no_policy = {"x-ratelimit-reset": "1, 1419704"}
+    route.mock(return_value=limited(**no_policy, **{"x-ratelimit-remaining": "0, 500"}))
+    with pytest.raises(ProviderError) as info:
+        provider.search("q")
+    assert info.value.code == "rate_limited"
+    route.mock(return_value=limited(**no_policy, **{"x-ratelimit-remaining": "1, 0"}))
+    with pytest.raises(ProviderError) as info:
+        provider.search("q")
+    assert info.value.code == "quota"
+
+    # No rate-limit headers at all: rate_limited.
+    route.mock(return_value=httpx.Response(429))
     with pytest.raises(ProviderError) as info:
         provider.search("q")
     assert info.value.code == "rate_limited"
@@ -160,3 +209,19 @@ def test_ddg_challenge_page_is_rate_limited(sleeps, ready_db):
         ddg.DuckDuckGoProvider().search("q")
     assert info.value.code == "rate_limited"
     assert base.usage("ddg")["calls"] == 0
+
+
+@respx.mock
+def test_ddg_results_mentioning_anomaly_are_not_a_challenge(sleeps, ready_db):
+    _allow_ddg()
+    page = (
+        '<div class="result"><a class="result__a" href="https://www.example.org/anomaly">'
+        "Anomaly detection explained</a>"
+        '<a class="result__snippet">Anomaly is a fictional creative agency.</a></div>'
+    )
+    respx.post(ddg.ENDPOINT).mock(return_value=httpx.Response(200, text=page))
+    results = ddg.DuckDuckGoProvider().search("anomaly detection")
+    assert [r.link for r in results] == ["https://www.example.org/anomaly"]
+    assert base.usage("ddg")["calls"] == 1
+    assert ddg.is_challenge('<script src="/anomaly.js"></script>')
+    assert not ddg.is_challenge(page)

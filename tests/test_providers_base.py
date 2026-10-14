@@ -53,10 +53,10 @@ def test_usage_aggregates_by_month(ready_db):
 
 def test_rate_limiter_spaces_calls():
     limiter = base.RateLimiter(20)  # 50 ms apart
-    start = time.monotonic()
+    start = time.perf_counter()
     for _ in range(4):
         limiter.acquire()
-    assert time.monotonic() - start >= 0.14
+    assert time.perf_counter() - start >= 0.14
     with pytest.raises(ValueError):
         base.RateLimiter(0)
 
@@ -67,7 +67,7 @@ def test_rate_limiter_is_thread_safe():
 
     def work():
         limiter.acquire()
-        stamps.append(time.monotonic())
+        stamps.append(time.perf_counter())
 
     threads = [threading.Thread(target=work) for _ in range(6)]
     for t in threads:

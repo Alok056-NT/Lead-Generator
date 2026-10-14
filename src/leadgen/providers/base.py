@@ -119,9 +119,12 @@ class RateLimiter:
         self._lock = threading.Lock()
 
     def acquire(self) -> None:
-        """Block until a call is allowed."""
+        """Block until a call is allowed.
+
+        Uses `perf_counter` (not `monotonic`, which ticks every 15.6 ms on Windows).
+        """
         with self._lock:
-            now = time.monotonic()
+            now = time.perf_counter()
             start = max(now, self._next)
             self._next = start + self._interval
             wait = start - now

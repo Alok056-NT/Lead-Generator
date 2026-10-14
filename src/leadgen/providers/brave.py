@@ -16,8 +16,14 @@ from leadgen.providers.search import SearchResult
 ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 ENV_KEY = "BRAVE_API_KEY"
 MAX_COUNT = 20
+# Allowed values of the `country` parameter (API reference, checked 2026-10-14). Other codes
+# (e.g. SG, AE) are rejected by Brave, so we send ALL for them.
+BRAVE_COUNTRIES = frozenset(
+    "AR AU AT BE BR CA CL DK FI FR DE GR HK IN ID IT JP KR MY MX NL NZ NO CN PL PT PH RU SA ZA "
+    "ES SE CH TW TR GB US ALL".split()
+)
 _TAG_RE = re.compile(r"<[^>]+>")
-# A rate-limit window longer than a day means the monthly allowance is used up.
+# A rate-limit window longer than a day is the monthly allowance.
 _QUOTA_WINDOW_SECONDS = 86_400
 
 INFO = ProviderInfo(
@@ -39,10 +45,22 @@ def _clean(text: Any) -> str:
 
 
 def _quota_hit(response: httpx.Response) -> bool:
-    """True for a 429 whose reset header points more than a day away (monthly quota)."""
-    values = response.headers.get("x-ratelimit-reset", "")
-    numbers = [int(n) for n in re.findall(r"\d+", values)]
-    return bool(numbers) and max(numbers) > _QUOTA_WINDOW_SECONDS
+    """True when a window longer than a day has nothing left (monthly quota used up).
+
+    Brave lists every window in each header, in the same order (per-second first, monthly
+    second): `Policy: 1;w=1, 15000;w=2592000`, `Remaining: 0, 14523`, `Reset: 1, 1419704`.
+    So the windows are paired by position; a plain per-second 429 is `rate_limited` even
+    though the monthly reset is far away.
+    """
+    headers = response.headers
+    remaining = [int(n) for n in re.findall(r"\d+", headers.get("x-ratelimit-remaining", ""))]
+    sizes = [int(n) for n in re.findall(r"w=(\d+)", headers.get("x-ratelimit-policy", ""))]
+    if len(sizes) != len(remaining):  # no usable Policy: fall back to the reset times
+        sizes = [int(n) for n in re.findall(r"\d+", headers.get("x-ratelimit-reset", ""))]
+    return any(
+        left <= 0 and size > _QUOTA_WINDOW_SECONDS
+        for left, size in zip(remaining, sizes, strict=False)
+    )
 
 
 class BraveProvider:
@@ -66,8 +84,9 @@ class BraveProvider:
             raise ValueError("query must not be empty")
         num = max(1, min(int(num), MAX_COUNT))
         params: dict[str, str | int] = {"q": query, "count": num}
-        if country_gl.strip():
-            params["country"] = country_gl.strip().upper()
+        country = country_gl.strip().upper()
+        if country:
+            params["country"] = country if country in BRAVE_COUNTRIES else "ALL"
         headers = {"X-Subscription-Token": key, "Accept": "application/json"}
 
         def send() -> httpx.Response:

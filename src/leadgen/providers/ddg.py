@@ -74,6 +74,12 @@ def parse_html(page: str) -> list[SearchResult]:
     return results
 
 
+def is_challenge(page: str) -> bool:
+    """True for DuckDuckGo's human-check page (detected by its markup, not by the word)."""
+    head = page[:50000].lower()
+    return "anomaly-modal" in head or "anomaly.js" in head
+
+
 def _allowed() -> bool:
     try:
         return config.load_settings().allow_ddg_fallback
@@ -111,9 +117,9 @@ class DuckDuckGoProvider:
         error = base.error_for_status(response, "DuckDuckGo")
         if error is not None:
             raise error
-        if response.status_code == 202 or "anomaly" in response.text[:20000].lower():
-            raise ProviderError("rate_limited", "DuckDuckGo asked for a human check.")
         results = parse_html(response.text)
+        if response.status_code == 202 or (not results and is_challenge(response.text)):
+            raise ProviderError("rate_limited", "DuckDuckGo asked for a human check.")
         base.record_usage(INFO.key, calls=1, credits=0)
         return results[: max(1, num)]
 
