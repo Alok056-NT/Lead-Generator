@@ -18,6 +18,11 @@ VERIFY_URL = "https://emailverifier.reoon.com/api/v1/verify"
 BALANCE_URL = "https://emailverifier.reoon.com/api/v1/check-account-balance/"
 ENV_KEY = "REOON_API_KEY"
 MODE = "power"  # quick mode does not detect catch-all domains
+# Power mode can take a while (Reoon: "a few seconds to more than a minute"). We wait 25 s, so
+# one check cannot eat a whole find_emails call (about 60 s); a slower check counts as a failure
+# and the next verifier is tried. It is never retried: Reoon may charge each attempt.
+READ_TIMEOUT_SECONDS = 25.0
+VERIFY_TIMEOUT = httpx.Timeout(READ_TIMEOUT_SECONDS, connect=10.0)
 
 INFO = ProviderInfo(
     key="reoon",
@@ -70,20 +75,23 @@ class ReoonProvider:
         """True when REOON_API_KEY is set."""
         return bool(secrets.get(ENV_KEY))
 
-    def _get(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _get(
+        self, url: str, params: dict[str, Any], paid: bool = False
+    ) -> dict[str, Any]:
         key = secrets.get(ENV_KEY)
         if not key:
             raise ProviderError("not_configured", f"{ENV_KEY} is not set.")
         query = {**params, "key": key}
+        extra: dict[str, Any] = {"timeout": VERIFY_TIMEOUT} if paid else {}
 
         def send() -> httpx.Response:
             _limiter.acquire()
             if self._client is not None:
-                return self._client.get(url, params=query)
+                return self._client.get(url, params=query, **extra)
             with http.client() as client:
-                return client.get(url, params=query)
+                return client.get(url, params=query, **extra)
 
-        response = base.send_with_retry(send)
+        response = base.send_with_retry(send, retry_read_timeout=not paid)
         error = base.error_for_status(response, "Reoon")
         if error is not None:
             raise error
@@ -95,7 +103,7 @@ class ReoonProvider:
 
     def verify(self, email: str) -> Verdict:
         """Check one address. One credit for any answer except `unknown`."""
-        data = self._get(VERIFY_URL, {"email": email, "mode": MODE})
+        data = self._get(VERIFY_URL, {"email": email, "mode": MODE}, paid=True)
         raw = str(data.get("status") or "").lower()
         status = _VERDICTS.get(raw, "unknown")
         catch_all = raw == "catch_all" or data.get("is_catch_all") is True

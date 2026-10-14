@@ -362,3 +362,52 @@ def test_zerobounce_test_uses_getcredits(keys):
     with pytest.raises(ProviderError) as info:
         zerobounce.ZeroBounceProvider().verify("a@example.com")
     assert info.value.code == "not_configured"
+
+
+# --- timeouts: a paid check is never sent twice ---------------------------------------------
+
+
+@respx.mock
+def test_reoon_read_timeout_is_one_call_and_an_http_error(keys, sleeps):
+    route = respx.get(REOON_VERIFY).mock(side_effect=httpx.ReadTimeout("slow"))
+    with pytest.raises(ProviderError) as info:
+        reoon.ReoonProvider().verify("a@example.com")
+    assert info.value.code == "http"
+    assert route.call_count == 1 and sleeps == []
+    assert base.usage("reoon", "all")["calls"] == 0
+
+
+@respx.mock
+def test_reoon_verify_waits_longer_than_the_default_client(keys):
+    seen = []
+
+    def reply(request):
+        seen.append(request.extensions["timeout"])
+        return httpx.Response(200, json={"status": "safe"})
+
+    respx.get(REOON_VERIFY).mock(side_effect=reply)
+    reoon.ReoonProvider().verify("a@example.com")
+    assert seen[0]["read"] == reoon.READ_TIMEOUT_SECONDS > 20
+
+
+@respx.mock
+def test_zerobounce_read_timeout_is_one_call(keys, sleeps):
+    route = respx.get(ZB_VALIDATE).mock(side_effect=httpx.ReadTimeout("slow"))
+    with pytest.raises(ProviderError) as info:
+        zerobounce.ZeroBounceProvider().verify("a@example.com")
+    assert info.value.code == "http" and route.call_count == 1
+
+
+@pytest.mark.parametrize("path", ["email-verifier", "domain-search", "email-finder"])
+@respx.mock
+def test_hunter_read_timeout_is_one_call(keys, sleeps, path):
+    route = respx.get(f"{HUNTER}/{path}").mock(side_effect=httpx.ReadTimeout("slow"))
+    provider = hunter.HunterProvider()
+    with pytest.raises(ProviderError) as info:
+        if path == "email-verifier":
+            provider.verify("a@example.com")
+        elif path == "domain-search":
+            provider.domain_pattern("example.com")
+        else:
+            provider.find("Aria", "Tan", "example.com")
+    assert info.value.code == "http" and route.call_count == 1

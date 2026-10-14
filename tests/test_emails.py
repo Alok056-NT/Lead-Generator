@@ -7,7 +7,9 @@ recorded stub, and verifiers/Hunter are in-memory fakes unless a test says other
 from __future__ import annotations
 
 import itertools
+import smtplib
 import types
+from datetime import UTC, datetime, timedelta
 
 import dns.resolver
 import httpx
@@ -34,6 +36,9 @@ class FakeAnswer:
     def __init__(self, host, preference=10):
         self.exchange = host + "."
         self.preference = preference
+
+
+_REAL_SCRAPE = emails.scrape_site_emails  # the fixture below replaces it in every test
 
 
 @pytest.fixture(autouse=True)
@@ -260,15 +265,19 @@ def test_infer_pattern_from_local_part_without_names():
 
 @pytest.mark.parametrize(
     "address",
-    ["info@x.com", "HR@x.com", "careers@x.com", "admin@x.com", "contact@x.com", "hello@x.com",
-     "sales@x.com", "no-reply@x.com", "noreply@x.com", "customer.service@x.com", "info",
-     "h.r@x.com"],
+    ["info@northwind.example", "HR@northwind.example", "careers@northwind.example",
+     "admin@northwind.example", "contact@northwind.example", "hello@northwind.example",
+     "sales@northwind.example", "no-reply@northwind.example", "noreply@northwind.example",
+     "customer.service@northwind.example", "info", "h.r@northwind.example"],
 )  # fmt: skip
 def test_role_addresses_detected(address):
     assert emails.is_role_address(address)
 
 
-@pytest.mark.parametrize("address", ["aria.tan@x.com", "tan@x.com", "ariahr@x.com"])
+@pytest.mark.parametrize(
+    "address",
+    ["aria.tan@northwind.example", "tan@northwind.example", "ariahr@northwind.example"],
+)
 def test_person_addresses_are_not_roles(address):
     assert not emails.is_role_address(address)
 
@@ -387,7 +396,7 @@ def test_derive_uses_hunter_provider_only_when_configured(ready_db, sleeps):
 
 # --- website scraping -----------------------------------------------------------------------
 
-SITE = "https://acme-example.com"
+SITE = "https://acme.example"
 ROBOTS = f"{SITE}/robots.txt"
 
 
@@ -405,36 +414,32 @@ def test_scrape_reads_mailto_and_text_on_same_domain(real_scrape):
         return_value=httpx.Response(
             200,
             headers={"content-type": "text/html"},
-            text='<a href="mailto:Aria.Tan@acme-example.com?subject=Hi">mail</a>'
-            '<a href="mailto:press@other-example.org">other</a>'
-            "<p>Write to info&#64;acme-example.com or bob%2Elee@acme-example.com</p>",
+            text='<a href="mailto:Aria.Tan@acme.example?subject=Hi">mail</a>'
+            '<a href="mailto:press@other.example">other</a>'
+            "<p>Write to info&#64;acme.example or bob%2Elee@acme.example</p>",
         )
     )
     respx.get(f"{SITE}/about").mock(
         return_value=httpx.Response(
             200,
             headers={"content-type": "text/html"},
-            text="<p>carl.tan@acme-example.com, aria.tan@acme-example.com</p>",
+            text="<p>carl.tan@acme.example, aria.tan@acme.example</p>",
         )
     )
-    found = emails.scrape_site_emails("www.acme-example.com")
+    found = emails.scrape_site_emails("www.acme.example")
     assert found == [
-        "aria.tan@acme-example.com",
-        "info@acme-example.com",
-        "carl.tan@acme-example.com",
-    ] or set(found) == {
-        "aria.tan@acme-example.com",
-        "info@acme-example.com",
-        "bob.lee@acme-example.com",
-        "carl.tan@acme-example.com",
-    }
-    assert all(a.endswith("@acme-example.com") for a in found)
+        "aria.tan@acme.example",
+        "info@acme.example",
+        "bob.lee@acme.example",
+        "carl.tan@acme.example",
+    ]
+    assert all(a.endswith("@acme.example") for a in found)
     # cached: a second call makes no more requests
     count = len(respx.calls)
-    assert emails.scrape_site_emails("acme-example.com") == found
+    assert emails.scrape_site_emails("acme.example") == found
     assert len(respx.calls) == count
     # roles are found but never used for the pattern
-    assert emails._pattern_from_examples("acme-example.com", found) == "{first}.{last}"
+    assert emails._pattern_from_examples("acme.example", found) == "{first}.{last}"
 
 
 @respx.mock
@@ -444,7 +449,7 @@ def test_scrape_honours_robots_and_failures(real_scrape):
     )
     contact = respx.get(f"{SITE}/contact").mock(return_value=httpx.Response(200, text="x"))
     respx.get(f"{SITE}/about").mock(return_value=httpx.Response(500))
-    assert emails.scrape_site_emails("acme-example.com") == []
+    assert emails.scrape_site_emails("acme.example") == []
     assert contact.call_count == 0
 
 
@@ -453,13 +458,13 @@ def test_scrape_network_error_gives_empty(real_scrape):
     respx.get(ROBOTS).mock(side_effect=httpx.ConnectError("down"))
     respx.get(f"{SITE}/contact").mock(side_effect=httpx.ConnectError("down"))
     respx.get(f"{SITE}/about").mock(side_effect=httpx.ConnectError("down"))
-    assert emails.scrape_site_emails("acme-example.com") == []
+    assert emails.scrape_site_emails("acme.example") == []
 
 
 @respx.mock
 @pytest.mark.parametrize("domain", ["localhost", "192.168.1.5", "intranet.local", "127.1", ""])
 def test_scrape_refuses_private_addresses(real_scrape, domain):
-    route = respx.route().mock(return_value=httpx.Response(200, text="info@x.com"))
+    route = respx.route().mock(return_value=httpx.Response(200, text="info@northwind.example"))
     assert emails.scrape_site_emails(domain) == []
     assert route.call_count == 0
 
@@ -472,7 +477,7 @@ def test_scrape_stops_on_redirect_to_private_address(real_scrape):
     )
     about = respx.get(f"{SITE}/about").mock(return_value=httpx.Response(404))
     local = respx.get("http://127.0.0.1/secret").mock(return_value=httpx.Response(200))
-    assert emails.scrape_site_emails("acme-example.com") == []
+    assert emails.scrape_site_emails("acme.example") == []
     assert local.call_count == 0 and about.call_count == 0
 
 
@@ -625,43 +630,123 @@ def test_api_answer_wins_over_smtp(ready_db, isolated):
     assert [h for h, _ in isolated.smtp] == ["mail.small.example"]  # inconclusive: SMTP tried
 
 
-def test_smtp_rcpt_real_function_handles_connection_errors(monkeypatch):
-    """The real `_smtp_rcpt` against a stub SMTP class (no sockets)."""
-    monkeypatch.undo()
+class ScriptedSMTP:
+    """A stand-in for `smtplib.SMTP` with scripted replies; records the commands it receives."""
 
-    class Stub:
-        code = 250
+    mail_reply = (250, b"2.1.0 ok")
+    replies: dict = {}  # recipient -> (code, text); anything else is accepted
+    log: list = []
+    connect_error: Exception | None = None
 
-        def __init__(self, *a, **k):
-            pass
+    def __init__(self, *a, **k):
+        pass
 
-        def connect(self, host, port):
-            self.port = port
+    def connect(self, host, port):
+        if ScriptedSMTP.connect_error:
+            raise ScriptedSMTP.connect_error
+        ScriptedSMTP.log.append(("connect", host, port))
 
-        def ehlo_or_helo_if_needed(self):
-            pass
+    def ehlo_or_helo_if_needed(self):
+        pass
 
-        def mail(self, sender):
-            pass
+    def mail(self, sender):
+        ScriptedSMTP.log.append(("mail", sender))
+        return ScriptedSMTP.mail_reply
 
-        def rcpt(self, email):
-            return Stub.code, b"ok"
+    def rcpt(self, recipient):
+        ScriptedSMTP.log.append(("rcpt", recipient))
+        return ScriptedSMTP.replies.get(recipient, (250, b"2.1.5 ok"))
 
-        def close(self):
-            pass
+    def close(self):
+        pass
 
-    monkeypatch.setattr(emails.smtplib, "SMTP", Stub)
-    assert emails._smtp_rcpt("mx.small.example", "a@small.example") is True
-    for code, expected in ((550, False), (553, False), (451, None), (250, True)):
-        Stub.code = code
-        assert emails._smtp_rcpt("mx.small.example", "a@small.example") is expected
 
-    class Broken(Stub):
-        def connect(self, host, port):
-            raise OSError("blocked")
+@pytest.fixture
+def scripted_smtp(monkeypatch):
+    monkeypatch.undo()  # use the real `_smtp_rcpt`, with the scripted class instead of sockets
+    ScriptedSMTP.mail_reply = (250, b"2.1.0 ok")
+    ScriptedSMTP.replies = {}
+    ScriptedSMTP.log = []
+    ScriptedSMTP.connect_error = None
+    monkeypatch.setattr(emails.smtplib, "SMTP", ScriptedSMTP)
+    return ScriptedSMTP
 
-    monkeypatch.setattr(emails.smtplib, "SMTP", Broken)
-    assert emails._smtp_rcpt("mx.small.example", "a@small.example") is None
+
+ADDR = "a@small.example"
+POSTMASTER = "postmaster@small.example"
+
+
+def test_smtp_rcpt_accepts_and_uses_the_null_sender(scripted_smtp):
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is True
+    assert ("mail", "") in scripted_smtp.log  # smtplib turns "" into MAIL FROM:<>
+    assert ("connect", "mx.small.example", 25) in scripted_smtp.log
+    assert smtplib.quoteaddr("") == "<>"
+
+
+def test_smtp_rcpt_plain_rejection_with_postmaster_accepted_is_invalid(scripted_smtp):
+    for code in (550, 551, 553):
+        scripted_smtp.log.clear()
+        scripted_smtp.replies = {ADDR: (code, b"5.1.1 no such user")}
+        assert emails._smtp_rcpt("mx.small.example", ADDR) is False
+        assert scripted_smtp.log[-1] == ("rcpt", POSTMASTER)  # asked in the same session
+    scripted_smtp.replies = {ADDR: (550, b"user unknown")}  # no enhanced code at all
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is False
+
+
+def test_smtp_rcpt_rejected_postmaster_means_unknown(scripted_smtp):
+    scripted_smtp.replies = {
+        ADDR: (550, b"5.1.1 no such user"),
+        POSTMASTER: (550, b"5.1.1 we dislike you"),
+    }
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is None
+
+
+@pytest.mark.parametrize(
+    "text", [b"5.7.1 SPF check failed", b"5.7.25 sender not allowed", b" 5.7.0 blocked by RBL"]
+)
+def test_smtp_rcpt_policy_rejection_means_unknown(scripted_smtp, text):
+    scripted_smtp.replies = {ADDR: (550, text)}
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is None
+    assert ("rcpt", POSTMASTER) not in scripted_smtp.log  # no need to ask
+
+
+def test_smtp_rcpt_other_5_codes_are_not_policy(scripted_smtp):
+    scripted_smtp.replies = {ADDR: (550, b"5.1.1 mailbox 5.7.1 unavailable")}  # not at the start
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is False
+
+
+def test_smtp_rcpt_refused_sender_means_unknown(scripted_smtp):
+    for reply in ((550, b"5.7.1 sender rejected"), (553, b"bad sender"), (451, b"later")):
+        scripted_smtp.log.clear()
+        scripted_smtp.mail_reply = reply
+        assert emails._smtp_rcpt("mx.small.example", ADDR) is None
+        assert not [c for c in scripted_smtp.log if c[0] == "rcpt"]  # never got as far as RCPT
+
+
+@pytest.mark.parametrize("code", [451, 452, 421, 554, 250])
+def test_smtp_rcpt_temporary_and_other_codes(scripted_smtp, code):
+    scripted_smtp.replies = {ADDR: (code, b"try later")}
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is (True if code == 250 else None)
+
+
+def test_smtp_rcpt_connection_errors_give_unknown(scripted_smtp):
+    scripted_smtp.connect_error = OSError("blocked")
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is None
+    scripted_smtp.connect_error = smtplib.SMTPServerDisconnected("bye")
+    assert emails._smtp_rcpt("mx.small.example", ADDR) is None
+
+
+def test_smtp_verify_does_not_call_a_policy_refusal_invalid(scripted_smtp, ready_db, monkeypatch):
+    """End to end through `verify`: an SPF-style 5.7.1 refusal leaves the address a guess."""
+    emails._mx_cache.clear()
+    monkeypatch.setattr(
+        emails.dns.resolver, "resolve", lambda *a, **k: [FakeAnswer("mail.small.example")]
+    )
+    scripted_smtp.replies = {"aria.tan@small.example": (550, b"5.7.1 SPF fail")}
+    result = emails.verify("aria.tan@small.example", "other", verifiers=[])
+    assert result.status == "guess"
+    scripted_smtp.replies = {"aria.tan@small.example": (550, b"5.1.1 no such mailbox")}
+    assert emails.verify("aria.tan@small.example", "other", verifiers=[]).status == "invalid"
 
 
 # --- storing --------------------------------------------------------------------------------
@@ -1042,3 +1127,158 @@ def test_registry_replies_for_email_providers():
     )
     assert registry.quota_response("reoon")["quota_exhausted"]["name"].startswith("Reoon")
     assert base.ProviderError("quota").code == "quota"
+
+
+# --- one Hunter lookup and one site scrape per domain ---------------------------------------
+
+
+def test_hunter_without_a_pattern_is_asked_once_per_domain(cid):
+    company = add_company(cid)
+    for first in ("Aria", "Bob", "Carl"):
+        add_person(cid, company, first, "Tan")
+    hunter = FakeHunter(None)
+    out = run_find(cid, hunter=hunter)
+    assert hunter.calls == ["northwind.example"]
+    assert budget.used(cid, "hunter") == 1
+    assert out["credits_used"]["hunter"] == 1.0
+    assert out["this_call"]["verified"] == 3
+    assert emails._setting("hunter_none:northwind.example")
+
+
+def test_hunter_without_a_pattern_is_not_asked_again_in_later_chunks(cid):
+    company = add_company(cid)
+    for first in ("Aria", "Bob", "Carl"):
+        add_person(cid, company, first, "Tan")
+    hunter = FakeHunter(None)
+    cursor = None
+    while True:
+        out = run_find(cid, hunter=hunter, cursor=cursor, max_people_per_call=1)
+        if out["done"]:
+            break
+        cursor = out["next_cursor"]
+    assert hunter.calls == ["northwind.example"]
+    assert budget.used(cid, "hunter") == 1
+    # the estimate no longer counts the domain either
+    with db.session() as conn:
+        db.insert(conn, "companies", campaign_id=cid, name="Other", domain="other.example",
+                  status="approved")  # fmt: skip
+    emails._set_setting("pattern:other.example", '{"pattern": "{first}", "source": "hunter"}')
+    secrets.set("HUNTER_API_KEY", "hunter-key-1234")
+    assert emails.estimate_email_search(cid)["hunter_credits"] == 0
+
+
+def test_hunter_none_marker_expires(cid):
+    company = add_company(cid)
+    add_person(cid, company)
+    stale = (datetime.now(UTC) - timedelta(days=emails.HUNTER_NONE_DAYS + 1)).isoformat()
+    emails._set_setting("hunter_none:northwind.example", stale)
+    hunter = FakeHunter(None)
+    run_find(cid, hunter=hunter)
+    assert hunter.calls == ["northwind.example"]  # a stale marker is ignored...
+    run_find(cid, hunter=hunter, person_ids=None)
+    assert hunter.calls == ["northwind.example"]  # ...and replaced by a fresh one
+    emails._set_setting("hunter_none:northwind.example", "garbage")
+    assert emails._hunter_none_fresh("northwind.example") is False
+
+
+def test_hunter_pattern_found_is_cached_not_marked_none(cid):
+    company = add_company(cid)
+    add_person(cid, company)
+    run_find(cid, hunter=FakeHunter("{first}"))
+    assert emails._setting("hunter_none:northwind.example") is None
+    assert emails._cached_pattern("northwind.example") == ("{first}", "hunter")
+
+
+def test_hunter_error_does_not_set_the_none_marker(cid):
+    company = add_company(cid)
+    add_person(cid, company)
+    run_find(cid, hunter=FakeHunter(error=ProviderError("http", "boom")))
+    assert emails._setting("hunter_none:northwind.example") is None
+
+
+@respx.mock
+def test_website_is_scraped_once_for_many_people_of_a_domain(cid, monkeypatch):
+    monkeypatch.setattr(emails, "scrape_site_emails", _REAL_SCRAPE)
+    site = "https://northwind.example"
+    respx.get(f"{site}/robots.txt").mock(return_value=httpx.Response(404))
+    contact = respx.get(f"{site}/contact").mock(
+        return_value=httpx.Response(
+            200, headers={"content-type": "text/html"}, text="<p>bob.lee@northwind.example</p>"
+        )
+    )
+    about = respx.get(f"{site}/about").mock(return_value=httpx.Response(404))
+    company = add_company(cid)
+    for first in ("Aria", "Carl", "Dana"):
+        add_person(cid, company, first, "Tan")
+    out = run_find(cid, hunter=FakeHunter(None))
+    assert contact.call_count == 1 and about.call_count == 1
+    assert out["patterns_used"]["northwind.example"]["source"] == "website"
+
+
+def test_slow_provider_is_skipped_after_repeated_failures(cid):
+    company = add_company(cid)
+    for first in ("Aria", "Bob", "Carl", "Dana"):
+        add_person(cid, company, first, "Tan")
+    slow = FakeVerifier("reoon", default=ProviderError("http", "no reply in time"))
+    backup = FakeVerifier("zerobounce")
+    out = run_find(cid, verifiers=[slow, backup])
+    assert len(slow.calls) == emails.HTTP_FAILURES_BEFORE_SKIP  # then it is left alone
+    assert len(backup.calls) == 4 and out["this_call"]["verified"] == 4
+    assert out["provider_issues"]
+
+
+def test_slow_checks_stop_new_people_at_the_time_limit(cid, monkeypatch):
+    company = add_company(cid)
+    ids = [add_person(cid, company, first, "Tan") for first in ("Aria", "Bob", "Carl")]
+    clock = {"now": 0.0}
+    monkeypatch.setattr(emails.time, "monotonic", lambda: clock["now"])
+
+    class Slow(FakeVerifier):
+        def verify(self, email):
+            clock["now"] += 20.0  # each check takes 20 s
+            return super().verify(email)
+
+    out = run_find(cid, verifiers=[Slow("reoon")], max_people_per_call=3)
+    # person 2 starts at t=20 (< 25) and ends at 40; person 3 is not started
+    assert out["people_done"] == 2 and out["done"] is False
+    assert {r["person_id"] for r in email_rows()} == set(ids[:2])
+    assert out["next_cursor"] == str(ids[1])
+
+
+def test_person_is_deferred_when_the_deadline_passes_between_checks(cid, monkeypatch):
+    company = add_company(cid)
+    ids = [add_person(cid, company, first, "Tan") for first in ("Aria", "Bob")]
+    clock = {"now": 0.0}
+    monkeypatch.setattr(emails.time, "monotonic", lambda: clock["now"])
+
+    class First(FakeVerifier):
+        def verify(self, email):
+            if email.startswith("bob."):
+                clock["now"] += emails.VERIFY_DEADLINE_S + 1  # a slow, inconclusive check
+                return Verdict("unknown", "unknown", "reoon")
+            return super().verify(email)
+
+    second = FakeVerifier("zerobounce")
+    out = run_find(cid, verifiers=[First("reoon"), second])
+    assert out["people_done"] == 1 and out["done"] is False
+    assert second.calls == []  # not started: too late in this call
+    assert [r["person_id"] for r in email_rows()] == [ids[0]]  # no guess stored for Bob
+    assert out["next_cursor"] == str(ids[1] - 1)
+    # the next call starts a fresh clock and finishes Bob
+    clock["now"] = 0.0
+    again = run_find(cid, verifiers=[FakeVerifier("reoon")], cursor=out["next_cursor"])
+    assert again["done"] and again["this_call"]["verified"] == 1
+    assert {r["person_id"] for r in email_rows()} == set(ids)
+
+
+def test_first_person_is_never_deferred(cid, monkeypatch):
+    company = add_company(cid)
+    person = add_person(cid, company)
+    clock = {"now": 0.0}
+    monkeypatch.setattr(emails.time, "monotonic", lambda: clock["now"])
+    run = emails._Run(deadline=-1.0)  # already past
+    result = emails.verify("a.b@northwind.example", "google", verifiers=[FakeVerifier("reoon")],
+                           run=run)  # fmt: skip
+    assert result.status == "guess" and result.timed_out
+    out = run_find(cid, verifiers=[FakeVerifier("reoon")])
+    assert out["this_call"]["verified"] == 1 and person

@@ -47,7 +47,9 @@ class ZeroBounceProvider:
         """True when ZEROBOUNCE_API_KEY is set."""
         return bool(secrets.get(ENV_KEY))
 
-    def _get(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _get(
+        self, url: str, params: dict[str, Any], paid: bool = False
+    ) -> dict[str, Any]:
         key = secrets.get(ENV_KEY)
         if not key:
             raise ProviderError("not_configured", f"{ENV_KEY} is not set.")
@@ -60,7 +62,8 @@ class ZeroBounceProvider:
             with http.client() as client:
                 return client.get(url, params=query)
 
-        response = base.send_with_retry(send)
+        # a paid check is not retried after a read timeout (it may already be charged)
+        response = base.send_with_retry(send, retry_read_timeout=not paid)
         error = base.error_for_status(response, "ZeroBounce")
         if error is not None:
             raise error
@@ -75,7 +78,7 @@ class ZeroBounceProvider:
 
     def verify(self, email: str) -> Verdict:
         """Check one address (1 credit; `unknown` answers are not counted here)."""
-        data = self._get(VALIDATE_URL, {"email": email, "timeout": TIMEOUT_SECONDS})
+        data = self._get(VALIDATE_URL, {"email": email, "timeout": TIMEOUT_SECONDS}, paid=True)
         raw = str(data.get("status") or "").lower()
         sub = str(data.get("sub_status") or "").lower()
         catch_all = raw == "catch-all" or sub in _CATCH_ALL_SUB

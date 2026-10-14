@@ -23,6 +23,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import unquote
 
@@ -75,7 +76,11 @@ GATEWAY_WORDS = (
 )  # fmt: skip
 SITE_PATHS = ("/contact", "/about")
 PAGE_SIZE_MAX = 25
-CALL_TIME_LIMIT_S = 50.0
+_DEFERRED = "deferred"
+CALL_TIME_LIMIT_S = 25.0  # no new person is started after this many seconds of one call
+VERIFY_DEADLINE_S = 30.0  # no new verifier call is started after this (a call must end < 60 s)
+HUNTER_NONE_DAYS = 30  # Hunter is not asked again about a domain it had no pattern for
+HTTP_FAILURES_BEFORE_SKIP = 2  # a provider failing this often in one call is skipped for it
 SMTP_TIMEOUT_S = 10
 SMTP_PROBE = True  # the SMTP RCPT probe (only ever used for `other` mail servers)
 REAL_SOURCES = ("known_email", "hunter", "website")  # patterns seen on real addresses
@@ -89,6 +94,7 @@ _SPECIAL = str.maketrans(
      "Đ": "d", "ł": "l", "Ł": "l", "þ": "th", "ð": "d", "ı": "i"}
 )  # fmt: skip
 _TOKEN_RE = re.compile(r"\{(first|last|f|l)\}")
+_POLICY_CODE_RE = re.compile(rb"\s*5\.7\.\d+")
 _MAILTO_RE = re.compile(r"mailto:([^\"'<>\s?#]+)", re.IGNORECASE)
 _ADDRESS_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
@@ -322,6 +328,20 @@ def _cache_pattern(domain: str, pattern: str, source: str, confidence: float) ->
     )
 
 
+def _hunter_none_fresh(domain: str) -> bool:
+    """True when Hunter recently had no pattern for `domain` (so it is not asked again)."""
+    raw = _setting(f"hunter_none:{domain}")
+    if not raw:
+        return False
+    try:
+        stamp = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=UTC)
+    return datetime.now(UTC) - stamp < timedelta(days=HUNTER_NONE_DAYS)
+
+
 def _catch_all_cached(domain: str) -> bool | None:
     value = _setting(f"catchall:{domain}")
     return None if value is None else value == "1"
@@ -342,11 +362,21 @@ class _Run:
     issues: dict[str, dict[str, Any]] = field(default_factory=dict)
     hunter_blocked: dict[str, Any] | None = None
     spent: Counter = field(default_factory=Counter)
+    http_failures: Counter = field(default_factory=Counter)
+    deadline: float | None = None  # time.monotonic() after which no new verifier call starts
 
     def failed(self, provider_key: str, exc: ProviderError) -> None:
         self.issues[provider_key] = registry.error_response(provider_key, exc)
         if exc.code in ("quota", "auth", "not_configured"):
             self.dead.add(provider_key)
+        elif exc.code == "http":
+            self.http_failures[provider_key] += 1
+            if self.http_failures[provider_key] >= HTTP_FAILURES_BEFORE_SKIP:
+                self.dead.add(provider_key)  # e.g. it keeps timing out: stop waiting for it
+
+    def out_of_time(self) -> bool:
+        """True once the call's verification deadline has passed."""
+        return self.deadline is not None and time.monotonic() > self.deadline
 
 
 @dataclass
@@ -360,6 +390,7 @@ class Verification:
     raw_status: str = ""
     catch_all: bool = False
     blocked: dict[str, Any] | None = None
+    timed_out: bool = False  # the call ran out of time before a check could be made
 
 
 # --- pattern derivation ---------------------------------------------------------------------
@@ -470,7 +501,12 @@ def _derive(
     if known:
         _cache_pattern(domain, known, "known_email", 0.9)
         return _Derived(known, "known_email", 0.9)
-    if hunter is not None and hunter.configured() and "hunter" not in run.dead:
+    if (
+        hunter is not None
+        and hunter.configured()
+        and "hunter" not in run.dead
+        and not _hunter_none_fresh(domain)
+    ):
         blocked = _budget_gate(campaign_id, budget_map, "hunter", 1, confirm)
         if blocked is not None:
             run.hunter_blocked = blocked
@@ -486,6 +522,7 @@ def _derive(
                 if found:
                     _cache_pattern(domain, found[0], "hunter", found[1])
                     return _Derived(found[0], "hunter", found[1])
+                _set_setting(f"hunter_none:{domain}", db.now())  # ask Hunter once per domain
     if scrape:
         site = _pattern_from_examples(domain, scrape_site_emails(domain))
         if site:
@@ -525,18 +562,37 @@ def _default_verifiers() -> list[Any]:
     return [p for p in (ReoonProvider(), ZeroBounceProvider(), HunterProvider()) if p.configured()]
 
 
+def _policy_rejection(message: Any) -> bool:
+    """True when an SMTP reply carries an enhanced code 5.7.x (refused for policy reasons:
+    our sender, our IP, SPF/RBL ... not because the mailbox is missing)."""
+    raw = message if isinstance(message, bytes) else str(message).encode("utf-8", "replace")
+    return bool(_POLICY_CODE_RE.match(raw))
+
+
 def _smtp_rcpt(host: str, email: str) -> bool | None:
     """Ask the mail server whether it accepts `email`: True (250), False (550/551/553), else None.
 
-    Never called for Google, Microsoft or gateway mail (they accept everything or tarpit).
-    Port 25 is blocked on many networks; every failure gives None.
+    The sender is the null sender `<>`. The answer is None (unknown) when the server refuses the
+    sender (any MAIL FROM reply but 250), when it rejects the address with a 5.7.x policy code,
+    or when it also rejects `postmaster@<domain>` (which RFC 5321 requires every server to
+    accept) in the same session: then the refusal is about us, not the mailbox. Never called for
+    Google, Microsoft or gateway mail (they accept everything or tarpit). Port 25 is blocked on
+    many networks; every failure gives None.
     """
     server = smtplib.SMTP(timeout=SMTP_TIMEOUT_S)
     try:
         server.connect(host, 25)
         server.ehlo_or_helo_if_needed()
-        server.mail("verify@example.com")
-        code, _message = server.rcpt(email)
+        sender_code, _reply = server.mail("")
+        if sender_code != 250:
+            return None
+        code, message = server.rcpt(email)
+        if code == 250:
+            return True
+        if code not in (550, 551, 553) or _policy_rejection(message):
+            return None
+        postmaster_code, _reply = server.rcpt(f"postmaster@{email.rsplit('@', 1)[-1]}")
+        return False if postmaster_code == 250 else None
     except (OSError, smtplib.SMTPException):
         return None
     finally:
@@ -544,11 +600,6 @@ def _smtp_rcpt(host: str, email: str) -> bool | None:
             server.close()
         except (OSError, smtplib.SMTPException):  # pragma: no cover - best effort
             pass
-    if code == 250:
-        return True
-    if code in (550, 551, 553):
-        return False
-    return None
 
 
 def _smtp_verify(email: str) -> Verification | None:
@@ -600,6 +651,8 @@ def verify(
         key = verifier.info.key
         if key in run.dead:
             continue
+        if run.out_of_time():
+            return Verification("guess", timed_out=True)
         blocked = _budget_gate(campaign_id, budget_map, "verify", 1, confirm)
         if blocked is None and key == "hunter":
             blocked = _budget_gate(campaign_id, budget_map, "hunter", 0.5, confirm)
@@ -623,6 +676,8 @@ def verify(
             continue
         return Verification(verdict.status, key, verdict.raw_status)
     if mx == "other" and SMTP_PROBE:
+        if run.out_of_time():
+            return Verification("guess", timed_out=True)
         smtp = _smtp_verify(email)
         if smtp is not None:
             return smtp
@@ -785,7 +840,11 @@ def _estimate(
     camp = _campaign(campaign_id)
     todo = [r for r in _people(campaign_id, 0, ids or None) if not _skip_reason(r, bool(ids))]
     domains = {clean_domain(r["domain"]) for r in todo}
-    hunter_credits = sum(1 for d in domains if _cached_pattern(d) is None) if has_hunter else 0
+    hunter_credits = (
+        sum(1 for d in domains if _cached_pattern(d) is None and not _hunter_none_fresh(d))
+        if has_hunter
+        else 0
+    )
     verify_credits = len(todo) if any_verifier else 0
     threshold = load_settings().confirm_threshold_credits
     return {
@@ -835,8 +894,9 @@ def find_emails(
     needing more credits than `settings.confirm_threshold_credits`, or more than the campaign's
     `hunter` / `verify` budget, returns the estimate (`needs_confirmation`) or the
     `budget_reached` reply. Each call handles at most `max_people_per_call` people (25) and
-    about 50 seconds and returns `next_cursor` until done. Missing or exhausted verifier keys
-    never stop the run: those addresses stay `guess`, and the reply says why. `hunter` and
+    stops starting new people after about 25 seconds (a slow check can add up to 25 more),
+    returning `next_cursor` until done. Missing or exhausted verifier keys never stop the run:
+    those addresses stay `guess`, and the reply says why. `hunter` and
     `verifiers` let tests pass fakes.
     """
     camp = _campaign(campaign_id)
@@ -883,7 +943,14 @@ def find_emails(
         if reason is not None:
             skipped[reason] += 1
             continue
-        outcome = _process_person(camp, row, bool(ids), confirm, hunter, chain, run, patterns)
+        run.deadline = began + VERIFY_DEADLINE_S
+        outcome = _process_person(
+            camp, row, bool(ids), confirm, hunter, chain, run, patterns, can_defer=done > 0
+        )
+        if outcome == _DEFERRED:  # out of time mid-person: nothing stored, redo it next call
+            remaining = True
+            last_id = row["id"] - 1
+            break
         if isinstance(outcome, dict):
             stop = outcome
             last_id = row["id"] - 1 if row["id"] > start else start
@@ -943,9 +1010,11 @@ def _process_person(
     chain: Sequence[Any],
     run: _Run,
     patterns: dict[str, dict[str, str]],
+    can_defer: bool = False,
 ) -> str | dict[str, Any]:
     """Find, grade and store one person's email. Returns the stored status, a skip word, or a
-    budget reply (the run must stop and this person is not stored)."""
+    budget reply (the run must stop and this person is not stored). With `can_defer`, running
+    out of time before a check could be made returns `_DEFERRED` (nothing is stored)."""
     domain = clean_domain(row["domain"])
     mx_host, definitive = _mx_lookup(domain)
     pattern_info = _derive(
@@ -983,6 +1052,8 @@ def _process_person(
             )  # fmt: skip
             if verdict.blocked is not None:
                 return verdict.blocked
+            if verdict.timed_out and can_defer:
+                return _DEFERRED
             chosen = candidate
             if verdict.status != "invalid":
                 break

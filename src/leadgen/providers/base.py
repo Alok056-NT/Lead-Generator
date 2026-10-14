@@ -166,17 +166,30 @@ def _retry_after(response: httpx.Response) -> float | None:
     return min(max(seconds, 0.0), MAX_RETRY_AFTER) if math.isfinite(seconds) else None
 
 
-def send_with_retry(send: Callable[[], httpx.Response]) -> httpx.Response:
+def send_with_retry(
+    send: Callable[[], httpx.Response], retry_read_timeout: bool = True
+) -> httpx.Response:
     """Call `send()`; retry up to 2 times (1 s, 2 s backoff) on 429, 5xx or network errors.
 
     401/403 and other 4xx are returned at once (never retried). After the last retry the final
     response is returned (the caller maps it to an error); a network error becomes
-    `ProviderError("http")`.
+    `ProviderError("http")`. With `retry_read_timeout=False` (paid calls) a read timeout is not
+    retried, because the provider may already have done, and charged for, the work: it becomes
+    `ProviderError("http")` at once.
     """
     for attempt in range(RETRIES + 1):
         last = attempt == RETRIES
         try:
             response = send()
+        except httpx.ReadTimeout:
+            if not retry_read_timeout:
+                raise ProviderError(
+                    "http", "no reply in time (not retried, the call may already be charged)"
+                ) from None
+            if last:
+                raise ProviderError("http", "network error (ReadTimeout)") from None
+            _sleep(BACKOFF_SECONDS[attempt])
+            continue
         except httpx.TransportError as exc:
             if last:
                 raise ProviderError("http", f"network error ({type(exc).__name__})") from None

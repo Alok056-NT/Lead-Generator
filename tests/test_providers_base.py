@@ -139,3 +139,39 @@ def test_error_for_status_mapping():
     assert err(400, '{"message":"Not enough credits"}').code == "quota"
     assert err(400, "bad request").code == "http"
     assert err(500).code == "http" and err(404).code == "http"
+
+
+def test_read_timeout_retried_by_default(sleeps):
+    attempts = []
+
+    def send():
+        attempts.append(1)
+        raise httpx.ReadTimeout("slow", request=httpx.Request("GET", "https://example.com"))
+
+    with pytest.raises(ProviderError) as info:
+        base.send_with_retry(send)
+    assert info.value.code == "http" and len(attempts) == 3
+
+
+def test_read_timeout_not_retried_for_paid_calls(sleeps):
+    attempts = []
+
+    def send():
+        attempts.append(1)
+        raise httpx.ReadTimeout("slow", request=httpx.Request("GET", "https://example.com"))
+
+    with pytest.raises(ProviderError) as info:
+        base.send_with_retry(send, retry_read_timeout=False)
+    assert info.value.code == "http" and len(attempts) == 1 and sleeps == []
+
+
+def test_connect_errors_still_retried_for_paid_calls(sleeps):
+    attempts = []
+
+    def send():
+        attempts.append(1)  # the request never left: safe to retry
+        raise httpx.ConnectError("boom", request=httpx.Request("GET", "https://example.com"))
+
+    with pytest.raises(ProviderError):
+        base.send_with_retry(send, retry_read_timeout=False)
+    assert len(attempts) == 3

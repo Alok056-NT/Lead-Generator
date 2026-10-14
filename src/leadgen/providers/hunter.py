@@ -99,7 +99,8 @@ class HunterProvider:
             with http.client() as client:
                 return client.get(url, params=params, headers=headers)
 
-        return base.send_with_retry(send)
+        # no retry after a read timeout: Hunter may already have charged the call
+        return base.send_with_retry(send, retry_read_timeout=False)
 
     def _data(self, response: httpx.Response) -> dict[str, Any]:
         error = _error(response)
