@@ -13,7 +13,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
 | T08 | People finder and confirmation engine | done | Reviewed 2026-10-15 (fix round 3). manual check pending: real 3-company search (owner, spends ~6 Serper credits; no key configured during review) and compare with the NXT pilot |
 | T09 | Email finder and verification | done | Reviewed 2026-10-15 (fix round 2). manual check pending: 3 real people with free Hunter/Reoon keys (owner), statuses should look honest; note Hunter's real pattern tokens and Reoon/ZeroBounce error replies |
-| T10 | Drafting workflow | todo | |
+| T10 | Drafting workflow | review | Builder done 2026-10-15; guide needs reviewer read |
 | T11 | QA engine and AI review | todo | |
 | T12 | Export (CSV) and lemlist push | todo | |
 | T13 | MCP server | todo | |
@@ -82,6 +82,11 @@ Reviewer fixes round 2 (2026-10-15): the 30 s verify deadline is no longer set f
 Files: src/leadgen/providers/{hunter,reoon,zerobounce,base,registry}.py, src/leadgen/services/emails.py, tests/{test_emails,test_email_providers,test_registry,conftest}.py, docs/{DECISIONS,STATUS}.md.
 Deviation from the card (recorded in DECISIONS): the random-address catch-all probe is used only on the SMTP path; the three API verifiers already return catch-all in the same reply, so probing again would cost a second credit per domain for no new information. Extra beyond the card: `store_email`, `scrape_site_emails`, `infer_pattern_from_local`, `EmailError`, a remembered catch-all/pattern per domain, `person_ids` on `estimate_email_search`.
 
+### T10 (review)
+`services/drafting.py` has `CHANNEL_SPECS` (the one place for the channel limits), `channels_for`, `get_drafting_batch` (confirmed people with cleaned evidence, flags and, on a redraft, previous draft and issues; offer profile, channel spec and locale in every batch; the style guide only on the first call; cursor = last person id, `remaining`, `done`) and `save_drafts` (upsert one message per person per channel, last three versions in `qa_json.history`, instant checks M01/M03/M04/M09, per-draft `qa_pass` / `qa_fail` / `not_saved`). A campaign whose offer has no saved profile gets the structured `no_offer_profile` error (T06 follow-up). `guides/messaging_style.md` holds the writing rules with 3 good and 3 bad invented examples; a test runs the good ones through the checks. The instant checks are a stand-in with a `TODO(T11)` in `_check_message`. 57 new tests, 1442 pass (1 POSIX-only skip), ruff clean, drafting.py coverage 98%.
+Files: src/leadgen/services/drafting.py, src/leadgen/guides/messaging_style.md, tests/test_drafting.py, docs/{DECISIONS,STATUS}.md.
+Extra beyond the card: `DraftError`, `guide_text()`, `sendable_email_statuses()`, `include_guide` argument, `not_saved` status for refused drafts.
+
 ## Follow-ups
 (Ideas or issues found during tasks that are out of scope for the current card.)
 - T09: Hunter's pattern tokens other than `{first}` are not defined in its docs; check with a real key that `domain_pattern` returns forms such as `{first}.{last}`/`{f}{last}` (anything else is ignored and the next source is used).
@@ -147,3 +152,8 @@ Deviation from the card (recorded in DECISIONS): the random-address catch-all pr
 - T08: since the round-1 fixes, a "Name - Company | LinkedIn" title no longer counts as employer proof at all. This loses some good leads but no accuracy; revisit after the real search shows whether LinkedIn puts the current company there.
 - T08 (review, round 3): the former-role lookback (`_at_alias_is_current`) still reads a company-suffix dot as "not a sentence end", so "Previously HR Manager at Acme Pte. Ltd. Now at Northwind Health" goes to review (L04). Safe (review, not a wrong confirm) but loses such leads; reuse the layout-A suffix rule there if real snippets show this shape.
 - T08 (review, round 3): the single-letter-initial branch of `confirm._sentence_ends` works (checked by hand) but no test runs it (the only uncovered line in that function); add a test when next touching confirm.py.
+- T10: `guess` emails are not drafted even when `allow_guess_emails` is true (the card says verified, or risky if allowed). If the owner wants guess-address campaigns drafted, add `guess` to `drafting.sendable_email_statuses` when that option is on.
+- T10, for T11: replace `drafting._check_message` with `qa_messages.check_message` (full M01-M16; the return shape is a list of `{code, severity, detail}`) and set `drafting.CHECKER`. `save_drafts` writes issues to `messages.qa_json` only; T11's `run_qa` should write the `qa_issues` rows. `CHANNEL_SPECS.links_allowed` is false for LinkedIn and not yet enforced (M11 is T11's).
+- T10, for T11/T13: a message whose `ai_review` is `fix` is offered again by `get_drafting_batch` (with `review_notes`); saving it resets `ai_review` to empty, so T11 must require a fresh review for the new text. `reject` is never redrafted.
+- T10, for T13: expose `get_drafting_batch` and `save_drafts`; both raise `DraftError` (as_response) and `CampaignError`. The tool schema for `drafts` is `[{person_id, channel, body, subject?}]`, at most 50 per call.
+- T10: the `flags` (partner/competitor/recruiter/job_seeker) are keyword heuristics on title and company text; real runs may need more words.
