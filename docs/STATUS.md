@@ -13,7 +13,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T07 | Companies: add, verify, approve | done | Reviewed 2026-10-14 (fix round 1). manual check pending: add 5 real companies to a test campaign and look at the `domain_ok` values (no credits needed) |
 | T08 | People finder and confirmation engine | done | Reviewed 2026-10-15 (fix round 3). manual check pending: real 3-company search (owner, spends ~6 Serper credits; no key configured during review) and compare with the NXT pilot |
 | T09 | Email finder and verification | done | Reviewed 2026-10-15 (fix round 2). manual check pending: 3 real people with free Hunter/Reoon keys (owner), statuses should look honest; note Hunter's real pattern tokens and Reoon/ZeroBounce error replies |
-| T10 | Drafting workflow | review | Builder done 2026-10-15; guide needs reviewer read |
+| T10 | Drafting workflow | changes | Reviewed 2026-10-15: 4 fixes (guess emails with allow_guess_emails, flag false positives, M03 "todo", style guide examples/rules) |
 | T11 | QA engine and AI review | todo | |
 | T12 | Export (CSV) and lemlist push | todo | |
 | T13 | MCP server | todo | |
