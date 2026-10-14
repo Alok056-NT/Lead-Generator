@@ -105,7 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return the exit code."""
     args = build_parser().parse_args(argv)
     if args.command != "version":
-        setup_logging()
+        try:
+            setup_logging()
+        except OSError:
+            # Broken workspace: carry on without file logging so `doctor` can explain the problem.
+            pass
     return int(args.func(args))
 
 
