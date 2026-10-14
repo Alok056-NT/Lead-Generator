@@ -5,7 +5,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | Task | Title | Status | Notes |
 |---|---|---|---|
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
-| T02 | Database layer and schema | review | |
+| T02 | Database layer and schema | changes | |
 | T03 | Countries and compliance tables | todo | |
 | T04 | Provider framework and search providers | todo | |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
