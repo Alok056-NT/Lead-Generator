@@ -95,6 +95,11 @@ def live(host, types=("A",)):
         ("BÜCHER.de", "xn--bcher-kva.de"),
         ("https://www.bücher.de/x", "xn--bcher-kva.de"),
         ("例え.jp", "xn--r8jz45g.jp"),
+        ("straße.de", "xn--strae-oqa.de"),
+        ("https://www.Straße.DE/x", "xn--strae-oqa.de"),
+        ("xn--bcher-kva.de", "xn--bcher-kva.de"),
+        ("bü..de", ""),
+        ("-bü.de", ""),
         ("www.com", "www.com"),
         ("", ""),
         ("   ", ""),
@@ -298,6 +303,32 @@ def test_dedupe_is_per_campaign(offer_id):
 # --- exclusions -----------------------------------------------------------------------------
 
 
+def test_domain_like_company_and_competitor_names_also_match_by_name(offer_id):
+    cid = make_campaign(
+        offer_id,
+        exclusions={"companies": ["Fabrikam.io"], "competitors": ["Rival.io"]},
+    )
+    result = co.add_companies(
+        cid,
+        [
+            {"name": "Rival.io"},
+            {"name": "Alias Only", "aliases": ["Fabrikam.io Pte Ltd"]},
+            {"name": "Fabrikam.io"},
+            {"name": "Other", "domain": "https://www.rival.io/"},
+            {"name": "Other2", "domain": "app.fabrikam.io"},
+            {"name": "Unrelated", "domain": "example.com"},
+        ],
+    )
+    reasons = {e["name"]: e["reason"] for e in result["excluded"]}
+    assert reasons == {
+        "Rival.io": "competitor 'Rival.io'",
+        "Alias Only": "excluded company 'Fabrikam.io'",
+        "Fabrikam.io": "excluded company 'Fabrikam.io'",
+        "Other": "competitor 'Rival.io'",
+        "Other2": "excluded company 'Fabrikam.io'",
+    }
+
+
 def test_exclusions_by_name_domain_and_competitor(offer_id):
     cid = make_campaign(
         offer_id,
@@ -404,6 +435,22 @@ def test_redirect_to_other_site_is_recorded_and_warned(cid):
     assert row["warnings"] and "different site" in row["warnings"][0]
 
 
+def test_idn_domain_is_checked_without_false_redirect_warning(cid):
+    live("xn--bcher-kva.de")
+    respx.route(url__regex=r"https?://(xn--bcher-kva\.de|bücher\.de)/").mock(
+        return_value=httpx.Response(200)
+    )
+    result = co.add_companies(cid, [{"name": "Buchhandlung Nord", "domain": "bücher.de"}])
+    assert result["domain_failures"] == []
+    row = co.list_companies(cid)["companies"][0]
+    assert row["domain"] == "xn--bcher-kva.de"
+    assert row["domain_ok"] is True
+    assert row["warnings"] == []
+    assert "redirects" not in row["notes"]
+    assert co.check_domain("xn--bcher-kva.de").redirect_warning == ""
+    assert co.approve_all(cid) == {"ok": True, "approved": 1, "skipped": []}
+
+
 def test_redirect_to_www_or_subdomain_is_not_a_warning(cid):
     live("example.net")
     respx.head("https://example.net/").mock(
@@ -481,9 +528,12 @@ def test_checks_run_in_parallel_threads(cid):
     import threading
 
     names = set()
+    # every check waits for CHECK_WORKERS checks to be running at once: serial runs time out
+    barrier = threading.Barrier(co.CHECK_WORKERS, timeout=10)
 
     def fake_check(host):
         names.add(threading.current_thread().name)
+        barrier.wait()
         return co.DomainCheck(True, f"{co.CHECK_PREFIX}ok")
 
     rows = [
@@ -497,7 +547,42 @@ def test_checks_run_in_parallel_threads(cid):
             )
     outcome = co._run_checks(rows, check=fake_check)
     assert outcome["checked"] == 8 and outcome["unchecked"] == []
-    assert 1 <= len(names) <= co.CHECK_WORKERS
+    assert len(names) == co.CHECK_WORKERS
+
+
+def test_in_flight_checks_are_not_waited_for_past_the_deadline(cid):
+    import threading
+    import time
+
+    release = threading.Event()
+
+    def fake_check(host):
+        if host == "fast.example.com":
+            return co.DomainCheck(True, f"{co.CHECK_PREFIX}ok")
+        release.wait(30)  # a very slow site
+        return co.DomainCheck(True, f"{co.CHECK_PREFIX}ok")
+
+    domains = ["fast.example.com"] + [f"slow{i}.example.com" for i in range(6)]
+    rows = []
+    with db.session() as conn:
+        for i, d in enumerate(domains):
+            rows.append(
+                {"id": db.insert(conn, "companies", campaign_id=cid, name=f"C{i}", domain=d),
+                 "name": f"C{i}", "domain": d, "notes": ""}
+            )  # fmt: skip
+    started = time.monotonic()
+    try:
+        outcome = co._run_checks(rows, check=fake_check, deadline_seconds=0.3)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+    assert elapsed < 5  # returned at the deadline, not after the slow checks
+    assert outcome["checked"] == 1
+    assert [u["name"] for u in outcome["unchecked"]] == [f"C{i}" for i in range(1, 7)]
+    assert outcome["domain_failures"] == []
+    with db.session() as conn:
+        assert db.get(conn, "companies", rows[0]["id"])["domain_ok"] == 1
+        assert db.get(conn, "companies", rows[1]["id"])["domain_ok"] is None
 
 
 def test_not_checked_then_check_domains(cid, monkeypatch):

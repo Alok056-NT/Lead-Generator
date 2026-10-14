@@ -21,7 +21,7 @@ import sqlite3
 import time
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import dns.exception
 import dns.resolver
 import httpx
+import idna
 
 from leadgen import db
 from leadgen.core import countries as countries_mod
@@ -128,11 +129,12 @@ def normalize_domain(value: str) -> str:
     except ValueError:
         return ""
     host = host.strip().rstrip(".").lower()
-    try:
-        host = host.encode("idna").decode("ascii")
-    except UnicodeError:
-        return ""
-    host = host.lower()
+    if not host.isascii():  # UTS 46 mapping, as browsers and httpx: straße.de -> xn--strae-oqa.de
+        try:
+            host = idna.encode(host, uts46=True).decode("ascii")
+        except (idna.IDNAError, UnicodeError):
+            return ""
+        host = host.lower()
     if host.startswith("www.") and "." in host[4:]:
         host = host[4:]
     if len(host) > 253 or not _DOMAIN_RE.fullmatch(host):
@@ -253,6 +255,11 @@ def _dns_exists(host: str) -> tuple[bool, str]:
     return False, problem or "no A, AAAA or MX records"
 
 
+def _ascii_host(url: httpx.URL) -> str:
+    """The host as sent on the wire (punycode for IDN names); `url.host` is decoded to Unicode."""
+    return url.raw_host.decode("ascii").lower()
+
+
 def _homepage(client: httpx.Client, host: str) -> tuple[int | None, str, str]:
     """`(status, final host, problem)` for the homepage: HTTPS first, then HTTP; HEAD, then GET
     when HEAD is refused. Any answer below 500 counts as reachable."""
@@ -263,10 +270,10 @@ def _homepage(client: httpx.Client, host: str) -> tuple[int | None, str, str]:
         final = host
         try:
             response = client.request("HEAD", url)
-            status, final = response.status_code, response.url.host
+            status, final = response.status_code, _ascii_host(response.url)
             if status >= 400:
                 with client.stream("GET", url) as got:
-                    status, final = got.status_code, got.url.host
+                    status, final = got.status_code, _ascii_host(got.url)
         except offer_web.WebError:
             return None, "", "it redirects to a local or private address"
         except (httpx.HTTPError, httpx.InvalidURL) as exc:
@@ -323,8 +330,15 @@ def _run_checks(
             return DomainCheck(None, "")
         return check(row["domain"])
 
-    with ThreadPoolExecutor(max_workers=CHECK_WORKERS) as pool:
-        results = list(pool.map(work, rows))
+    # Do not wait for checks still running at the deadline (a slow site could hold the call for
+    # a long time): they are left unchecked, and their threads finish in the background.
+    pool = ThreadPoolExecutor(max_workers=CHECK_WORKERS)
+    futures = [pool.submit(work, row) for row in rows]
+    wait(futures, timeout=max(0.0, deadline - time.monotonic()))
+    pool.shutdown(wait=False, cancel_futures=True)
+    results = [
+        f.result() if f.done() and not f.cancelled() else DomainCheck(None, "") for f in futures
+    ]
     failures: list[dict[str, Any]] = []
     unchecked: list[dict[str, Any]] = []
     checked = 0
@@ -573,11 +587,15 @@ class _Exclusions:
             ("competitor", exclusions.get("competitors", [])),
         ):
             for entry in entries:
+                why = f"{label} '{entry}'"
                 domain = normalize_domain(entry)
-                if domain and (label == "excluded domain" or "." in entry and " " not in entry):
-                    self.domains.setdefault(domain, f"{label} '{entry}'")
-                else:
-                    self.names.setdefault(_norm_name(entry), f"{label} '{entry}'")
+                is_domain = label == "excluded domain" or "." in entry and " " not in entry
+                if domain and is_domain:
+                    self.domains.setdefault(domain, why)
+                # a company or competitor is also matched by name (`Rival.io` may come with no
+                # domain); an excluded-domain entry is only ever a domain
+                if label != "excluded domain" or not domain:
+                    self.names.setdefault(_norm_name(entry), why)
 
     def match(self, name: str, aliases: list[str], domain: str) -> str:
         """Why this company is excluded, or ""."""
