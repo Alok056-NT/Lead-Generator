@@ -15,7 +15,7 @@ OTHER = d.DESIGNATION_OTHER
 # (title, expected label) with Harvey's group order: ld, safety_ops, hr, owners.
 CLASSIFY_CASES = [
     # Card examples (titles only, invented employers).
-    ("Head of IT Operations", OTHER),  # false friend: "IT operations"
+    ("Head of IT Operations", OTHER),  # not Operations (false friend); no IT group in Harvey's list
     ("CEO at Example Facility Services", OWNERS),  # role part only; "Facility" is the employer
     ("Senior Vice President, Human", OTHER),  # "vice president" is vp, "human" alone is nothing
     ("Training Manager@Example Utility", LD),  # role part before "@"
@@ -80,6 +80,41 @@ CLASSIFY_CASES = [
 @pytest.mark.parametrize(("title", "expected"), CLASSIFY_CASES)
 def test_classify_table(title, expected):
     assert classify(title, HARVEY) == expected
+
+
+IT = d.TEMPLATES["it"].label
+SAFETY_FIRST = [d.TEMPLATES[k] for k in ("safety_ops", "it")]
+
+# (title, expected label) with the groups [safety_ops, it]: "IT operations" is IT, never
+# Operations, and the other "<x> operations" phrases are neither.
+IT_OPERATIONS_CASES = [
+    ("Head of IT Operations", IT),
+    ("IT Operations Manager", IT),
+    ("IT Infrastructure Operations Manager", IT),
+    ("IT Network Operations Manager", IT),
+    ("Director, IT Operations at Example Foods", IT),
+    ("Network Operations Manager", OTHER),
+    ("Cloud Operations Manager", OTHER),
+    ("Security Operations Manager", OTHER),
+    ("Cyber Operations Manager", OTHER),
+    ("Data Operations Manager", OTHER),
+    ("Cloud Operations", OTHER),
+    ("Operations Manager", SAFETY),
+    ("Information Security Operations Manager", IT),  # keeps "information security"
+]
+
+
+@pytest.mark.parametrize(("title", "expected"), IT_OPERATIONS_CASES)
+def test_it_operations_false_friends(title, expected):
+    assert classify(title, SAFETY_FIRST) == expected
+
+
+def test_it_operations_only_drops_the_word_operations():
+    assert d.title_words("Head of IT Operations") == ["head", "of", "it"]
+    words = d.title_words("IT Infrastructure Operations Manager")
+    assert words == ["it", "infrastructure", "manager"]
+    assert d.title_words("Network Operations Manager") == ["network", "manager"]
+    assert d.title_words("Machine Learning Engineer") == ["engineer"]  # these stay fully removed
 
 
 def test_classify_table_is_big_enough():

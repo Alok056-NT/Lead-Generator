@@ -102,6 +102,18 @@ SENIORITY_CASES = [
     # Rank before a junior word stays senior.
     ("Manager, Intern Programme", "manager"),
     ("Head of Graduate Trainee Programme", "vp"),
+    # "Head-" is a rank marker, but not in "Head-Hunter" or "Head Office".
+    ("Head-HR", "vp"),
+    ("Head - HR", "vp"),
+    ("Head-Hunter", "individual"),
+    ("Head Hunter", "individual"),
+    ("Executive Head-Hunter", "individual"),
+    ("Head-Office Administrator", "individual"),
+    ("Head Office HR Manager", "manager"),
+    ("Head-Hunting Manager", "manager"),
+    # Separators between titles ("VP & General Manager") do not change the rank.
+    ("VP & General Manager", "vp"),
+    ("VP, General Manager", "vp"),
     # Role part only.
     ("Analyst at Head Office Solutions", "individual"),
     ("Engineer @ Chief Dynamics", "individual"),
@@ -163,6 +175,17 @@ def test_meets():
         ("Country Head, APAC", True),
         ("Cofounder at Northwind Logistics", True),
         ("Group CEO & MD", True),
+        # "VP" before a separator does not qualify the title after it (PLAN 11.7).
+        ("VP & Country Head", True),
+        ("Vice President & Country Head - India", True),
+        ("VP & General Manager", True),
+        ("VP, General Manager", True),
+        ("VP and General Manager", True),
+        ("VP / General Manager", True),
+        ("SVP & General Manager", True),
+        ("AVP & Country Head", True),
+        ("Vice Chairman", False),
+        ("VP Country Head", False),  # no separator: "VP" qualifies it
         ("MD - Sales", False),
         ("Deputy Country Head", False),
         ("Country Head of HR", False),  # a head of HR, not of the country

@@ -18,7 +18,11 @@ _FALSE_FRIENDS = re.compile(
     r"\b(product|process|data|budget|service|system|solution|risk|case|content)\s+owners?\b"
     r"|\blead\s+(generation|gen|qualification|nurturing|scoring)\b"
     r"|\b(assistant|pa|secretary)\s+to\b.*"
+    r"|\bhead[\s-]+(?:hunt\w*|office)\b"  # "Head-Hunter", "Head Office Administrator"
 )
+# "&", ",", "/" and ";" separate two titles ("VP & General Manager"), so a qualifier such as "vp"
+# before the separator does not qualify the title after it. They are read as the word "and".
+_SEPARATORS = re.compile(r"[&,/;]")
 _VICE_PRESIDENT = re.compile(r"\bvice[\s-]+president\b")
 # "Head of X", "Head, X", "Head - X", "Head | X" and "Head: X" are one marker; so is a trailing
 # "X Head" (see _words).
@@ -58,6 +62,7 @@ def _words(title: str) -> list[str]:
     t = _VICE_PRESIDENT.sub("vp", t)
     t = _COUNTRY_HEAD.sub(" countryhead ", t)
     t = _HEAD_OF.sub(" headof ", t)
+    t = _SEPARATORS.sub(" and ", t)
     words = re.sub(r"[^a-z0-9]+", " ", t).split()
     if words and words[-1] == "head":  # "HR Head", "Regional Head"
         words[-1] = "headof"

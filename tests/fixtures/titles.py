@@ -61,14 +61,16 @@ TITLE_CASES: list[tuple[str, str, str]] = [
     ("Compliance Officer", "safety_ops", "individual"),  # "Officer" without Chief = individual
     ("Vice President, Operations", "safety_ops", "vp"),  # not owners: "vice president" is vp
     ("Vice-President Operations", "safety_ops", "vp"),  # hyphen variant of "vice president"
-    ("Head of IT Operations", "other", "vp"),  # false friend: "IT operations" removed
-    ("IT Operations Manager", "other", "manager"),  # false friend: "IT operations"
+    # "IT operations" drops only "operations", so these are IT, not Operations.
+    ("Head of IT Operations", "it", "vp"),
+    ("IT Operations Manager", "it", "manager"),
+    ("IT Infrastructure Operations Manager", "it", "manager"),
     ("Network Operations Director", "other", "director"),  # false friend: "network operations"
     ("Cloud Operations Manager", "other", "manager"),  # false friend: "cloud operations"
     ("Security Operations Manager", "other", "manager"),  # false friend: "security operations"
     ("Cyber Operations Manager", "other", "manager"),  # false friend: "cyber operations"
     ("Data Operations Manager", "other", "manager"),  # false friend: "data operations"
-    # "network operations" is removed first, which leaves "IT Manager" (a real IT manager).
+    # "network operations" loses "operations", which leaves "IT Network Manager" (a real IT role).
     ("IT Network Operations Manager", "it", "manager"),
     # --- Business owners / MDs (owners) ---
     ("CEO at Example Facility Services", "owners", "c_suite"),  # role part; "Facility" is company

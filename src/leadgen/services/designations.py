@@ -18,11 +18,15 @@ from leadgen.services.designation_templates import TEMPLATE_DATA
 DESIGNATION_OTHER = "Other"
 
 # Phrases that contain a rule word but mean something else entirely ("Machine Learning
-# Engineer" is not L&D, "IT Operations" is not Operations). Removed before matching.
+# Engineer" is not L&D). Removed before matching.
 _FALSE_FRIENDS = re.compile(
     r"\b(machine|deep|reinforcement|statistical)\s+learning\b"
     r"|\bmodel\s+training\b|\bquality\s+of\s+life\b"
-    r"|\b(it|network|cloud|security|cyber|data|it infrastructure)\s+operations\b"
+)
+# "IT Operations" is not Operations, but it is still IT: only the word "operations" is dropped,
+# so "IT Operations Manager" reads as "IT Manager" while "Network Operations Manager" is nothing.
+_OPS_FALSE_FRIENDS = re.compile(
+    r"\b(it\s+infrastructure|it|network|cloud|security|cyber|data)\s+operations\b"
 )
 _L_AND_D = re.compile(r"\bl\s*(?:&|and)\s*d\b")
 _VICE_PRESIDENT = re.compile(r"\bvice[\s-]+president\b")
@@ -42,6 +46,7 @@ def title_words(title: str) -> list[str]:
     """Lower-case words of a title; punctuation splits words, but "L&D" / "L & D" / "L and D"
     are kept whole as the token "l&d", and "vice president" becomes "vp"."""
     t = _FALSE_FRIENDS.sub(" ", (title or "").lower())
+    t = _OPS_FALSE_FRIENDS.sub(r"\1", t)
     t = _VICE_PRESIDENT.sub("vp", t)
     t = _L_AND_D.sub("l&d", t)
     t = re.sub(r"[^a-z0-9&]+", " ", t)
