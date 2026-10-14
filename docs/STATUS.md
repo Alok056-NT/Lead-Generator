@@ -9,7 +9,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
 | T04 | Provider framework and search providers | done | Reviewed 2026-10-14 (fix round 2). manual check pending: `leadgen keys set serper` + `leadgen keys test serper` with the owner's real key (1 credit); note the status/body a wrong key returns |
 | T05 | Offer intake (URL, text, file) and OfferProfile | done | Reviewed 2026-10-14 (fix round 2). manual check pending: ingest a real public website and a local DOCX; try one public and one private Google Doc link |
-| T06 | Campaigns and designations | review | Review round 2 fixes applied, 2026-10-14 |
+| T06 | Campaigns and designations | done | Reviewed 2026-10-14 (fix round 2) |
 | T07 | Companies: add, verify, approve | todo | |
 | T08 | People finder and confirmation engine | todo | |
 | T09 | Email finder and verification | todo | |
@@ -55,7 +55,7 @@ Extra beyond card: `secrets.stored()`, `registry.check_provider`/`error_response
 Files: pyproject.toml, src/leadgen/services/{offer,offer_web,offer_files}.py, src/leadgen/guides/offer_profile.md, tests/{test_offer,test_offer_web,test_offer_files}.py, docs/{DECISIONS,STATUS}.md.
 Extra beyond card: `guide_text()`, `find_unconfirmed()`, hard URL checks (no localhost/private IPs, also on redirects), Crawl-delay support, `[HIGHLIGHT: ...]` marking in DOCX text. `ingest_*` return a dict, not a bare id (see DECISIONS).
 
-### T06 (review)
+### T06 (done)
 `services/designations.py` has `DesignationGroup`, the 11 `TEMPLATES` (data in `designation_templates.py`; ld/hr/safety_ops/owners keep Harvey's keyword lists), `list_templates`, `resolve_groups`, `matches` and `classify` (Harvey's whole-word rules: false friends removed first, `vice president` -> `vp`, role part before ` at `/`@` only, `L&D` spellings). `services/seniority.py` has `seniority`, `meets`, `is_top_leader` and `LEVELS`. `services/campaign.py` has `create_campaign`, `update_campaign`, `get_campaign` (with counts of companies, people, emails, messages by status), `list_campaigns`, `archive_campaign` and `CampaignError` (stable `code`, `as_response()`). 755 tests pass (1 POSIX-only skip), ruff clean, coverage designations 99%, seniority 100%, campaign 98%. Reviewer fixes: "Head" + separator, "Country Head ...", "Cofounder" and "MD" ranks; `it` template matches "Director of IT", "VP IT", "IT Head", "CISO" etc.; 808 tests pass. Round 2: `<x> operations` false friends drop only "operations" (IT Operations titles are `it`), `is_top_leader` reads "&"/","/"/" as separators ("VP & Country Head" is a top leader), "Head-Hunter"/"Head Office" are not ranks; 844 tests pass.
 Files: src/leadgen/services/{designations,designation_templates,seniority,campaign}.py, tests/{test_designations,test_seniority,test_campaign}.py, tests/fixtures/titles.py (121 synthetic titles), docs/{DECISIONS,STATUS}.md.
 Corrections to the worker drafts: finance, marketing, sales, procurement, facilities and customer_service keyword lists rewritten to drop redundant entries and ambiguous words (`seo*`, `cro`, bare `controller`); fixture "Accounts Payable Manager" now `finance`; fixture header comments updated; "IT Network Operations Manager" -> `it` is correct (the false friend leaves "IT Manager"). Extra beyond the card (see DECISIONS T06): CMO/CIO/CISO/CPO as c_suite, trailing "X Head" as vp, false-rank guards (product owner, lead generation, assistant to ...), `search_mode`/option shortcuts on `update_campaign`, unique export-folder names.
@@ -73,6 +73,9 @@ Corrections to the worker drafts: finance, marketing, sales, procurement, facili
 - T06: campaign names with no Latin letters or digits (e.g. Japanese) are refused because the export-folder name is ASCII; the error message should say so (and suggest adding a Latin word or number).
 - T06: after `update_campaign` changes countries, designations or seniority, people already found are not re-classified; T08 should offer a re-classify step.
 - T06: `create_campaign` does not require the offer to have a saved profile; T10 must check it before drafting.
+- T06 (review): the owners template is Harvey's list as the card requires, so "Chief Executive Officer"/"Chief Executive" classify as Other (only `ceo` is a keyword); `is_top_leader` does accept them. Owner to decide whether to add `chief executive` to owners (T08 needs it or such leads fail L06).
+- T06 (review): the seniority false friend `head[\s-]+office` also catches "Head - Office Administration" (Head + separator), which now reads as individual instead of vp; tighten to `head(?:\s+|-)office` when next touching seniority.py.
+- T06 (review): the `<x> operations` false friends need a space, so "IT-Operations Manager" is still Operations (same as Harvey); allow a hyphen too if real titles show it.
 - T02: adapters (MCP server T13, dashboard T16) must call `db.init_db()` at startup; `connect()`/`session()` do not create the schema.
 - T02: no `delete` helper yet (cascades are done with plain SQL); add one in the first service that needs it. `qa_issues` and `search_cache` have no foreign keys, so services must clear a deleted entity's `qa_issues` rows.
 - T02: `upsert` conflict targets for partial unique indexes are listed in `db._PARTIAL_CONFLICT`; add an entry if a later migration adds another partial unique index.
