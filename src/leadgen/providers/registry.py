@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from leadgen.core import secrets
-from leadgen.providers import brave, ddg, serper
+from leadgen.providers import brave, ddg, hunter, reoon, serper, zerobounce
 from leadgen.providers.base import Provider, ProviderError, ProviderInfo
 from leadgen.providers.search import SearchProvider
 
@@ -23,44 +23,17 @@ BUDGET_FALLBACK_HINT = (
     "(slower, free), or you can raise the budget."
 )
 
-# Email providers, lemlist and SMTP are implemented in T09, T12 and T14; their info is listed now
-# so `list_providers` is complete. Free-tier text for them is secondary-source (DECISIONS).
+# lemlist and SMTP are implemented in T12 and T14; their info is listed now so `list_providers`
+# is complete. Their free-tier text is unverified (DECISIONS).
 ALL_PROVIDERS: dict[str, ProviderInfo] = {
     info.key: info
     for info in (
         serper.INFO,
         brave.INFO,
         ddg.INFO,
-        ProviderInfo(
-            key="hunter",
-            name="Hunter.io",
-            purpose="Finds company email patterns and addresses",
-            env_keys=["HUNTER_API_KEY"],
-            free_tier="50 credits per month (verification costs 0.5 credit)",
-            signup_url="https://hunter.io/users/sign_up",
-            paid=False,
-            default=True,
-        ),
-        ProviderInfo(
-            key="reoon",
-            name="Reoon Email Verifier",
-            purpose="Checks that an email address exists before sending",
-            env_keys=["REOON_API_KEY"],
-            free_tier="About 20 checks per day plus 100 on signup, no card",
-            signup_url="https://www.reoon.com/email-verifier/",
-            paid=False,
-            default=True,
-        ),
-        ProviderInfo(
-            key="zerobounce",
-            name="ZeroBounce",
-            purpose="Optional second email verifier",
-            env_keys=["ZEROBOUNCE_API_KEY"],
-            free_tier="Small free monthly allowance (check their site)",
-            signup_url="https://www.zerobounce.net/",
-            paid=False,
-            default=False,
-        ),
+        hunter.INFO,
+        reoon.INFO,
+        zerobounce.INFO,
         ProviderInfo(
             key="lemlist",
             name="lemlist",
@@ -89,6 +62,9 @@ _FACTORIES: dict[str, Callable[[], Provider]] = {
     "serper": serper.SerperProvider,
     "brave": brave.BraveProvider,
     "ddg": ddg.DuckDuckGoProvider,
+    "hunter": hunter.HunterProvider,
+    "reoon": reoon.ReoonProvider,
+    "zerobounce": zerobounce.ZeroBounceProvider,
 }
 
 

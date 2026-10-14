@@ -51,6 +51,28 @@ class ProviderInfo:
     default: bool = False
 
 
+VERDICT_STATUSES = ("verified", "risky", "invalid", "unknown")
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """What an email verifier concluded about one address.
+
+    `status` is verified / risky / invalid / unknown; `raw_status` is the provider's own word
+    (kept as evidence); `catch_all` is True when the verifier says the whole domain accepts
+    any address.
+    """
+
+    status: str
+    raw_status: str
+    provider: str
+    catch_all: bool = False
+
+    def __post_init__(self) -> None:
+        if self.status not in VERDICT_STATUSES:
+            raise ValueError(f"unknown verdict status {self.status!r}")
+
+
 @runtime_checkable
 class Provider(Protocol):
     """Small interface every provider implements."""
@@ -188,3 +210,16 @@ def error_for_status(response: httpx.Response, provider_name: str) -> ProviderEr
     if status == 429:
         return ProviderError("rate_limited", f"{provider_name} is rate limiting us (HTTP 429).")
     return ProviderError("http", f"{provider_name} returned HTTP {status}.")
+
+
+def json_object(response: httpx.Response, provider_name: str) -> dict:
+    """The response body as a JSON object, or `ProviderError("parse")` (message has no body)."""
+    try:
+        data = response.json()
+    except ValueError:
+        raise ProviderError(
+            "parse", f"{provider_name} returned something that is not JSON."
+        ) from None
+    if not isinstance(data, dict):
+        raise ProviderError("parse", f"{provider_name} returned an unexpected response.")
+    return data
