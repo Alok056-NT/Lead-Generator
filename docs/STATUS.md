@@ -5,7 +5,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | Task | Title | Status | Notes |
 |---|---|---|---|
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
-| T02 | Database layer and schema | review | |
+| T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
 | T03 | Countries and compliance tables | todo | |
 | T04 | Provider framework and search providers | todo | |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
@@ -34,7 +34,7 @@ Installable `lead-generator` package (`src/leadgen`, console script `leadgen`) w
 Files: pyproject.toml, .gitattributes, .github/workflows/tests.yml, src/leadgen/{__init__,__main__,cli}.py, src/leadgen/core/{__init__,paths,secrets,config,logging,text,http,fsutil}.py, tests/{conftest,test_paths,test_secrets,test_config,test_text,test_http,test_logging,test_cli,test_fsutil}.py, docs/DECISIONS.md, docs/STATUS.md.
 Extra beyond card: `core/fsutil.py` (shared atomic write helper), `shutdown_logging()`, `ConfigError`.
 
-### T02 (review)
+### T02 (done)
 SQLite layer: `schema.sql` holds all 15 PLAN section 6 tables (cascades, unique constraints incl. partial unique indexes for empty domain / LinkedIn URL, FK and lookup indexes). `db.py` has `connect` (foreign keys, WAL, 5 s busy timeout, Row factory), `session` (commit/rollback/close), `init_db` (idempotent, forward-only `MIGRATIONS` list tracked in `schema_version`, each migration atomic), `now`, and whitelisted helpers `insert/update/get/query/upsert` that auto-encode and decode `_json` columns. `leadgen doctor` now creates the database on first run and prints `Database : ok (schema v1)`. 81 tests pass (1 POSIX-only skip), ruff clean, db.py coverage 98%.
 Files: src/leadgen/{schema.sql,db.py,cli.py}, tests/{test_db.py,test_cli.py}, docs/{DECISIONS.md,STATUS.md}.
 Extra beyond card: `current_version()`; `session(path)`/`init_db(path)` accept an explicit path (used by tests); helpers take `conn` as first argument.
