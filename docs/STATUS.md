@@ -6,7 +6,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 |---|---|---|---|
 | T01 | Scaffold, config, workspace, secrets, `leadgen doctor` | done | Reviewed 2026-10-14 (fix round 1) |
 | T02 | Database layer and schema | done | Reviewed 2026-10-14 (fix round 1) |
-| T03 | Countries and compliance tables | review | Builder done 2026-10-14; review fixes applied 2026-10-14 (IT, DK strict; CA, CH elements; ROK alias) |
+| T03 | Countries and compliance tables | done | Reviewed 2026-10-14 (fix round 1) |
 | T04 | Provider framework and search providers | todo | |
 | T05 | Offer intake (URL, text, file) and OfferProfile | todo | |
 | T06 | Campaigns and designations | todo | |
@@ -39,7 +39,7 @@ SQLite layer: `schema.sql` holds all 15 PLAN section 6 tables (cascades, unique 
 Files: src/leadgen/{schema.sql,db.py,cli.py}, tests/{test_db.py,test_cli.py}, docs/{DECISIONS.md,STATUS.md}.
 Extra beyond card: `current_version()`; `session(path)`/`init_db(path)` accept an explicit path (used by tests); helpers take `conn` as first argument.
 
-### T03 (review)
+### T03 (done)
 `core/countries.py` holds the 40-country table (dataclass `Country`, `COUNTRIES`, `get`, `all_countries`, `matches_location`) built from the worker's `countries_data.py`; matching is accent- and case-insensitive, whole-word, longest-name-first, and follows the card's three rules (explicit `Location:` value, then LinkedIn subdomain, then names/cities). `core/compliance.py` has one researched `EmailRule` per country (EU/EEA share a base with national overrides; DE, AT, NL, ES, IT, DK, PL, CH and 9 non-EU countries default to `block_without_consent`), plus `rule_for` and `send_gate`. Sources, read/secondary status and dates are in DECISIONS.md "Compliance sources". Added `tzdata; sys_platform == "win32"` to pyproject. 157 tests pass (1 POSIX-only skip), ruff clean. Review fixes: IT and DK now strict (sources say business recipients are covered; DK cites Dansk Erhverv), CA and CH require a postal address and CA a truthful subject (Competition Act s.52.01), removed the KR alias "ROK" (clashes with Polish "rok").
 Files: pyproject.toml, src/leadgen/core/{countries,countries_data,compliance}.py, tests/{test_countries,test_compliance}.py, docs/{DECISIONS,STATUS}.md.
 Corrections to the worker draft: removed ambiguous aliases (RSA, ROC/Republic of China, Holland, Nippon) and the city Salvador; added AU alias "New South Wales" and US aliases "New Mexico", "New England" so longer place names are not mistaken for Wales, Mexico, England.
