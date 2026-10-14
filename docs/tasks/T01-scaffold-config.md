@@ -37,6 +37,7 @@ An installable Python package `lead-generator` (import `leadgen`, console script
 - `src/leadgen/cli.py` (argparse, subcommands): `doctor`, `version`, `paths`. Later tasks add more. `doctor` prints: Python version, package version, workspace path (exists/writable), secrets configured (masked), settings valid, and for each later component a placeholder "not installed yet". Exit code 0 if healthy.
 - `.github/workflows/tests.yml`: matrix `windows-latest`, `ubuntu-latest` × Python `3.11`, `3.13`; steps: checkout, setup-python, `pip install -e ".[dev]"`, `ruff check src tests`, `pytest -q --cov=leadgen --cov-report=term-missing`.
 - `ruff` config in pyproject (line-length 100, target py311, rules E,F,W,I,B,UP).
+- `.gitattributes`: `* text=auto eol=lf`, plus `*.ps1 text eol=crlf` and binary markers for images; then run `git add --renormalize .` so every file is stored with LF (avoids CRLF churn between Windows and CI).
 - `README.md` stays as written by the planner (don't rewrite it).
 
 ## Tests (`tests/`)
