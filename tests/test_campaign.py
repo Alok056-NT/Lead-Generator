@@ -93,6 +93,7 @@ def test_create_stores_everything(offer_id):
         "allow_risky_emails": False,
         "allow_guess_emails": False,
         "search_mode": "auto",
+        "ai_search_needs_recheck": False,
     }
     assert got["locale"] == "en-SG"  # from the offer profile
     assert got["counts"]["people"] == {"confirmed": 0, "review": 0, "rejected": 0, "removed": 0}
@@ -285,7 +286,12 @@ def test_update_search_mode_directly_and_merge_options(offer_id):
         "allow_risky_emails": True,
         "allow_guess_emails": True,
         "search_mode": "ai",
+        "ai_search_needs_recheck": False,
     }
+    got = c.update_campaign(created["id"], ai_search_needs_recheck=True)
+    assert got["options"]["ai_search_needs_recheck"] is True
+    with pytest.raises(c.CampaignError):
+        c.update_campaign(created["id"], ai_search_needs_recheck="yes")
 
 
 def test_update_exclusions_merge_per_key(offer_id):

@@ -728,3 +728,50 @@ def test_two_at_phrases_use_the_first_employer():
     cand = parse("Ben Adler - Training Manager at Northwind Health | Speaker at Conf | LinkedIn",
                  "Singapore")  # fmt: skip
     assert cand.confirmed, cand.reasons
+
+
+# --- slug against name (T21, L22) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("slug", "first", "last", "expected"),
+    [
+        ("aria-tan", "Aria", "Tan", "match"),
+        ("aria-tan-4b7a2c1", "Aria", "Tan", "match"),  # trailing hex ID
+        ("aria-tan-123456", "Aria", "Tan", "match"),  # trailing number
+        ("ariatan123", "Aria", "Tan", "match"),  # number glued to the name
+        ("atan", "Aria", "Tan", "match"),  # first initial + surname
+        ("ariat", "Aria", "Tan", "match"),  # first name + last initial
+        ("a-tan", "Aria", "Tan", "match"),
+        ("tan-aria", "Aria", "Tan", "match"),
+        ("rob-smith", "Robert", "Smith", "match"),  # shortened first name
+        ("zoe-muller-12ab34", "Zoë", "Müller", "match"),  # accents folded
+        ("jose-garcia", "José", "García", "match"),
+        ("S%C3%B8ren-hansen".lower(), "Søren", "Hansen", "match"),
+        ("mary-jane-o-brien", "Mary Jane", "O'Brien", "match"),
+        ("anna-lee-wong", "Anna", "Lee Wong", "match"),  # one name token is enough
+        ("john-smith-77aa11", "Aria", "Tan", "mismatch"),
+        ("natanael-xyz", "Aria", "Tan", "mismatch"),  # "atan" inside another name
+        ("bad", "Aria", "Tan", "mismatch"),  # hex-looking word without digits is kept
+        ("ACoAAB1x2y3z4", "Aria", "Tan", "no_tokens"),  # machine ID
+        ("q8w7e6r5t4y3u2i1", "Aria", "Tan", "no_tokens"),
+        ("wei-wang-5566ab", "伟", "王", "no_tokens"),  # nothing to compare
+        ("aria-tan", "", "", "no_tokens"),
+        ("12345", "Aria", "Tan", "no_tokens"),
+    ],
+)
+def test_slug_matches_name_table(slug, first, last, expected):
+    url = f"https://www.linkedin.com/in/{slug}"
+    assert confirm.slug_matches_name(url, first, last) == expected
+
+
+def test_slug_matches_name_needs_a_profile_link():
+    check = confirm.slug_matches_name
+    assert check("https://example.com/in/aria-tan", "Aria", "Tan") == "no_tokens"
+    assert check("", "Aria", "Tan") == "no_tokens"
+    assert check("https://uk.linkedin.com/in/aria-tan/", "Aria", "Tan") == "match"
+
+
+def test_looks_like_id():
+    assert confirm.looks_like_id("ACoAAB1x2y3z4") and confirm.looks_like_id("q8w7e6r5t4y3u2i1")
+    assert not confirm.looks_like_id("aria-tan-1a2b3c") and not confirm.looks_like_id("arianatalia")

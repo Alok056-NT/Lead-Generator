@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import sqlite3
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,6 +35,8 @@ STATUSES = ("confirmed", "review", "rejected", "removed")
 MANUAL_PREFIX = "MANUAL:"
 SAMPLE_SIZE = 5
 _HARD_BLOCKS = ("L03", "L16")  # a person who fails these is never promoted by hand
+# Reasons added by the AI-search checks (ai_search.py, spot_check.py); a re-check keeps them.
+AI_SEARCH_REASON_CODES = ("L21", "L22")
 
 
 class PeopleError(Exception):
@@ -134,6 +136,24 @@ def build_queries(campaign: Mapping[str, Any], company: Mapping[str, Any]) -> li
     `site:linkedin.com/in ("term" OR "term") "Company" Country`. Groups without search terms
     are skipped; a company with no country of its own is searched in each campaign country."""
     return [(s.group_label, s.query) for s in _searches(campaign, company)]
+
+
+def search_plan(
+    campaign: Mapping[str, Any], company: Mapping[str, Any]
+) -> list[tuple[str, str, str]]:
+    """`(group_label, query, gl)` for every search the API path would run for a company row of
+    the `companies` table (used by AI search mode to queue the same queries)."""
+    return [(s.group_label, s.query, s.gl) for s in _searches(campaign, _company_dict(company))]
+
+
+def approved_company_rows(campaign_id: int) -> list[dict[str, Any]]:
+    """The campaign's approved companies (rows of the `companies` table), oldest first."""
+    return _company_rows(campaign_id)
+
+
+def company_view(row: Mapping[str, Any]) -> dict[str, Any]:
+    """A `companies` row in the shape `process_results` expects."""
+    return _company_dict(row)
 
 
 # --- context ----------------------------------------------------------------------------------
@@ -255,6 +275,15 @@ def _brief(cand: rules.Candidate, company_name: str) -> dict[str, Any]:
     }
 
 
+def _note(
+    outcomes: list[dict[str, Any]] | None, position: int, url: str, outcome: str, reasons: list[str]
+) -> None:
+    if outcomes is not None:
+        outcomes.append(
+            {"index": position - 1, "url": url, "outcome": outcome, "reasons": list(reasons)}
+        )
+
+
 def process_results(
     campaign: Mapping[str, Any],
     company: Mapping[str, Any],
@@ -262,11 +291,18 @@ def process_results(
     query: str,
     results: Sequence[SearchResult | Mapping[str, Any]],
     origin: str = "api",
+    screen: Callable[[rules.Candidate, SearchResult], list[str]] | None = None,
+    outcomes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Parse and store the results of one search (`campaign`/`company` are the dicts returned by
     `campaign.get_campaign` and `companies.list_companies`). The same function handles results
     that were not fetched by an API (AI-submitted ones, origin `ai_web_search`), with the same
-    rules. Returns counts (`confirmed`, `review`, `duplicates`, `ignored`) and short samples."""
+    rules. Returns counts (`confirmed`, `review`, `duplicates`, `ignored`) and short samples.
+
+    `screen(candidate, result)` may return extra `Lnn:text` reasons (AI search uses it for its
+    anti-fabrication checks); any reason sends the person to `review`. `outcomes`, when given,
+    receives one `{index, url, outcome, reasons}` per result (`confirmed`, `review`, `duplicate`
+    or `ignored`)."""
     camp_ctx = _campaign_ctx(campaign)
     comp_ctx = _company_ctx(company, campaign)
     stats = {"confirmed": 0, "review": 0, "duplicates": 0, "ignored": 0}
@@ -280,14 +316,19 @@ def process_results(
         urls = {rules.url_key(r["linkedin_url"]) for r in existing}
         names = {(r["company_id"], rules.name_key(r["raw_name"])) for r in existing}
         for position, item in enumerate(results, start=1):
-            cand = rules.parse_result(_result_to_obj(item, position), comp_ctx, camp_ctx)
+            obj = _result_to_obj(item, position)
+            cand = rules.parse_result(obj, comp_ctx, camp_ctx)
             if cand is None:
                 stats["ignored"] += 1
+                _note(outcomes, position, obj.link, "ignored", ["L01:not a personal profile link"])
                 continue
+            if screen is not None:
+                cand.reasons.extend(r for r in screen(cand, obj) if r not in cand.reasons)
             key = rules.url_key(cand.linkedin_url)
             name_key = (company["id"], rules.name_key(cand.raw_name))
             if key in urls or (cand.raw_name and name_key in names):
                 stats["duplicates"] += 1
+                _note(outcomes, position, obj.link, "duplicate", cand.reasons)
                 continue
             status = "confirmed" if cand.confirmed else "review"
             try:
@@ -315,10 +356,12 @@ def process_results(
                 )
             except sqlite3.IntegrityError:
                 stats["duplicates"] += 1
+                _note(outcomes, position, obj.link, "duplicate", cand.reasons)
                 continue
             urls.add(key)
             names.add(name_key)
             stats[status] += 1
+            _note(outcomes, position, obj.link, status, cand.reasons)
             if len(samples[status]) < SAMPLE_SIZE:
                 samples[status].append(_brief(cand, company["name"]))
     return {**stats, "group": group_label, "samples": samples}
@@ -410,10 +453,18 @@ def find_people(
     """
     camp = _campaign(campaign_id)
     if camp["options"].get("search_mode") == "ai":
+        message = "This campaign uses AI search mode, so the tool does not run searches itself."
+        hint = "Use get_search_tasks and submit_search_results, or set search_mode to auto or api."
         raise PeopleError(
             "ai_search_mode",
-            "This campaign uses AI search mode, so the tool does not run searches itself.",
-            "Use get_search_tasks and submit_search_results, or set search_mode to auto or api.",
+            message,
+            hint,
+            response={
+                "ok": False,
+                "use_ai_search": True,
+                "hint": "call get_search_tasks",
+                "error": {"code": "ai_search_mode", "message": message, "hint": hint},
+            },
         )
     ids = _int_list(company_ids)
     start = _cursor(cursor)
@@ -620,6 +671,15 @@ def _is_manual(reasons: Iterable[str]) -> bool:
     return any(r.startswith(MANUAL_PREFIX) for r in reasons)
 
 
+def _ai_reasons(row: Mapping[str, Any]) -> list[str]:
+    """The AI-search reasons (L21, L22) stored on a person whose evidence came from AI search."""
+    if row["evidence_origin"] != "ai_web_search":
+        return []
+    return [
+        r for r in row["reasons_json"] or [] if r.split(":", 1)[0] in AI_SEARCH_REASON_CODES
+    ]
+
+
 def recheck_people(campaign_id: int) -> dict[str, Any]:
     """Run the current rules again over the stored evidence of every confirmed or review person.
 
@@ -652,11 +712,13 @@ def recheck_people(campaign_id: int) -> dict[str, Any]:
                 snippet=row["evidence_snippet"], position=0,
             )  # fmt: skip
             cand = rules.parse_result(result, _company_ctx(company, camp), camp_ctx)
+            kept = _ai_reasons(row)  # anti-fabrication / spot-check findings are not re-derived
             if cand is None:
-                reasons = ["L01:not a personal LinkedIn profile link"]
+                reasons = ["L01:not a personal LinkedIn profile link", *kept]
                 values: dict[str, Any] = {"reasons_json": reasons, "confirmed": 0}
                 new_status = "review"
             else:
+                cand.reasons.extend(r for r in kept if r not in cand.reasons)
                 new_status = "confirmed" if cand.confirmed else "review"
                 values = {
                     "first_name": cand.first_name,

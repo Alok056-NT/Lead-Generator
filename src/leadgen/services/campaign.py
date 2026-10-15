@@ -30,6 +30,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "allow_risky_emails": False,
     "allow_guess_emails": False,
     "search_mode": "auto",
+    "ai_search_needs_recheck": False,  # set by the AI-search spot check (services/spot_check.py)
 }
 EXCLUSION_KEYS = ("companies", "domains", "people", "competitors")
 
@@ -204,7 +205,9 @@ def _options(value: Any, base: Mapping[str, Any] | None = None) -> dict[str, Any
             f"Valid options: {', '.join(DEFAULT_OPTIONS)}.",
         )
     out = {**DEFAULT_OPTIONS, **(base or {}), **value}
-    for key in ("invite_note", "allow_risky_emails", "allow_guess_emails"):
+    for key in (
+        "invite_note", "allow_risky_emails", "allow_guess_emails", "ai_search_needs_recheck"
+    ):  # fmt: skip
         if not isinstance(out[key], bool):
             raise CampaignError("invalid_value", f"option {key} must be true or false.")
     if out["search_mode"] not in SEARCH_MODES:

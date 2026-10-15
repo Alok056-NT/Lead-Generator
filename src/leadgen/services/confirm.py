@@ -30,9 +30,10 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from leadgen.core import countries as countries_mod
+from leadgen.core.text import slugify
 from leadgen.providers.search import SearchResult
 from leadgen.services import seniority as seniority_mod
 from leadgen.services.designation_templates import TEMPLATE_DATA
@@ -648,3 +649,85 @@ def parse_result(
         country=shown,
         reasons=reasons,
     )
+
+
+# --- slug against name (L22) ------------------------------------------------------------------
+
+_ID_SLUG_RE = re.compile(r"^acoa[\w-]{8,}$", re.IGNORECASE)
+_HEX_ID_RE = re.compile(r"[0-9a-f]{3,}")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def looks_like_id(slug: str) -> bool:
+    """True for a machine-made LinkedIn slug: `ACoA...`, or 14+ letters and digits, no hyphen."""
+    slug = slug.strip()
+    if _ID_SLUG_RE.match(slug):
+        return True
+    return (
+        len(slug) >= 14
+        and "-" not in slug
+        and any(ch.isdigit() for ch in slug)
+        and any(ch.isalpha() for ch in slug)
+    )
+
+
+def _slug_parts(slug: str) -> list[str]:
+    """The readable parts of a profile slug: accents folded, lower case, the trailing numeric or
+    hex ID LinkedIn appends (`-4b7a2c1`, `-123`, `tan123`) removed."""
+    parts = [p for p in slugify(unquote(slug)).split("-") if p]
+    while len(parts) > 1 and (
+        parts[-1].isdigit()
+        or (_HEX_ID_RE.fullmatch(parts[-1]) and any(c.isdigit() for c in parts[-1]))
+    ):
+        parts.pop()
+    if parts:
+        parts[-1] = parts[-1].rstrip("0123456789")
+        if not parts[-1]:
+            parts.pop()
+    return parts
+
+
+def _name_tokens(*names: str) -> list[str]:
+    out: list[str] = []
+    for name in names:
+        for word in re.split(r"[\s\-]+", name or ""):
+            token = _NON_ALNUM_RE.sub("", slugify(word))
+            if token:
+                out.append(token)
+    return out
+
+
+def slug_matches_name(url: str, first: str, last: str) -> str:
+    """Whether the profile slug of `url` fits the person's name (anti-fabrication check, L22).
+
+    Returns `match` (some name token, a short form of the first name, or an initial plus the
+    surname such as `atan` / `ariat` appears in the slug), `no_tokens` (nothing to compare: the
+    name has no Latin letters, the link has no slug, or the slug is a machine ID) or `mismatch`.
+    Accents are folded (`Zoë` = `zoe`) and a trailing numeric or hex ID is ignored.
+    """
+    key = url_key(url)
+    slug = unquote(key.split("/", 1)[1]) if key else ""
+    if not slug:
+        return "no_tokens"
+    first_tokens, last_tokens = _name_tokens(first), _name_tokens(last)
+    tokens = {t for t in (*first_tokens, *last_tokens) if len(t) >= 2}
+    if not first_tokens and not last_tokens:
+        return "no_tokens"
+    parts = _slug_parts(slug)
+    flat = "".join(parts)
+    if any(t in parts or (len(t) >= 4 and t in flat) for t in tokens):
+        return "match"
+    if any(
+        len(t) >= 4 and any(len(p) >= 3 and t.startswith(p) for p in parts) for t in first_tokens
+    ):
+        return "match"  # "rob-smith" for Robert Smith
+    combos: set[str] = set()
+    for f in first_tokens:
+        for last_token in last_tokens:
+            combos |= {f + last_token, last_token + f, f[0] + last_token, last_token + f[0],
+                       f + last_token[0], last_token[0] + f}  # fmt: skip
+    if combos and (flat in combos or any(p in combos for p in parts)):
+        return "match"
+    if looks_like_id(slug) or not parts:
+        return "no_tokens"
+    return "mismatch"

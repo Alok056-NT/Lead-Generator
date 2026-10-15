@@ -426,6 +426,7 @@ def test_scrape_reads_mailto_and_text_on_same_domain(real_scrape):
             text="<p>carl.tan@acme.example, aria.tan@acme.example</p>",
         )
     )
+    respx.route().mock(return_value=httpx.Response(404))  # home page and the other paths
     found = emails.scrape_site_emails("www.acme.example")
     assert found == [
         "aria.tan@acme.example",
@@ -449,6 +450,7 @@ def test_scrape_honours_robots_and_failures(real_scrape):
     )
     contact = respx.get(f"{SITE}/contact").mock(return_value=httpx.Response(200, text="x"))
     respx.get(f"{SITE}/about").mock(return_value=httpx.Response(500))
+    respx.route().mock(return_value=httpx.Response(404))
     assert emails.scrape_site_emails("acme.example") == []
     assert contact.call_count == 0
 
@@ -458,6 +460,7 @@ def test_scrape_network_error_gives_empty(real_scrape):
     respx.get(ROBOTS).mock(side_effect=httpx.ConnectError("down"))
     respx.get(f"{SITE}/contact").mock(side_effect=httpx.ConnectError("down"))
     respx.get(f"{SITE}/about").mock(side_effect=httpx.ConnectError("down"))
+    respx.route().mock(side_effect=httpx.ConnectError("down"))
     assert emails.scrape_site_emails("acme.example") == []
 
 
@@ -477,6 +480,7 @@ def test_scrape_stops_on_redirect_to_private_address(real_scrape):
     )
     about = respx.get(f"{SITE}/about").mock(return_value=httpx.Response(404))
     local = respx.get("http://127.0.0.1/secret").mock(return_value=httpx.Response(200))
+    respx.route(host="acme.example").mock(return_value=httpx.Response(404))
     assert emails.scrape_site_emails("acme.example") == []
     assert local.call_count == 0 and about.call_count == 0
 
@@ -1207,6 +1211,7 @@ def test_website_is_scraped_once_for_many_people_of_a_domain(cid, monkeypatch):
         )
     )
     about = respx.get(f"{site}/about").mock(return_value=httpx.Response(404))
+    respx.route(host="northwind.example").mock(return_value=httpx.Response(404))
     company = add_company(cid)
     for first in ("Aria", "Carl", "Dana"):
         add_person(cid, company, first, "Tan")
@@ -1322,3 +1327,89 @@ def test_later_person_without_time_is_deferred_not_stored_as_guess(cid, monkeypa
 def test_verify_without_a_run_deadline_never_times_out(cid):
     result = emails.verify("a.b@northwind.example", "google", verifiers=[FakeVerifier("reoon")])
     assert result.status == "verified" and not result.timed_out
+
+
+# --- AI search mode: examples, site sources, no keys (T21) --------------------------------------
+
+
+def test_learn_pattern_from_examples_saves_a_pattern_found_by_the_ai(ready_db):
+    out = emails.learn_pattern_from_examples(
+        "www.Northwind.example",
+        [
+            "Bob.Lee@northwind.example",
+            ("carl.ong@northwind.example", "Carl", "Ong"),
+            "info@northwind.example",
+            "someone@other.example",
+            "not an address",
+        ],
+        ["https://northwind.example/team", "https://northwind.example/team"],
+    )
+    assert out["pattern"] == "{first}.{last}" and out["saved"] and out["examples_used"] == 2
+    assert out["role_addresses"] == 1 and out["source_urls"] == ["https://northwind.example/team"]
+    assert emails.known_pattern("northwind.example") == ("{first}.{last}", "ai_search")
+    assert "ai_search" in emails.REAL_SOURCES
+
+
+def test_learned_pattern_is_not_replaced_by_a_weaker_source_but_ai_can_update_ai(ready_db):
+    emails._cache_pattern("northwind.example", "{f}{last}", "hunter", 0.9)
+    out = emails.learn_pattern_from_examples("northwind.example", ["bob.lee@northwind.example"])
+    assert out["pattern"] == "{f}{last}" and out["saved"] is False  # Hunter's stays
+    emails._cache_pattern("lakeside.example", "{first}", "ai_search", 0.8)
+    out = emails.learn_pattern_from_examples("lakeside.example", ["bob.lee@lakeside.example"])
+    assert out["saved"] is True and emails.known_pattern("lakeside.example")[0] == "{first}.{last}"
+    empty = emails.learn_pattern_from_examples("nowhere.example", ["info@nowhere.example"])
+    assert empty["pattern"] is None and empty["saved"] is False and empty["role_addresses"] == 1
+
+
+def test_find_emails_without_keys_uses_the_ai_examples_and_labels_the_result_guess(cid):
+    company = add_company(cid)
+    aria = add_person(cid, company, "Aria", "Tan")
+    emails.learn_pattern_from_examples(
+        "northwind.example", [("bob.lee@northwind.example", "Bob", "Lee")]
+    )
+    out = emails.find_emails(cid, hunter=None, verifiers=[])
+    assert out["this_call"]["guess"] == 1 and out["verifier_needs_key"]
+    assert out["patterns_used"]["northwind.example"]["source"] == "ai_search"
+    row = email_rows(aria)[0]
+    assert row["email"] == "aria.tan@northwind.example" and row["status"] == "guess"
+    assert row["method"] == "pattern:ai_search"
+
+
+@respx.mock
+def test_scrape_site_sources_returns_page_urls_and_reads_the_extra_paths(real_scrape):
+    respx.get(ROBOTS).mock(return_value=httpx.Response(404))
+    html = {"content-type": "text/html"}
+    respx.get(f"{SITE}/").mock(
+        return_value=httpx.Response(200, headers=html, text="<p>home: a.tan@acme.example</p>")
+    )
+    respx.get(f"{SITE}/contact").mock(return_value=httpx.Response(404))
+    respx.get(f"{SITE}/contact-us").mock(
+        return_value=httpx.Response(
+            200, headers=html, text="a.tan@acme.example and bob.lee@acme.example"
+        )
+    )
+    respx.get(f"{SITE}/about").mock(return_value=httpx.Response(404))
+    respx.get(f"{SITE}/about-us").mock(return_value=httpx.Response(404))
+    team = respx.get(f"{SITE}/team").mock(
+        return_value=httpx.Response(200, headers=html, text="late@acme.example")
+    )
+    found = emails.scrape_site_sources("acme.example")
+    assert found == [
+        ("a.tan@acme.example", f"{SITE}/"),
+        ("bob.lee@acme.example", f"{SITE}/contact-us"),
+    ]
+    assert team.call_count == 0  # only the first five pages are asked for
+    assert emails.scrape_site_emails("acme.example") == [a for a, _u in found]
+    emails._site_cache.clear()
+    respx.get(f"{SITE}/people").mock(return_value=httpx.Response(404))
+    wider = emails.scrape_site_sources("acme.example", max_pages=6)
+    assert team.call_count == 1  # /team is the sixth path
+    assert wider == [*found, ("late@acme.example", f"{SITE}/team")]
+
+
+def test_addresses_on_domain_reads_text():
+    text = "Write to Bob.Lee@NORTHWIND.example or info&#64;northwind.example, not x@other.example"
+    assert emails.addresses_on_domain(text, "www.northwind.example") == [
+        "bob.lee@northwind.example",
+        "info@northwind.example",
+    ]

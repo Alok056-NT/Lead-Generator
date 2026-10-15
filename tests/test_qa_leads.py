@@ -516,3 +516,17 @@ def test_load_leads_reads_only_confirmed_people_and_their_best_email(ready_db):
 def test_email_checks_only_run_for_email_campaigns(channels):
     issues = run(campaign=campaign_dict(channels=channels), email=email_row("guess"))
     assert ("L23" in codes(issues)) == ("email" in channels)
+
+
+def test_l22_accepts_initial_style_slugs_on_api_and_ai_leads():
+    for slug in ("atan", "ariat", "a-tan", "aria-tan-4b7a2c1"):
+        for origin in ("api", "ai_web_search"):
+            person = person_row(
+                linkedin_url=f"https://www.linkedin.com/in/{slug}", evidence_origin=origin
+            )
+            assert "L22" not in codes(run(person)), (slug, origin)
+    nickname = person_row(
+        first_name="Robert", greeting_name="Bob", raw_name="Robert Smith", last_name="Smith",
+        linkedin_url="https://www.linkedin.com/in/bobby-j-77aa11",
+    )  # fmt: skip
+    assert by_code(run(nickname), "L22").severity == "warn"

@@ -74,7 +74,8 @@ GATEWAY_WORDS = (
     "pphosted", "mimecast", "barracuda", "proofpoint", "messagelabs", "cisco", "fortinet",
     "trendmicro",
 )  # fmt: skip
-SITE_PATHS = ("/contact", "/about")
+SITE_PATHS = ("", "/contact", "/contact-us", "/about", "/about-us", "/team", "/people")
+SITE_MAX_PAGES = 5  # pages asked for per domain (the first five of SITE_PATHS)
 PAGE_SIZE_MAX = 25
 _DEFERRED = "deferred"
 CALL_TIME_LIMIT_S = 25.0  # no new person is started after this many seconds of one call
@@ -83,10 +84,10 @@ HUNTER_NONE_DAYS = 30  # Hunter is not asked again about a domain it had no patt
 HTTP_FAILURES_BEFORE_SKIP = 2  # a provider failing this often in one call is skipped for it
 SMTP_TIMEOUT_S = 10
 SMTP_PROBE = True  # the SMTP RCPT probe (only ever used for `other` mail servers)
-REAL_SOURCES = ("known_email", "hunter", "website")  # patterns seen on real addresses
+REAL_SOURCES = ("known_email", "hunter", "website", "ai_search")  # patterns seen on real addresses
 
 _mx_cache: dict[str, tuple[str | None, bool]] = {}
-_site_cache: dict[str, list[str]] = {}
+_site_cache: dict[str, list[tuple[str, str]]] = {}
 _site_limiter = RateLimiter(1.0)
 
 _SPECIAL = str.maketrans(
@@ -433,11 +434,24 @@ def _extract_addresses(page_html: str, domain: str) -> list[str]:
     return out
 
 
-def scrape_site_emails(domain: str) -> list[str]:
-    """Addresses on the company's own domain found on its `/contact` and `/about` pages.
+def addresses_on_domain(text: str, domain: str) -> list[str]:
+    """Email addresses written in `text` (a search title or snippet) that belong to `domain`."""
+    return _extract_addresses(text or "", clean_domain(domain))
 
-    Uses the T05 URL guard (public addresses only, also on redirects), honours robots.txt and
-    asks for at most one page per second. Cached per process; every failure gives `[]`.
+
+def known_pattern(domain: str) -> tuple[str, str] | None:
+    """The saved `(pattern, source)` for a domain, or None."""
+    return _cached_pattern(clean_domain(domain))
+
+
+def scrape_site_sources(domain: str, max_pages: int = SITE_MAX_PAGES) -> list[tuple[str, str]]:
+    """`(email, page url)` for addresses on the company's own domain, found on its home page,
+    `/contact`, `/contact-us`, `/about`, `/about-us`, `/team` and `/people` (the first
+    `max_pages` of them are asked for).
+
+    Free, no key. Uses the T05 URL guard (public addresses only, also on redirects), honours
+    robots.txt and asks for at most one page per second. Cached per process (by domain); every
+    failure gives `[]`. Each address appears once, with the first page that showed it.
     """
     domain = clean_domain(domain)
     if not domain:
@@ -445,25 +459,68 @@ def scrape_site_emails(domain: str) -> list[str]:
     if domain in _site_cache:
         return _site_cache[domain]
     base_url = f"https://{domain}"
-    found: list[str] = []
+    found: list[tuple[str, str]] = []
     try:
         offer_web._check_public_url(base_url)
         with offer_web._client() as client:
             _site_limiter.acquire()
             robots = offer_web._load_robots(client, base_url)
             agent = offer_web.http.USER_AGENT
-            for path in SITE_PATHS:
-                url = base_url + path
+            for path in SITE_PATHS[: max(1, int(max_pages))]:
+                url = base_url + (path or "/")
                 if not robots.can_fetch(agent, url):
                     continue
                 _site_limiter.acquire()
                 page = offer_web._fetch(client, url)
                 if page.status == 200 and page.html:
-                    found.extend(a for a in _extract_addresses(page.html, domain) if a not in found)
+                    seen = {a for a, _u in found}
+                    found.extend(
+                        (a, url) for a in _extract_addresses(page.html, domain) if a not in seen
+                    )
     except (offer_web.WebError, httpx.HTTPError, ValueError) as exc:
         logger.debug("site scrape failed for %s: %s", domain, type(exc).__name__)
     _site_cache[domain] = found
     return found
+
+
+def scrape_site_emails(domain: str, max_pages: int = SITE_MAX_PAGES) -> list[str]:
+    """Addresses on the company's own domain found on its public contact pages (see
+    `scrape_site_sources`, which also returns the page of each address). Role addresses are
+    included here; pattern inference ignores them."""
+    return [address for address, _url in scrape_site_sources(domain, max_pages)]
+
+
+def learn_pattern_from_examples(
+    domain: str, emails: Iterable[Any], source_urls: Sequence[str] | None = None
+) -> dict[str, Any]:
+    """Save the domain's email pattern from real addresses the AI found by web search.
+
+    `emails` are bare addresses or `(email, first, last)` tuples; only addresses on `domain`
+    count, and role addresses (info@, hr@ ...) are ignored for the pattern (they only show that
+    the domain receives mail). The pattern is saved like a Hunter one (source `ai_search`) unless
+    the domain already has a saved pattern from a real source. Returns `pattern`, `saved`,
+    `learned` (from these examples), `examples_used`, `role_addresses` and `source_urls`.
+    `pattern` is the one now in effect for the domain.
+    """
+    domain = clean_domain(domain)
+    addresses = [_address_parts(e) for e in emails]
+    on_domain = [a for a in addresses if "@" in a[0] and clean_domain(a[0]) == domain]
+    people = [a for a in on_domain if not is_role_address(a[0])]
+    pattern = _pattern_from_examples(domain, people)
+    cached = _cached_pattern(domain)
+    saved = False
+    if pattern and (cached is None or cached[1] not in REAL_SOURCES or cached[1] == "ai_search"):
+        _cache_pattern(domain, pattern, "ai_search", 0.8)
+        saved = True
+    return {
+        "domain": domain,
+        "pattern": pattern if saved else (cached[0] if cached else pattern),
+        "learned": pattern,
+        "saved": saved,
+        "examples_used": len(people),
+        "role_addresses": len(on_domain) - len(people),
+        "source_urls": list(dict.fromkeys(source_urls or []))[:10],
+    }
 
 
 @dataclass
@@ -1070,6 +1127,7 @@ def _process_person(
 __all__ = [
     "EmailError",
     "Verification",
+    "addresses_on_domain",
     "build_email",
     "candidate_emails",
     "classify_mx",
@@ -1078,7 +1136,11 @@ __all__ = [
     "find_emails",
     "infer_pattern",
     "is_role_address",
+    "known_pattern",
+    "learn_pattern_from_examples",
     "mx_type",
+    "scrape_site_emails",
+    "scrape_site_sources",
     "store_email",
     "verify",
 ]

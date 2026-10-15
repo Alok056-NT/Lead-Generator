@@ -25,7 +25,6 @@ from urllib.parse import unquote
 
 from leadgen import db
 from leadgen.core import countries as countries_mod
-from leadgen.core.text import slugify
 from leadgen.providers.search import SearchResult
 from leadgen.services import confirm as rules
 from leadgen.services import drafting
@@ -93,10 +92,6 @@ _LOCATION_VALUE_RE = re.compile(r"(?<![A-Za-z])location\s*[:·]\s*([^·|]+)", re
 _NAME_BRACKET_RE = re.compile(r"[(\[]")
 _NAME_CAPS_RE = re.compile(r"(?<![A-Za-z])[A-Z]{3,}(?![A-Za-z])")
 _NAME_INITIAL_RE = re.compile(r"^[A-Za-z]\.?$")
-
-# L22: LinkedIn slugs that are machine IDs ("ACoAAB...", a long run of letters and digits).
-_ID_SLUG_RE = re.compile(r"^acoa[\w-]{8,}$", re.IGNORECASE)
-_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 _STATUS_RANK = {"verified": 0, "risky": 1, "guess": 2, "unknown": 3, "invalid": 4}
 
@@ -307,41 +302,29 @@ def _language_issue(
     return []
 
 
-def _looks_like_id(slug: str) -> bool:
-    """True for a machine-made slug: `ACoA...`, or a long run of letters and digits."""
-    if _ID_SLUG_RE.match(slug):
-        return True
-    return (
-        len(slug) >= 14
-        and "-" not in slug
-        and any(ch.isdigit() for ch in slug)
-        and any(ch.isalpha() for ch in slug)
-    )
-
-
 def _slug(url: str) -> str:
     key = rules.url_key(url)
     return unquote(key.split("/", 1)[1]) if key else ""
 
 
 def _slug_issue(person: Mapping[str, Any], ai_search: bool) -> list[Issue]:
-    """L22: some part of the person's name should appear in the LinkedIn slug."""
-    slug = _slug(str(person.get("linkedin_url") or ""))
+    """L22: some part of the person's name should appear in the LinkedIn slug
+    (`confirm.slug_matches_name`; the greeting name and the name as shown count too)."""
+    url = str(person.get("linkedin_url") or "")
+    slug = _slug(url)
     if not slug:
         return []
-    tokens: set[str] = set()
-    for key in ("first_name", "last_name", "greeting_name", "raw_name"):
-        for word in re.split(r"[\s\-]+", str(person.get(key) or "")):
-            token = _NON_ALNUM_RE.sub("", slugify(word))
-            if len(token) >= 2:
-                tokens.add(token)
-    if not tokens:
-        return []  # nothing to compare (for example a name in Chinese characters)
-    parts = {_NON_ALNUM_RE.sub("", p) for p in slug.lower().split("-")}
-    flat = _NON_ALNUM_RE.sub("", slug.lower())
-    if any(t in parts or (len(t) >= 4 and t in flat) for t in tokens):
+    first, last = str(person.get("first_name") or ""), str(person.get("last_name") or "")
+    verdicts = {
+        rules.slug_matches_name(url, first, last),
+        rules.slug_matches_name(url, str(person.get("greeting_name") or ""), ""),
+        rules.slug_matches_name(url, str(person.get("raw_name") or ""), ""),
+    }
+    if "match" in verdicts:
         return []
-    if _looks_like_id(slug):
+    if verdicts == {"no_tokens"} and not rules.looks_like_id(slug):
+        return []  # nothing to compare (for example a name in Chinese characters)
+    if "mismatch" not in verdicts:
         return [_issue("L22", f"The LinkedIn address ('{slug[:30]}') is an ID, so the name "
                               "cannot be matched; check the link by hand.", "warn")]  # fmt: skip
     return [

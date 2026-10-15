@@ -612,3 +612,65 @@ def test_recheck_handles_a_stored_link_that_is_not_a_profile(found):
 def test_recheck_unknown_campaign(ready_db):
     with pytest.raises(CampaignError):
         people.recheck_people(12345)
+
+
+# --- hooks used by AI search mode (T21) ---------------------------------------------------------
+
+
+def test_ai_search_mode_reply_points_to_the_ai_tools(cid):
+    camp.update_campaign(cid, search_mode="ai")
+    with pytest.raises(PeopleError) as err:
+        people.find_people(cid, provider=FakeSearchProvider({}))
+    reply = err.value.as_response()
+    assert reply["ok"] is False and reply["use_ai_search"] is True
+    assert reply["hint"] == "call get_search_tasks" and reply["error"]["code"] == "ai_search_mode"
+
+
+def test_process_results_screen_and_outcomes(cid):
+    company_id = add_company(cid, "Northwind Health")
+    camp_dict = camp.get_campaign(cid)
+    company = {"id": company_id, "name": "Northwind Health", "aliases": []}
+    items = [
+        hit("Mira Lee", "Training Manager", "Northwind Health"),
+        hit("Jonah Reyes", "HR Manager", "Northwind Health"),
+        SearchResult(title="Careers", link="https://example.com/jobs", snippet="", position=3),
+    ]
+    seen = []
+
+    def screen(cand, result):
+        seen.append((cand.raw_name, result.link.rsplit("/", 1)[-1]))
+        return ["L21:test reason"] if cand.raw_name == "Jonah Reyes" else []
+
+    outcomes = []
+    out = people.process_results(
+        camp_dict, company, "g", "q", items, origin="ai_web_search", screen=screen,
+        outcomes=outcomes,
+    )  # fmt: skip
+    assert (out["confirmed"], out["review"], out["ignored"]) == (1, 1, 1)
+    # the hook is not called for the non-profile link
+    assert seen == [("Mira Lee", "mira-lee"), ("Jonah Reyes", "jonah-reyes")]
+    assert [(o["index"], o["outcome"]) for o in outcomes] == [
+        (0, "confirmed"), (1, "review"), (2, "ignored"),
+    ]  # fmt: skip
+    assert outcomes[1]["reasons"] == ["L21:test reason"]
+    again = []
+    people.process_results(camp_dict, company, "g", "q", items[:1], outcomes=again)
+    assert again[0]["outcome"] == "duplicate"
+
+
+def test_recheck_keeps_the_ai_search_reasons(cid):
+    company_id = add_company(cid, "Northwind Health")
+    camp_dict = camp.get_campaign(cid)
+    company = {"id": company_id, "name": "Northwind Health", "aliases": []}
+    people.process_results(
+        camp_dict, company, "g", "q", [hit("Mira Lee", "Training Manager", "Northwind Health")],
+        origin="ai_web_search", screen=lambda cand, result: ["L22:link does not fit the name"],
+    )  # fmt: skip
+    api = hit("Jonah Reyes", "HR Manager", "Northwind Health")
+    people.process_results(camp_dict, company, "g", "q", [api])
+    out = people.recheck_people(cid)
+    assert out["to_confirmed"] == [] and out["to_review"] == []
+    rows = {p["raw_name"]: p for p in people.list_people(cid)["people"]}
+    assert rows["Mira Lee"]["status"] == "review"
+    assert rows["Mira Lee"]["reasons"] == ["L22:link does not fit the name"]
+    assert rows["Jonah Reyes"]["status"] == "confirmed"
