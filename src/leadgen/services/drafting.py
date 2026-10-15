@@ -35,7 +35,7 @@ UNFIXABLE_CODES = frozenset(
     {"no_sendable_email", "person_not_confirmed", "already_sent", "channel_not_enabled",
      "unknown_person"}
 )  # fmt: skip
-CHECKER = "basic"  # replaced by "qa_messages" when T11 plugs in its checks (see _check_message)
+CHECKER = "qa_messages"  # which checks produced the issues stored in `qa_json`
 
 
 # --- channel limits (PLAN section 13) -----------------------------------------------------------
@@ -404,6 +404,12 @@ def get_drafting_batch(
         "campaign_id": camp["id"],
         "channel": channel,
         "locale": camp["locale"],
+        "campaign": {
+            "name": camp["name"],
+            "sectors": camp["sectors"],
+            "countries": camp["countries"],
+            "target_designations": [g.get("label") for g in camp["designations"]],
+        },
         "channel_spec": CHANNEL_SPECS[channel].as_dict(),
         "offer": _offer_payload(profile),
         "people": [_person_payload(r, camp) for r in rows],
@@ -428,106 +434,26 @@ def get_drafting_batch(
 
 # --- instant message checks ------------------------------------------------------------
 
-_PLACEHOLDER_RE = re.compile(
-    r"\{\{|\}\}|\{[^{}\s][^{}]*\}|\[[^\]\n]{1,60}\]|<[^<>\n]{1,60}>|"
-    r"(?-i:\b(?:TODO|TBC|TBD)\b)|\blorem ipsum\b|(?-i:\bX{3,}\b)",
-    re.IGNORECASE,
-)
-_SUBJECT_FAKE_RE = re.compile(r"^\s*(?:re|fwd?|fw)\s*:", re.IGNORECASE)
-
 
 def _issue(code: str, severity: str, detail: str) -> dict[str, str]:
     return {"code": code, "severity": severity, "detail": detail}
 
 
-def _first_line(body: str) -> str:
-    for line in body.splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
+def _qa() -> Any:
+    """The message checks (`qa_messages`), imported late because that module reads
+    `CHANNEL_SPECS` from this one."""
+    from leadgen.services import qa_messages
+
+    return qa_messages
 
 
-def _check_message(
-    channel: str, subject: str, body: str, greeting_name: str
-) -> list[dict[str, str]]:
-    """Instant checks run when a draft is saved: M01 greeting, M03 placeholders, M04 length,
-    M09 subject.
+@dataclass
+class _SaveContext:
+    """What `save_drafts` loads once per call for the message checks."""
 
-    TODO(T11): replace with `qa_messages.check_message` (the full M01-M16 set) and set
-    `CHECKER` to its name. The return shape (code, severity, detail) is the contract.
-    """
-    spec = CHANNEL_SPECS[channel]
-    issues: list[dict[str, str]] = []
-
-    if not body.strip():
-        issues.append(_issue("M04", "block", "The message body is empty."))
-    else:
-        size = len(body) if spec.body_unit == "chars" else len(body.split())
-        if size > spec.body_max:
-            issues.append(
-                _issue(
-                    "M04",
-                    "block",
-                    f"Too long: {size} {spec.body_unit}, the limit for {channel} is "
-                    f"{spec.body_max}. Cut {size - spec.body_max} {spec.body_unit}.",
-                )
-            )
-        elif size < spec.body_min:
-            issues.append(
-                _issue(
-                    "M04",
-                    "block",
-                    f"Too short: {size} {spec.body_unit}, {channel} needs at least "
-                    f"{spec.body_min}.",
-                )
-            )
-
-    name = greeting_name.strip()
-    if not name:
-        issues.append(
-            _issue("M01", "block", "This person has no greeting_name, so no greeting is checked.")
-        )
-    elif body.strip():
-        pattern = r"(?<!\w)" + re.escape(name) + r"(?!\w)"
-        if not re.search(pattern, _first_line(body), re.IGNORECASE):
-            issues.append(
-                _issue(
-                    "M01",
-                    "block",
-                    f"The first line must greet the person as '{name}' (their greeting_name). "
-                    f"It reads: '{truncate(_first_line(body), 60)}'.",
-                )
-            )
-
-    for label, text in (("subject", subject), ("body", body)):
-        found = _PLACEHOLDER_RE.search(text)
-        if found:
-            issues.append(
-                _issue(
-                    "M03", "block", f"Unresolved placeholder in the {label}: '{found.group(0)}'."
-                )
-            )
-
-    if spec.has_subject:
-        if not subject:
-            issues.append(_issue("M09", "block", "An email needs a subject."))
-        else:
-            if len(subject) > spec.subject_max:
-                issues.append(
-                    _issue(
-                        "M09",
-                        "block",
-                        f"Subject is {len(subject)} characters, the limit is {spec.subject_max}.",
-                    )
-                )
-            if _SUBJECT_FAKE_RE.match(subject):
-                issues.append(
-                    _issue("M09", "block", "Subject must not start with Re:, Fwd: or Fw:.")
-                )
-            letters = [ch for ch in subject if ch.isalpha()]
-            if len(letters) >= 6 and all(ch.isupper() for ch in letters):
-                issues.append(_issue("M09", "block", "Subject must not be in ALL CAPS."))
-    return issues
+    profile: Mapping[str, Any]
+    companies: list[dict[str, Any]]
+    index: dict[int, Any]
 
 
 # --- saving ---------------------------------------------------------------------------------------
@@ -574,6 +500,7 @@ def _save_one(
     draft: Any,
     index: int,
     seen: set[tuple[int, str]],
+    ctx: _SaveContext,
 ) -> dict[str, Any]:
     if not isinstance(draft, Mapping):
         return _not_saved(index, None, None, "invalid_draft", "A draft must be an object.")
@@ -607,10 +534,7 @@ def _save_one(
         )  # fmt: skip
     seen.add((person_id, channel))
 
-    person = conn.execute(
-        "SELECT id, campaign_id, status, greeting_name, first_name FROM people WHERE id = ?",
-        (person_id,),
-    ).fetchone()
+    person = db.get(conn, "people", person_id)
     if person is None or person["campaign_id"] != camp["id"]:
         return _not_saved(
             index, person_id, channel, "unknown_person",
@@ -648,8 +572,26 @@ def _save_one(
 
     body = _clean_body(body)
     subject = normalize_whitespace(subject) if CHANNEL_SPECS[channel].has_subject else ""
-    greeting = person["greeting_name"] or person["first_name"] or ""
-    issues = _check_message(channel, subject, body, greeting)
+    company = next((c for c in ctx.companies if c["id"] == person["company_id"]), None)
+    if company is None:
+        return _not_saved(
+            index, person_id, channel, "unknown_person",
+            f"Person {person_id} has no company in this campaign.",
+        )  # fmt: skip
+    qa = _qa()
+    message = {
+        "id": existing_row["id"] if existing_row is not None else None,
+        "channel": channel,
+        "subject": subject,
+        "body": body,
+        "ai_review": "",
+    }
+    issues = [
+        i.as_dict()
+        for i in qa.check_message(
+            message, person, company, camp, ctx.profile, ctx.index, companies=ctx.companies
+        )
+    ]
     status = "qa_fail" if any(i["severity"] == "block" for i in issues) else "qa_pass"
 
     history: list[dict[str, Any]] = []
@@ -675,6 +617,7 @@ def _save_one(
     else:
         message_id = existing_row["id"]
         db.update(conn, "messages", message_id, **values)
+    ctx.index[message_id] = qa.index_entry({**message, "id": message_id}, person, company)
     return {
         "index": index,
         "message_id": message_id,
@@ -696,7 +639,7 @@ def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any
     `DraftError` for a missing offer profile or a bad `drafts` list.
     """
     camp = _campaign(campaign_id)
-    _offer_profile(camp)
+    profile = _offer_profile(camp)
     if not isinstance(drafts, (list, tuple)) or not drafts:
         raise DraftError("invalid_drafts", "drafts must be a non-empty list.")
     if len(drafts) > MAX_DRAFTS_PER_CALL:
@@ -708,8 +651,15 @@ def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any
     enabled = channels_for(camp)
     seen: set[tuple[int, str]] = set()
     with db.session() as conn:
+        ctx = _SaveContext(
+            profile=profile,
+            companies=db.query(
+                conn, "SELECT * FROM companies WHERE campaign_id = ?", (camp["id"],)
+            ),
+            index=_qa().build_index(camp["id"]),
+        )
         results = [
-            _save_one(conn, camp, enabled, draft, index, seen)
+            _save_one(conn, camp, enabled, draft, index, seen, ctx)
             for index, draft in enumerate(drafts)
         ]
     counts = {

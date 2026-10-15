@@ -12,7 +12,7 @@ import pytest
 
 from leadgen import db
 from leadgen.services import campaign as camp
-from leadgen.services import drafting, offer
+from leadgen.services import drafting, offer, qa_messages
 from leadgen.services.drafting import CHANNEL_SPECS, DraftError
 
 PROFILE = {
@@ -111,10 +111,10 @@ def li_body(name="Aria", extra=""):
 
 
 def email_body(name="Aria", words=60):
-    filler = " ".join(["supervisor"] * (words - 12))
+    filler = " ".join(["supervisor"] * (words - 15))
     return (
         f"Hi {name},\n\nI saw you lead learning at Northwind Logistics. {filler}."
-        "\n\nKind regards,\nPriya"
+        "\n\nWould that help?\n\nKind regards,\nPriya"
     )
 
 
@@ -539,7 +539,7 @@ def test_cursor_survives_saving_between_batches(world):
 
 
 def good_li(name="Aria"):
-    return li_body(name) + " " + "Our courses are practical and short. " * 2
+    return li_body(name) + " " + "Our courses are practical and short. " * 2 + "Would that help?"
 
 
 def test_save_pass_and_store(world):
@@ -682,9 +682,17 @@ def test_mixed_results_and_next_step(world):
 )
 def test_lowercase_todo_words_are_not_placeholders(text):
     body = "Hi Aria, " + text + " " + "equipo " * 30
-    assert drafting._check_message("linkedin_message", "", body, "Aria") == []
-    flagged = drafting._check_message("linkedin_message", "", body + " TODO", "Aria")
-    assert [i["code"] for i in flagged] == ["M03"]
+
+    def codes(text):
+        message = {"channel": "linkedin_message", "subject": "", "body": text}
+        person = {"greeting_name": "Aria", "first_name": "Aria", "title": "Head of HR"}
+        issues = qa_messages.check_message(
+            message, person, {"name": "Northwind"}, {"locale": "es"}, {}, companies=[]
+        )
+        return [i.code for i in issues if i.code == "M03"]
+
+    assert codes(body) == []
+    assert codes(body + " TODO") == ["M03"]
 
 
 def test_guess_email_is_drafted_only_when_the_option_is_on(ready_db):
@@ -816,7 +824,7 @@ def test_history_records_failed_versions_and_skips_identical_resaves(world):
     drafting.save_drafts(cid, [{"person_id": p, "channel": "linkedin_message", "body": good_li()}])
     history = messages(p)[0]["qa_json"]["history"]
     assert len(history) == 1 and history[0]["status"] == "qa_fail"
-    assert history[0]["issues"] and history[0]["issues"][0]["code"] == "M04"
+    assert "M04" in [i["code"] for i in history[0]["issues"]]
     drafting.save_drafts(cid, [{"person_id": p, "channel": "linkedin_message", "body": good_li()}])
     assert len(messages(p)[0]["qa_json"]["history"]) == 1  # same text: no new history entry
 
@@ -851,10 +859,27 @@ def test_guide_has_three_good_and_three_bad_examples():
         assert needle in guide, needle
 
 
-def test_good_examples_pass_the_instant_checks():
+# The batch data each good example in the guide is written from.
+GOOD_EXAMPLE_DATA = {
+    "Aria": ("Northwind Logistics", "Head of Learning & Development"),
+    "Marcus": ("Contoso Foods", "HR Director"),
+    "Devika": ("Fabrikam Freight", "Operations Head"),
+}
+
+
+def test_good_examples_pass_all_the_checks():
     guide = drafting.guide_text()
     good = [b for b in _blocks(guide) if b.startswith("channel:")]
     assert len(good) == 3
+    profile = {
+        **PROFILE,
+        "confirmed_claims": [
+            *PROFILE["confirmed_claims"],
+            "Sessions are delivered by certified trainers",
+            "Courses are taught by working trainers",
+        ],
+        "ctas": ["15-minute call", "send a one-page outline"],
+    }
     seen = set()
     for block in good:
         head, _, body = block.partition("\n\n")
@@ -862,7 +887,14 @@ def test_good_examples_pass_the_instant_checks():
         channel, subject = fields["channel"], fields.get("subject", "")
         body = body.strip()
         name = re.match(r"(?:Hi|Hello|Dear) (\w+)", body).group(1)
-        assert drafting._check_message(channel, subject, body, name) == [], (channel, body)
+        company, title = GOOD_EXAMPLE_DATA[name]
+        person = {"greeting_name": name, "first_name": name, "last_name": "Test", "title": title}
+        message = {"channel": channel, "subject": subject, "body": body}
+        issues = qa_messages.check_message(
+            message, person, {"name": company}, {"locale": "en-GB", "sectors": ["logistics"]},
+            profile, companies=[],
+        )  # fmt: skip
+        assert [i.as_dict() for i in issues] == [], (channel, body)
         assert "!" not in body and not re.search(r"[^\x00-⿿]", body)
         seen.add(channel)
     assert seen == set(CHANNEL_SPECS)

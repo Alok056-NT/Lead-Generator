@@ -72,8 +72,9 @@ The batch repeats the limits in `channel_spec`. The tool rejects a draft outside
 A person can carry `flags`. Flags are **keyword hints** from the title and company text, so they
 can be wrong. What each one means:
 
-- `partner`: the title contains partnership(s), alliance(s), channel partner/manager, reseller or
-  affiliate, or the company looks like a reseller. So a "Head of Partnerships" is flagged.
+- `partner`: the title contains partnership(s), alliance(s), channel partner/manager, reseller,
+  affiliate, strategic partner or business partner programme, or the company looks like a
+  reseller. So a "Head of Partnerships" is flagged.
 - `competitor`: the company is on the campaign's competitor list.
 - `recruiter`: the company looks like a recruitment or staffing agency, or the title is an
   agency role (headhunter, executive search).
@@ -94,9 +95,10 @@ What to do:
   those people are the prospects: write the normal message.
 
 If the evidence clearly shows a person is at a recruitment agency, a partner firm or a
-competitor and no flag is set, treat them the same way and tell the user. If a flag looks wrong
-for the evidence (for example `recruiter` on someone who works in-house), use your judgement
-and write the normal message.
+competitor and no flag is set, treat them the same way and tell the user, unless the campaign
+sells to that kind of firm (the batch's `campaign.sectors` and `campaign.target_designations`
+show who the campaign is for). If a flag looks wrong for the evidence (for example `recruiter` on
+someone who works in-house), use your judgement and write the normal message.
 
 ## 6. Redrafting
 
@@ -205,6 +207,21 @@ Check each draft against this list: right `greeting_name`; one evidence line; on
 one soft question; every fact is in the offer profile; nothing from `forbidden_claims`; no
 numbers outside `proof_points`; length inside `channel_spec`; spelling matches `locale`; no
 emoji; at most one exclamation mark. Then call `save_drafts`.
+
+What the tool checks, so you know what will fail:
+
+- **Fails the draft (block):** the greeting is not the `greeting_name`; another company of the
+  campaign is named; a placeholder such as `[Name]` or `TODO`; the length is outside the limits;
+  a forbidden claim, or a banned phrase (guarantee, 100%, risk-free, no-brainer, act now,
+  limited time); a number that is not in `proof_points`; a bad email subject.
+- **Warns:** the person's company is not mentioned; a capitalised name that is not in the offer
+  or the evidence (a client or brand?); spam-trigger words in an email; no question or clear next
+  step at the end; a link in a LinkedIn message; a near-copy of another message in the campaign;
+  spelling that does not match the `locale`; a job title that differs from the person's title;
+  several exclamation marks, an emoji or SHOUTING.
+
+A passing draft is not final. An AI review then reads every message against the person's
+evidence, and a message is only exported or sent after it passes that review.
 
 Read the result for each draft:
 
