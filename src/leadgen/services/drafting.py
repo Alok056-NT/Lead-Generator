@@ -628,7 +628,21 @@ def _save_one(
     }
 
 
-def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any]:
+def save_context(campaign_id: int) -> _SaveContext:
+    """Load what `save_drafts` needs for the checks (offer profile, the campaign's companies and
+    the near-duplicate index). A caller that saves several single drafts in a row (the review
+    loop) builds it once and passes it to each `save_drafts` call; `save_drafts` keeps the
+    index up to date after each save."""
+    camp = _campaign(campaign_id)
+    profile = _offer_profile(camp)
+    with db.session() as conn:
+        companies = db.query(conn, "SELECT * FROM companies WHERE campaign_id = ?", (camp["id"],))
+    return _SaveContext(profile=profile, companies=companies, index=_qa().build_index(camp["id"]))
+
+
+def save_drafts(
+    campaign_id: int, drafts: list[dict[str, Any]], *, context: _SaveContext | None = None
+) -> dict[str, Any]:
     """Store drafts (`person_id`, `channel`, `body`, and `subject` for email) and check each.
 
     One message exists per person per channel: saving again replaces the text and keeps the
@@ -636,10 +650,11 @@ def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any
     Returns one entry per draft: `status` is `qa_pass` or `qa_fail` (with `issues` to fix; only
     resave the failures) or `not_saved` (the draft was refused, see `issues`; codes in
     `UNFIXABLE_CODES` cannot be fixed by rewriting, so skip those people). Raises
-    `DraftError` for a missing offer profile or a bad `drafts` list.
+    `DraftError` for a missing offer profile or a bad `drafts` list. `context` is an optional
+    `save_context(campaign_id)` to reuse across calls (it is updated as drafts are saved).
     """
     camp = _campaign(campaign_id)
-    profile = _offer_profile(camp)
+    _offer_profile(camp)  # raises when the offer has no saved profile
     if not isinstance(drafts, (list, tuple)) or not drafts:
         raise DraftError("invalid_drafts", "drafts must be a non-empty list.")
     if len(drafts) > MAX_DRAFTS_PER_CALL:
@@ -650,14 +665,8 @@ def save_drafts(campaign_id: int, drafts: list[dict[str, Any]]) -> dict[str, Any
         )
     enabled = channels_for(camp)
     seen: set[tuple[int, str]] = set()
+    ctx = context if context is not None else save_context(camp["id"])
     with db.session() as conn:
-        ctx = _SaveContext(
-            profile=profile,
-            companies=db.query(
-                conn, "SELECT * FROM companies WHERE campaign_id = ?", (camp["id"],)
-            ),
-            index=_qa().build_index(camp["id"]),
-        )
         results = [
             _save_one(conn, camp, enabled, draft, index, seen, ctx)
             for index, draft in enumerate(drafts)

@@ -349,6 +349,38 @@ def test_fix_saves_corrected_text_clears_the_review_and_requeues(world):
     assert msgs[0] not in export_gate(cid)["messages"]["exportable_ids"]
 
 
+def test_fixes_in_one_call_build_the_near_duplicate_index_once(world, monkeypatch):
+    cid, _, _, msgs = world
+    calls = []
+    real = review.drafting._qa().build_index
+
+    def counting(campaign_id):
+        calls.append(campaign_id)
+        return real(campaign_id)
+
+    monkeypatch.setattr("leadgen.services.qa_messages.build_index", counting)
+    items = []
+    for n, mid in enumerate(msgs):
+        body = get_message(mid)["body"].replace("practical", ("calm", "sound", "clear")[n])
+        items.append(
+            {"message_id": mid, "verdict": "fix", "notes": "Tone", "corrected_body": body}
+        )
+    reply = review.record_review(cid, items)
+    assert len(calls) <= 1
+    assert reply["errors"] == 0 and reply["recorded"]["fix"] == 3
+    assert all(r["status"] == "qa_pass" for r in reply["results"])
+    assert [get_message(m)["body"] for m in msgs] == [i["corrected_body"] for i in items]
+
+
+def test_a_fix_still_sees_earlier_fixes_in_the_same_call(world):
+    cid, _, _, msgs = world
+    twin = get_message(msgs[0])["body"].replace("Aria", "Marcus")
+    first = {"message_id": msgs[0], "verdict": "fix", "notes": "Tone", "corrected_body": twin}
+    second = {"message_id": msgs[1], "verdict": "fix", "notes": "Tone", "corrected_body": twin}
+    reply = review.record_review(cid, [first, second])
+    assert "M12" in [i["code"] for i in reply["results"][1]["issues"]]
+
+
 def test_fix_that_still_fails_goes_to_qa_fail_and_redrafting(world):
     cid, _, people, msgs = world
     reply = review.record_review(cid, [

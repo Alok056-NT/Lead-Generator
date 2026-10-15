@@ -587,10 +587,15 @@ def _record_pass(
 
 
 def _record_fix(
-    camp: dict[str, Any], row: dict[str, Any], item: dict[str, Any], notes: str
+    camp: dict[str, Any],
+    row: dict[str, Any],
+    item: dict[str, Any],
+    notes: str,
+    context: Any = None,
 ) -> dict[str, Any]:
     """Save the corrected text through `drafting.save_drafts` (history kept, AI review cleared),
-    so the message is checked again and returns to the review queue."""
+    so the message is checked again and returns to the review queue. `context` is the
+    `drafting.save_context` shared by the verdicts of one call (built once, not per fix)."""
     body = item.get("corrected_body")
     if not isinstance(body, str) or not body.strip():
         return _fail(row["id"], "fix", "corrected_body_required",
@@ -604,7 +609,7 @@ def _record_fix(
         "body": body,
         "subject": row["subject"] if subject is None else subject,
     }
-    saved = drafting.save_drafts(camp["id"], [draft])["results"][0]
+    saved = drafting.save_drafts(camp["id"], [draft], context=context)["results"][0]
     if saved["status"] == "not_saved":
         issue = saved["issues"][0]
         return _fail(row["id"], "fix", issue["code"], issue["detail"])
@@ -655,6 +660,7 @@ def record_review(campaign_id: int, results: list[dict[str, Any]]) -> dict[str, 
         )
     out: list[dict[str, Any]] = []
     seen: set[Any] = set()
+    save_ctx: Any = None  # drafting.save_context, built at the first fix and reused
     for item in results:
         if not isinstance(item, dict):
             out.append(_fail(None, None, "invalid_result", "Each result must be an object."))
@@ -694,9 +700,13 @@ def record_review(campaign_id: int, results: list[dict[str, Any]]) -> dict[str, 
                 continue
             out.append(_record_pass(camp, profile, row, notes))
         elif verdict == "fix":
-            out.append(_record_fix(camp, row, item, notes))
+            if save_ctx is None:
+                save_ctx = drafting.save_context(camp["id"])
+            out.append(_record_fix(camp, row, item, notes, save_ctx))
         else:
             out.append(_record_reject(camp, row, notes))
+            if save_ctx is not None:
+                save_ctx.index.pop(row["id"], None)  # rejected messages are not in the index
     with db.session() as conn:
         queue = conn.execute(f"SELECT COUNT(*) {_REVIEW_FROM}", (camp["id"],)).fetchone()[0]
     recorded = Counter(r["verdict"] for r in out if r["ok"])

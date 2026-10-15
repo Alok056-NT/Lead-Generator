@@ -15,6 +15,7 @@ text and never try to judge meaning. The AI review reads every message with its 
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -85,10 +86,11 @@ _STOPWORDS = frozenset(
     "from have has can will i us".split()
 )
 
-# M06: numbers, percentages and money. Currency symbols are read but not compared; a unit of
-# k/m/bn multiplies the value, "%" / "percent" and "x" / "times" are kept apart from plain numbers.
+# M06: numbers, percentages and money. Currency symbols are read but not compared (a price is
+# only ever allowed by a proof point); a unit of k/m/bn multiplies the value, "%" / "percent" and
+# "x" / "times" are kept apart from plain numbers.
 _NUMBER_RE = re.compile(
-    r"(?<![\w.])(?:S\$|US\$|A\$|NZ\$|HK\$|[$\u00a3\u20ac\u20b9])?\s?(?P<num>\d[\d,]*(?:\.\d+)?)"
+    r"(?<![\w.])(?P<cur>S\$|US\$|A\$|NZ\$|HK\$|[$\u00a3\u20ac\u20b9])?\s?(?P<num>\d[\d,]*(?:\.\d+)?)"
     r"(?!\d)(?:\s?(?P<unit>%|percent\b|per cent\b|x\b|times\b|k\b|mn\b|m\b|bn\b|b\b))?"
     r"(?!\s?(?:st|nd|rd|th)\b)",
     re.IGNORECASE,
@@ -193,6 +195,7 @@ _EMOJI_RE = re.compile(
     "[\U0001f300-\U0001faff\U0001f1e6-\U0001f1ff\u2600-\u27bf\u2b50\u2b55\ufe0f]"
 )
 
+_EXACT_CONNECTORS = frozenset({"of", "the"})
 _LEGAL = frozenset(
     "ltd limited pte inc incorporated llc plc corp corporation co company gmbh ag sa bv nv pty "
     "llp bhd sdn pvt private".split()
@@ -247,19 +250,25 @@ def _company_names(company: Mapping[str, Any]) -> list[str]:
     return sorted(names, key=len, reverse=True)
 
 
+@functools.lru_cache(maxsize=8192)
 def _name_pattern(name: str, exact: bool = False) -> re.Pattern[str] | None:
     """Whole-word pattern for a company name: `&` and `and` interchangeable, spaces flexible.
-    Short all-caps names (`ADP`) are case-sensitive. With `exact`, every name is: each word must
-    be written as in the name or in ALL CAPS, so ordinary words ("a total of") do not match."""
+    Short all-caps names (`ADP`) are case-sensitive. With `exact`, every name is: each content
+    word must be written as in the name, in ALL CAPS, or with a capital first letter ("Dhl" for
+    "DHL", "Acme Freight" for a stored "acme freight"), so ordinary lower-case words ("a total of")
+    do not match. Connector words (and, &, of, the) match in any case."""
     words = re.findall(r"[^\W_][\w'’]*|&", name)
     if not words:
         return None
     parts = []
     for w in words:
         if w == "&" or w.lower() == "and":
-            parts.append(r"(?:&|and|AND)" if exact else r"(?:&|and)")
-        elif exact and w.upper() != w:
-            parts.append(f"(?:{re.escape(w)}|{re.escape(w.upper())})")
+            parts.append(r"(?i:&|and)" if exact else r"(?:&|and)")
+        elif exact and w.lower() in _EXACT_CONNECTORS:
+            parts.append(f"(?i:{re.escape(w)})")
+        elif exact:
+            first = w[0].upper() if len(w[0].upper()) == 1 else w[0]
+            parts.append(f"(?:{re.escape(w)}|{re.escape(first)}(?i:{re.escape(w[1:])}))")
         else:
             parts.append(re.escape(w))
     flags = 0 if (exact or (len(name) <= 5 and name.isupper())) else re.IGNORECASE
@@ -524,8 +533,9 @@ def _check_forbidden(text: str, profile: Mapping[str, Any]) -> list[Issue]:
     return out
 
 
-def _numbers(text: str) -> list[tuple[str, tuple[float, str]]]:
-    """(as written, (value, kind)) for each number in `text`; kind is "%", "x" or ""."""
+def _numbers(text: str) -> list[tuple[str, tuple[float, str], bool]]:
+    """(as written, (value, kind), is_money) for each number in `text`; kind is "%", "x" or "";
+    is_money is true when the number is written with a currency sign."""
     found = []
     for m in _NUMBER_RE.finditer(_URL_RE.sub(" ", text)):
         try:
@@ -535,7 +545,7 @@ def _numbers(text: str) -> list[tuple[str, tuple[float, str]]]:
         unit = re.sub(r"\s+", "", (m.group("unit") or "").lower())
         kind = "%" if unit in {"%", "percent"} else "x" if unit in {"x", "times"} else ""
         value *= _MULTIPLIER.get(unit, 1.0)
-        found.append((m.group(0).strip(), (round(value, 6), kind)))
+        found.append((m.group(0).strip(), (round(value, 6), kind), bool(m.group("cur"))))
     return found
 
 
@@ -552,19 +562,21 @@ def _check_numbers(
         claim = str(point.get("claim") if isinstance(point, Mapping) else point or "")
         if any(_shares_claim(claim, f) or _shares_claim(f, claim) for f in forbidden):
             continue  # a forbidden claim wins over a proof point
-        allowed.update(key for _, key in _numbers(claim))
-    loose: set[tuple[float, str]] = set()  # same (value, kind) only: "15-minute" is not "15%"
+        allowed.update(key for _, key, _ in _numbers(claim))
+    # loose: numbers from CTAs, names and titles excuse a number of the same (value, kind) only
+    # ("15-minute" is not "15%") and never a price: "$15" needs a proof point
+    loose: set[tuple[float, str]] = set()
     for cta in profile.get("ctas") or []:
-        loose.update(key for _, key in _numbers(str(cta)))
+        loose.update(key for _, key, _ in _numbers(str(cta)))
     context_bits = [
         person.get("raw_name"), person.get("first_name"), person.get("last_name"),
         person.get("title"), company.get("name"), *_company_names(company),
     ]  # fmt: skip
     for bit in context_bits:
-        loose.update(key for _, key in _numbers(str(bit or "")))
+        loose.update(key for _, key, _ in _numbers(str(bit or "")))
     bad: list[str] = []
-    for shown, (value, kind) in _numbers(text):
-        if (value, kind) in allowed or (value, kind) in loose:
+    for shown, (value, kind), money in _numbers(text):
+        if (value, kind) in allowed or ((value, kind) in loose and not money):
             continue
         if shown not in bad:
             bad.append(shown)

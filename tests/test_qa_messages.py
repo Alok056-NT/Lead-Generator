@@ -143,6 +143,38 @@ def test_m02_other_company_needs_the_capitalised_name():
         assert issue.severity == "block" and name in issue.detail, text
 
 
+def test_m02_other_company_stored_in_lower_case_still_matches_when_capitalised():
+    others = [
+        company_row(id=2, name="acme freight"),
+        company_row(id=3, name="DHL Supply Chain"),
+    ]
+    for text, name in (
+        ("We help Acme Freight too.", "acme freight"),
+        ("We help ACME FREIGHT too.", "acme freight"),
+        ("We help Dhl Supply Chain too.", "DHL Supply Chain"),
+        ("We help DHL Supply Chain too.", "DHL Supply Chain"),
+    ):
+        issue = by_code(run(li(text), others=others), "M02")
+        assert issue.severity == "block" and name in issue.detail, text
+    # lower case is not a mention of a name stored in capitals
+    assert "M02" not in codes(run(li("Our dhl supply chain is slow."), others=others))
+
+
+def test_m02_connector_words_match_in_any_case():
+    others = [company_row(id=2, name="Bank of America & Sons")]
+    for text in ("We help Bank Of America and Sons.", "We help Bank of America AND Sons."):
+        assert "M02" in codes(run(li(text), others=others)), text
+
+
+def test_m07_brand_check_is_case_insensitive_against_stored_names():
+    company = company_row(name="acme freight")
+    text = message_row(body=message_row()["body"].replace(COMPANY, "Acme Freight"))
+    assert "M07" not in codes(run(text, company=company))
+    dhl = company_row(name="DHL Supply Chain")
+    text = message_row(body=message_row()["body"].replace(COMPANY, "Dhl Supply Chain"))
+    assert "M07" not in codes(run(text, company=dhl))
+
+
 # --- M03 placeholders -------------------------------------------------------------------------
 
 
@@ -262,6 +294,22 @@ def test_m06_cta_and_name_numbers_only_excuse_the_same_kind():
     assert "M06" not in codes(run(li("I saw you lead Region 3."), person=person))
     assert "M06" in codes(run(li("We lifted scores by 3%."), person=person))
     assert "M06" in codes(run(li("That is 3x better."), person=person))
+
+
+def test_m06_a_price_is_not_excused_by_a_cta_name_or_title_number():
+    # the CTA "15-minute call" allows a plain 15 but not a price of 15
+    for text in ("We charge $15 per head.", "It costs S$15 a seat.", "Pay £15 a month."):
+        assert by_code(run(li(text)), "M06").severity == "block", text
+    assert "M06" not in codes(run(li("Could we have a 15 minute call?")))
+    person = person_row(title="Head of Learning, Region 3")
+    assert "M06" in codes(run(li("A seat costs $3."), person=person))
+    assert "M06" not in codes(run(li("I saw you lead Region 3."), person=person))
+    company = company_row(name="Route 66 Logistics")
+    text = message_row(body=message_row()["body"].replace(COMPANY, "Route 66 Logistics"))
+    assert "M06" not in codes(run(text, company=company))
+    # a proof point can still allow the amount
+    offer = {**PROFILE, "proof_points": [{"claim": "Saved S$200k", "source": "x"}]}
+    assert "M06" not in codes(run(li("We saved S$200k."), offer=offer))
 
 
 def test_m06_a_forbidden_claim_wins_over_a_proof_point():

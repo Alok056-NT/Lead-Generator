@@ -560,6 +560,26 @@ def test_save_pass_and_store(world):
     assert camp.get_campaign(cid)["counts"]["messages"]["qa_pass"] == 1
 
 
+def test_save_drafts_builds_the_near_duplicate_index_once_per_call(world, monkeypatch):
+    cid, co = world
+    people = [add_person(cid, co, f"Person{i}", "Tan") for i in range(4)]
+    calls = []
+    real = qa_messages.build_index
+
+    def counting(campaign_id):
+        calls.append(campaign_id)
+        return real(campaign_id)
+
+    monkeypatch.setattr(qa_messages, "build_index", counting)
+    drafts = [
+        {"person_id": p, "channel": "linkedin_message", "body": good_li(f"Person{i}")}
+        for i, p in enumerate(people)
+    ]
+    reply = drafting.save_drafts(cid, drafts)
+    assert len(reply["results"]) == 4 and reply["not_saved"] == 0
+    assert calls == [cid]  # one build for the whole call, not one per draft
+
+
 def test_email_draft_needs_a_subject_and_sendable_email(world):
     cid, co = world
     p = add_person(cid, co)
