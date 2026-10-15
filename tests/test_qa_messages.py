@@ -120,6 +120,29 @@ def test_m02_other_company_inside_own_name_is_not_flagged():
     assert "M02" not in codes(run(others=others))
 
 
+def test_m02_other_company_needs_the_capitalised_name():
+    others = [
+        company_row(id=2, name="Total"),
+        company_row(id=3, name="Summit Group"),
+        company_row(id=4, name="Cold Storage"),
+    ]
+    for text in (
+        "A total of 40 firms took part.",
+        "We ran our summit group sessions last year.",
+        "We support cold storage operations.",
+    ):
+        assert "M02" not in codes(run(li(text), others=others)), text
+    for text, name in (
+        ("We also help Total.", "Total"),
+        ("We also help TOTAL.", "Total"),
+        ("We also help Summit Group.", "Summit Group"),
+        ("We also help SUMMIT GROUP.", "Summit Group"),
+        ("We also help Cold Storage.", "Cold Storage"),
+    ):
+        issue = by_code(run(li(text), others=others), "M02")
+        assert issue.severity == "block" and name in issue.detail, text
+
+
 # --- M03 placeholders -------------------------------------------------------------------------
 
 
@@ -229,6 +252,18 @@ def test_m06_ignores_cta_numbers_names_titles_urls_and_ordinals():
     assert "M06" not in codes(run(li("Write to team2@example.com anytime.")))
 
 
+def test_m06_cta_and_name_numbers_only_excuse_the_same_kind():
+    # the CTA "15-minute call" allows a plain 15, not 15% or 15x
+    assert "M06" not in codes(run(li("Could we have a 15 minute call?")))
+    for text in ("Clients cut onboarding time by 15%.", "Onboarding is 15x faster."):
+        issue = by_code(run(li(text)), "M06")
+        assert issue.severity == "block", text
+    person = person_row(title="Head of Learning, Region 3")
+    assert "M06" not in codes(run(li("I saw you lead Region 3."), person=person))
+    assert "M06" in codes(run(li("We lifted scores by 3%."), person=person))
+    assert "M06" in codes(run(li("That is 3x better."), person=person))
+
+
 def test_m06_a_forbidden_claim_wins_over_a_proof_point():
     offer = {
         **PROFILE,
@@ -270,6 +305,15 @@ def test_m08_spam_words_warn_on_email_only():
     assert "M08" not in codes(
         run(email_message(body=email_message()["body"].replace("practical", "carefree")))
     )
+
+
+def test_m08_feel_free_is_not_spam():
+    body = email_message()["body"]
+    polite = email_message(body=body.replace("practical", "Feel free to reply"))
+    assert "M08" not in codes(run(polite))
+    mixed = email_message(body=body.replace("practical", "feel free to ask for a free guide"))
+    issue = by_code(run(mixed), "M08")
+    assert "free" in issue.detail
 
 
 # --- M09 subject ------------------------------------------------------------------------------

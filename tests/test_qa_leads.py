@@ -201,6 +201,41 @@ def test_l16_domain_suppression(ready_db):
     assert "L16" in codes(qa_leads.check_all(data)[pid])
 
 
+def test_l16_company_domain_suppression_blocks_every_channel(ready_db):
+    suppress("domain", "northwind.example")
+    cid = make_campaign(channels=("linkedin",))["id"]
+    pid = add_person(cid, add_company(cid))  # LinkedIn-only campaign, no email row
+    data = qa_leads.load_leads(camp.get_campaign(cid))
+    issue = by_code(qa_leads.check_all(data)[pid], "L16")
+    assert issue.severity == "block" and "northwind.example" in issue.detail
+    # a subdomain of a suppressed domain counts, a sibling domain does not
+    ctx = LeadContext.basic(campaign_dict())
+    ctx.suppressed_domains = frozenset({"northwind.example"})
+    sub = company_row(domain="sg.northwind.example")
+    assert "L16" in codes(run(company=sub, context=ctx))
+    other = company_row(domain="notnorthwind.example")
+    assert "L16" not in codes(run(company=other, context=ctx))
+
+
+def test_l16_domain_suppression_in_an_email_campaign_without_an_email_row(ready_db):
+    suppress("domain", "northwind.example")
+    cid = make_campaign(channels=("email", "linkedin"))["id"]
+    pid = add_person(cid, add_company(cid))
+    data = qa_leads.load_leads(camp.get_campaign(cid))
+    found = codes(qa_leads.check_all(data)[pid])
+    assert "L16" in found and "L17" in found
+
+
+def test_l16_email_suppression_is_checked_whatever_the_channels(ready_db):
+    suppress("email", "aria.tan@northwind.example")
+    cid = make_campaign(channels=("linkedin",))["id"]
+    pid = add_person(cid, add_company(cid))
+    add_email(pid, address="aria.tan@northwind.example")
+    data = qa_leads.load_leads(camp.get_campaign(cid))
+    found = codes(qa_leads.check_all(data)[pid])
+    assert "L16" in found and "L17" not in found  # email-only codes stay off
+
+
 # --- L02 duplicates ---------------------------------------------------------------------------
 
 

@@ -18,6 +18,7 @@ from qa_world import (
     get_person,
     make_campaign,
     message_row,
+    suppress,
 )
 
 from leadgen import db
@@ -307,6 +308,24 @@ def test_pass_approves_and_removes_from_the_queue(world):
     assert msgs[0] not in [i["message_id"] for i in review.get_review_batch(cid)["items"]]
 
 
+def test_pass_and_gate_do_not_build_the_near_duplicate_index(world, monkeypatch):
+    cid, _, _, msgs = world
+    set_strict(False)
+    stored = [{"code": "M12", "severity": "warn", "detail": "90% similar to message 99."}]
+    with db.session() as conn:
+        db.update(conn, "messages", msgs[0], qa_json={"issues": stored})
+
+    def boom(_cid):
+        raise AssertionError("build_index must not be called")
+
+    monkeypatch.setattr("leadgen.services.qa_messages.build_index", boom)
+    assert export_gate(cid)["messages"]["exportable"] == 3
+    reply = review.record_review(cid, [{"message_id": msgs[0], "verdict": "pass", "notes": "ok"}])
+    assert reply["errors"] == 0
+    codes_ = [i["code"] for i in get_message(msgs[0])["qa_json"]["issues"]]
+    assert codes_ == ["M12"]  # the warning found at save time is kept
+
+
 def test_fix_saves_corrected_text_clears_the_review_and_requeues(world):
     cid, _, people, msgs = world
     original = get_message(msgs[0])["body"]
@@ -526,6 +545,16 @@ def test_gate_email_blocks_do_not_stop_linkedin_messages(world):
     assert people[0] in gate["leads"]["exportable_ids"]
     add_email(people[0])
     assert mail in export_gate(cid)["messages"]["exportable_ids"]
+
+
+def test_gate_company_domain_suppression_blocks_linkedin_messages(world):
+    cid, _, people, msgs = world
+    set_strict(False)
+    suppress("domain", "northwind.example")
+    gate = export_gate(cid)
+    assert gate["messages"]["exportable_ids"] == []
+    assert gate["blocked_by"]["L16"] == 3
+    assert gate["leads"]["exportable_ids"] == []
 
 
 def test_gate_guess_email_is_exportable_but_not_sendable(world):

@@ -381,6 +381,32 @@ def _domain_matches(email_domain: str, company_domain: str) -> bool:
     )
 
 
+def _domain_suppressed(domain: str, context: LeadContext) -> bool:
+    """Whether `domain` or a parent domain is on the `domain` suppression list."""
+    return bool(domain) and any(
+        domain == d or domain.endswith("." + d) for d in context.suppressed_domains
+    )
+
+
+def _suppression_issues(
+    company: Mapping[str, Any], email_row: Mapping[str, Any] | None, context: LeadContext
+) -> list[Issue]:
+    """L16 for the email address, its domain and the company's domain; every channel."""
+    out: list[Issue] = []
+    address = str((email_row or {}).get("email") or "").strip().lower()
+    if address and (
+        address in context.suppressed_emails
+        or _domain_suppressed(clean_domain(address), context)
+    ):
+        out.append(_issue("L16", f"The email address {address} (or its domain) is suppressed."))
+    company_domain = clean_domain(str(company.get("domain") or ""))
+    if _domain_suppressed(company_domain, context):
+        out.append(
+            _issue("L16", f"The company's domain {company_domain} is on the suppression list.")
+        )
+    return out
+
+
 def _email_issues(
     person: Mapping[str, Any],
     company: Mapping[str, Any],
@@ -388,19 +414,16 @@ def _email_issues(
     email_row: Mapping[str, Any] | None,
     context: LeadContext,
 ) -> list[Issue]:
-    """L16 (email or domain suppressed) and L17-L19, L23 when the campaign uses email."""
+    """L16 (email, email domain or company domain suppressed; any channel) and L17-L19, L23
+    when the campaign uses email."""
+    out: list[Issue] = _suppression_issues(company, email_row, context)
     if "email" not in (campaign.get("channels") or []):
-        return []
+        return out
     if email_row is None or not str(email_row.get("email") or "").strip():
-        return [_issue("L17", "No email address has been found for this person.")]
+        return [*out, _issue("L17", "No email address has been found for this person.")]
     address = str(email_row["email"]).strip().lower()
     status = str(email_row.get("status") or "")
-    out: list[Issue] = []
     domain = clean_domain(address)
-    if address in context.suppressed_emails or any(
-        domain == d or domain.endswith("." + d) for d in context.suppressed_domains
-    ):
-        out.append(_issue("L16", f"The email address {address} (or its domain) is suppressed."))
     sendable = drafting.sendable_email_statuses(campaign)
     if status == "guess":
         if "guess" in sendable:

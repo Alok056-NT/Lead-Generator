@@ -121,8 +121,13 @@ class Evaluation:
     rejected: int = 0
 
 
-def evaluate(campaign_id: int, strict: bool | None = None) -> Evaluation:
-    """Compute every lead and message issue of a campaign (nothing is stored)."""
+def evaluate(
+    campaign_id: int, strict: bool | None = None, near_duplicates: bool = True
+) -> Evaluation:
+    """Compute every lead and message issue of a campaign (nothing is stored).
+
+    `near_duplicates=False` skips M12 (a warning that can never block), which is the slow
+    check; `export_gate` uses it because it only reads blocks."""
     camp = _campaign(campaign_id)
     profile = _profile(camp)
     strict = strict_review() if strict is None else strict
@@ -137,7 +142,7 @@ def evaluate(campaign_id: int, strict: bool | None = None) -> Evaluation:
         )
     people_by_id = {p["id"]: p for p in leads.people}
     companies = list(leads.companies.values())
-    index = qa_messages.build_index(camp["id"])
+    index = qa_messages.build_index(camp["id"]) if near_duplicates else None
     live: list[dict[str, Any]] = []
     orphans: list[dict[str, Any]] = []
     sent = rejected = 0
@@ -559,10 +564,9 @@ def _record_pass(
         return _fail(
             row["id"], "pass", "person_not_confirmed", "The person is no longer confirmed."
         )
-    issues = qa_messages.check_message(
-        row, person, company, camp, profile, qa_messages.build_index(camp["id"]),
-        companies=companies,
-    )  # fmt: skip
+    # No M12 index: it is only a warning and cannot stop a pass, but building it for every
+    # verdict is slow. The warning found when the draft was saved is kept below.
+    issues = qa_messages.check_message(row, person, company, camp, profile, companies=companies)
     blocks = [i for i in issues if i.severity == "block"]
     if blocks:
         return _fail(
@@ -570,7 +574,10 @@ def _record_pass(
             f"Cannot pass: {blocks[0].code} {blocks[0].detail} Send it back with fix or reject.",
         )  # fmt: skip
     qa = row["qa_json"] if isinstance(row["qa_json"], dict) else {}
-    qa = {**_review_log(qa, "pass", notes), "issues": [i.as_dict() for i in issues]}
+    kept = [
+        i for i in qa.get("issues") or [] if isinstance(i, dict) and i.get("code") == "M12"
+    ]
+    qa = {**_review_log(qa, "pass", notes), "issues": [i.as_dict() for i in issues] + kept}
     with db.session() as conn:
         db.update(
             conn, "messages", row["id"],
@@ -804,7 +811,7 @@ def export_gate(
     """
     if purpose not in ("export", "send"):
         raise ReviewError("invalid_value", "purpose must be 'export' or 'send'.")
-    ev = evaluate(campaign_id, strict)
+    ev = evaluate(campaign_id, strict, near_duplicates=False)  # M12 only warns: skip it
     reply = {"ok": True, "campaign_id": ev.campaign["id"], "purpose": purpose,
              "strict_review": ev.strict, **_gate(ev, purpose)}  # fmt: skip
     ready = reply["messages"]["exportable"]

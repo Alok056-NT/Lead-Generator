@@ -122,6 +122,8 @@ _SPAM_RE = re.compile(
     re.IGNORECASE,
 )
 
+_FEEL_FREE_RE = re.compile(r"(?<!\w)feel\s+free(?!\w)", re.IGNORECASE)
+
 # M09
 _SUBJECT_FAKE_RE = re.compile(r"^\s*(?:re|fwd?|fw)\s*:", re.IGNORECASE)
 
@@ -245,20 +247,28 @@ def _company_names(company: Mapping[str, Any]) -> list[str]:
     return sorted(names, key=len, reverse=True)
 
 
-def _name_pattern(name: str) -> re.Pattern[str] | None:
+def _name_pattern(name: str, exact: bool = False) -> re.Pattern[str] | None:
     """Whole-word pattern for a company name: `&` and `and` interchangeable, spaces flexible.
-    Short all-caps names (`ADP`) are case-sensitive."""
-    words = re.findall(r"[^\W_][\w'\u2019]*|&", name)
+    Short all-caps names (`ADP`) are case-sensitive. With `exact`, every name is: each word must
+    be written as in the name or in ALL CAPS, so ordinary words ("a total of") do not match."""
+    words = re.findall(r"[^\W_][\w'’]*|&", name)
     if not words:
         return None
-    parts = [r"(?:&|and)" if w == "&" or w.lower() == "and" else re.escape(w) for w in words]
-    flags = 0 if (len(name) <= 5 and name.isupper()) else re.IGNORECASE
+    parts = []
+    for w in words:
+        if w == "&" or w.lower() == "and":
+            parts.append(r"(?:&|and|AND)" if exact else r"(?:&|and)")
+        elif exact and w.upper() != w:
+            parts.append(f"(?:{re.escape(w)}|{re.escape(w.upper())})")
+        else:
+            parts.append(re.escape(w))
+    flags = 0 if (exact or (len(name) <= 5 and name.isupper())) else re.IGNORECASE
     return re.compile(r"(?<!\w)" + r"[\s\-]+".join(parts) + r"(?!\w)", flags)
 
 
-def _mentions(text: str, names: Iterable[str]) -> bool:
+def _mentions(text: str, names: Iterable[str], exact: bool = False) -> bool:
     for name in names:
-        pattern = _name_pattern(name)
+        pattern = _name_pattern(name, exact)
         if pattern and pattern.search(text):
             return True
     return False
@@ -411,7 +421,8 @@ def _check_company(
     others: Sequence[Mapping[str, Any]],
     offer_names: Sequence[str],
 ) -> list[Issue]:
-    """M02: the person's company is mentioned (warn) and no other campaign company is (block)."""
+    """M02: the person's company is mentioned (warn) and no other campaign company is (block).
+    Other companies only count when written capitalised as in their name (or in ALL CAPS)."""
     own = _company_names(company)
     out: list[Issue] = []
     if not _mentions(text, own):
@@ -423,7 +434,7 @@ def _check_company(
         if other.get("id") is not None and other.get("id") == company.get("id"):
             continue
         names = [n for n in _company_names(other) if len(n) >= 3 and n.casefold() not in protected]
-        if names and _mentions(rest, names):
+        if names and _mentions(rest, names, exact=True):
             out.append(
                 _issue(
                     "M02",
@@ -542,18 +553,18 @@ def _check_numbers(
         if any(_shares_claim(claim, f) or _shares_claim(f, claim) for f in forbidden):
             continue  # a forbidden claim wins over a proof point
         allowed.update(key for _, key in _numbers(claim))
-    loose: set[float] = set()
+    loose: set[tuple[float, str]] = set()  # same (value, kind) only: "15-minute" is not "15%"
     for cta in profile.get("ctas") or []:
-        loose.update(v for _, (v, _k) in _numbers(str(cta)))
+        loose.update(key for _, key in _numbers(str(cta)))
     context_bits = [
         person.get("raw_name"), person.get("first_name"), person.get("last_name"),
         person.get("title"), company.get("name"), *_company_names(company),
     ]  # fmt: skip
     for bit in context_bits:
-        loose.update(v for _, (v, _k) in _numbers(str(bit or "")))
+        loose.update(key for _, key in _numbers(str(bit or "")))
     bad: list[str] = []
     for shown, (value, kind) in _numbers(text):
-        if (value, kind) in allowed or value in loose:
+        if (value, kind) in allowed or (value, kind) in loose:
             continue
         if shown not in bad:
             bad.append(shown)
@@ -631,6 +642,7 @@ def _check_brands(
 
 
 def _check_spam(text: str) -> list[Issue]:
+    text = _FEEL_FREE_RE.sub(" ", text)  # "feel free to reply" is a call to action, not spam
     found = sorted({m.group(0).lower() for m in _SPAM_RE.finditer(text)})
     if not found:
         return []
