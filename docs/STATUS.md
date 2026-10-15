@@ -14,7 +14,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T08 | People finder and confirmation engine | done | Reviewed 2026-10-15 (fix round 3). manual check pending: real 3-company search (owner, spends ~6 Serper credits; no key configured during review) and compare with the NXT pilot |
 | T09 | Email finder and verification | done | Reviewed 2026-10-15 (fix round 2). manual check pending: 3 real people with free Hunter/Reoon keys (owner), statuses should look honest; note Hunter's real pattern tokens and Reoon/ZeroBounce error replies |
 | T10 | Drafting workflow | done | Reviewed 2026-10-15 (fix round 2) |
-| T11 | QA engine and AI review | review | Reviewer fixes applied 2026-10-15 (round 1: M06 kind, M02 capitalised names, L16 company domain on every channel, M08 feel free, speed) |
+| T11 | QA engine and AI review | changes | Review 2026-10-15 round 2: M02 misses lower-case stored company names, M06 CTA number excuses a price, fix verdicts rebuild the M12 index each time |
 | T12 | Export (CSV) and lemlist push | todo | |
 | T13 | MCP server | todo | |
 | T14 | Email sending | todo | |
