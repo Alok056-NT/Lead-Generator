@@ -56,6 +56,8 @@ REPORT_FETCH_BYTES = 32768  # a delivery report is read further, up to this much
 MATCH_WINDOW_DAYS = 30
 DETAIL_CHARS = 300
 UNSUB_CHARS = 500
+MIN_DATE_YEAR = 1990  # a Date: header outside these years is treated as missing
+MAX_DATE_YEAR = 2999
 MAX_HIGHLIGHTS = 20
 
 LAST_UID_KEY = "imap_last_uid"
@@ -75,7 +77,8 @@ _AUTO_SUBJECT_RE = re.compile(
     re.IGNORECASE,
 )
 _UNSUB_RE = re.compile(
-    r"unsubscribe|remove\s+me|stop\s+emailing|not\s+interested,?\s+please\s+remove",
+    r"\bunsubscribe\b|\bremove\s+me\b|\bstop\s+emailing\b|"
+    r"\bnot\s+interested,?\s+please\s+remove\b",
     re.IGNORECASE,
 )
 _DELAY_RE = re.compile(r"\bdelay(?:ed)?\b|will keep trying|still trying", re.IGNORECASE)
@@ -186,13 +189,26 @@ def strip_quoted(text: str) -> str:
 
 
 def _parse_date(value: str) -> datetime | None:
+    """A `Date:` header as UTC; None when it is missing, malformed or absurdly far away."""
     try:
         when = parsedate_to_datetime(value)
-    except (TypeError, ValueError, IndexError):
+        if when is None:
+            return None
+        when = when.astimezone(UTC) if when.tzinfo else when.replace(tzinfo=UTC)
+    except (TypeError, ValueError, IndexError, OverflowError):
         return None
-    if when is None:
-        return None
-    return when.astimezone(UTC) if when.tzinfo else when.replace(tzinfo=UTC)
+    if not MIN_DATE_YEAR <= when.year <= MAX_DATE_YEAR:
+        return None  # keeps `date +/- timedelta` far from the limits of datetime
+    return when
+
+
+def _header(msg: Message, name: str) -> str:
+    """One header as text. The stdlib parses lazily and can raise on a malformed value (a
+    Message-ID such as `<<<>>>@@`); that must never stop the sync, so it reads as empty."""
+    try:
+        return str(msg.get(name, "") or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _report_blocks(msg: Message) -> list[Message]:
@@ -211,34 +227,43 @@ def _address_after_semicolon(value: str) -> str:
 
 
 def parse_inbound(raw: bytes) -> Inbound | None:
-    """Parse header bytes (plus the start of the text) into an `Inbound`; None if unreadable."""
+    """Parse header bytes (plus the start of the text) into an `Inbound`; None if unreadable.
+    Whatever is wrong with the message, this never raises."""
     try:
-        msg = email.message_from_bytes(raw, policy=email.policy.default)
-        from_email = parseaddr(str(msg.get("From", "")))[1].strip().lower()
-        subject = " ".join(str(msg.get("Subject", "")).split())
+        return _parse_inbound(raw)
     except Exception:  # a broken message must never stop the sync  # noqa: BLE001
         return None
+
+
+def _parse_inbound(raw: bytes) -> Inbound | None:
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    from_email = parseaddr(_header(msg, "From"))[1].strip().lower()
+    subject = " ".join(_header(msg, "Subject").split())
     if not from_email:
         return None
 
     refs: list[str] = []
     for header in ("In-Reply-To", "References"):
-        for found in _ID_RE.findall(str(msg.get(header, ""))):
+        for found in _ID_RE.findall(_header(msg, header)):
             ident = f"<{found}>".lower()
             if ident not in refs:
                 refs.append(ident)
 
-    auto = str(msg.get("Auto-Submitted", "")).strip().lower()
+    auto = _header(msg, "Auto-Submitted").strip().lower()
     auto_submitted = bool(
         (auto and auto != "no")
-        or msg.get("X-Autoreply")
-        or msg.get("X-Autorespond")
-        or str(msg.get("Precedence", "")).strip().lower() == "auto_reply"
+        or _header(msg, "X-Autoreply")
+        or _header(msg, "X-Autorespond")
+        or _header(msg, "Precedence").strip().lower() == "auto_reply"
     )
-    is_report = (
-        msg.get_content_type() == "multipart/report"
-        and str(msg.get_param("report-type") or "").lower() == "delivery-status"
-    ) or bool(msg.get("X-MS-Exchange-Message-Is-Ndr"))
+    try:
+        is_report = (
+            msg.get_content_type() == "multipart/report"
+            and str(msg.get_param("report-type") or "").lower() == "delivery-status"
+        )
+    except Exception:  # noqa: BLE001 - a malformed Content-Type
+        is_report = False
+    is_report = is_report or bool(_header(msg, "X-MS-Exchange-Message-Is-Ndr"))
 
     texts: list[str] = []
     try:
@@ -253,15 +278,19 @@ def parse_inbound(raw: bytes) -> Inbound | None:
 
     recipients: list[str] = []
     status = action = diagnostic = ""
-    for block in _report_blocks(msg):
+    try:
+        blocks = _report_blocks(msg)
+    except Exception:  # noqa: BLE001
+        blocks = []
+    for block in blocks:
         is_report = True
         for header in ("Final-Recipient", "Original-Recipient"):
-            addr = _address_after_semicolon(str(block.get(header, "")))
+            addr = _address_after_semicolon(_header(block, header))
             if addr and addr not in recipients:
                 recipients.append(addr)
-        status = status or str(block.get("Status", "")).strip()
-        action = action or str(block.get("Action", "")).strip().lower()
-        diagnostic = diagnostic or " ".join(str(block.get("Diagnostic-Code", "")).split())
+        status = status or _header(block, "Status").strip()
+        action = action or _header(block, "Action").strip().lower()
+        diagnostic = diagnostic or " ".join(_header(block, "Diagnostic-Code").split())
     all_text = "\n".join(texts)
 
     body = ""
@@ -276,9 +305,9 @@ def parse_inbound(raw: bytes) -> Inbound | None:
     return Inbound(
         from_email=from_email,
         subject=subject,
-        message_id=norm_id(str(msg.get("Message-ID", ""))),
+        message_id=norm_id(_header(msg, "Message-ID")),
         refs=refs,
-        date=_parse_date(str(msg.get("Date", ""))),
+        date=_parse_date(_header(msg, "Date")),
         reply_text=strip_quoted(body),
         all_text=all_text,
         auto_submitted=auto_submitted,
@@ -478,14 +507,18 @@ def ingest(raw: bytes, counters: Counters | None = None, now: datetime | None = 
     counters = counters if counters is not None else Counters()
     now = now or datetime.now(UTC)
     counters.scanned += 1
-    msg = parse_inbound(raw)
+    msg = parse_inbound(raw)  # never raises: None means unreadable
     if msg is None:
         counters.unreadable += 1
         return None
     if msg.from_email in own_addresses:
         counters.ignored += 1
         return None
-    kind = classify(msg)
+    try:
+        kind = classify(msg)
+    except Exception:  # noqa: BLE001 - last line of defence: skip, never abort the sync
+        counters.unreadable += 1
+        return None
     if kind.name == "soft_bounce":
         counters.ignored += 1
         return None
@@ -659,7 +692,7 @@ def sync_mailbox(
             last_uid = uid
             _save_position(last_uid, validity)
         if not waiting and validity:
-            _kv_set(UIDVALIDITY_KEY, validity)
+            _save_position(last_uid, validity)  # last_uid is 0 after a renumbering
         remaining = len(waiting) - done_here
     except (imaplib.IMAP4.error, OSError) as exc:
         raise MailboxSyncError(

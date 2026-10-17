@@ -151,6 +151,32 @@ def test_unsubscribe_phrases(text):
     assert classify(msg).name == "unsubscribe"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Can we remove meeting notes from the doc?",
+        "Please remove member access for Sam",
+        "We should stop emailers from guessing here",
+        "Our unsubscribed list is clean",
+        "Not interested, please removed",
+    ],
+)
+def test_unsubscribe_words_need_whole_words(text):
+    msg = Inbound(from_email="a@example.net", subject="Re: hello", reply_text=text)
+    assert classify(msg).name == "reply"
+
+
+def test_remove_meeting_notes_is_a_reply_and_remove_me_is_an_unsubscribe(world):
+    thread = "In-Reply-To: <send-001@example.com>"
+    sender, subject = "Aria Tan <aria.tan@example.org>", "Re: Quick question"
+    note = eml(sender, subject, "Can we remove meeting notes?", extra_headers=thread)
+    assert run(note)["type"] == "reply"
+    assert suppressed() == set()
+    leave = eml(sender, subject, "Remove me.", extra_headers=thread)
+    assert run(leave)["type"] == "unsubscribe"
+    assert "aria.tan@example.org" in suppressed()
+
+
 def test_unsubscribe_in_the_subject_counts():
     msg = Inbound(from_email="a@example.net", subject="unsubscribe", reply_text="")
     assert classify(msg).name == "unsubscribe"
@@ -672,6 +698,73 @@ def test_a_renumbered_mailbox_starts_again_from_the_date(world):
     result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap2))
     assert result["scanned"] == 2 and result["already_recorded"] == 1
     assert imap2.commands[1][2].startswith("SINCE ") and kv("imap_uidvalidity") == "9999"
+
+
+def test_a_renumbered_mailbox_with_nothing_since_the_date_resets_the_position(world):
+    imap = FakeImap(inbox("plain_reply.eml", start=500))
+    mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert kv("imap_last_uid") == "500"
+    imap2 = FakeImap({}, validity="9999")  # renumbered, and nothing is dated within the window
+    result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap2))
+    assert result["scanned"] == 0 and result["done"]
+    assert kv("imap_last_uid") == "0" and kv("imap_uidvalidity") == "9999"
+    imap2.messages[7] = fixture("unsubscribe_reply.eml")  # a low number, below the old position
+    later = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap2))
+    assert later["scanned"] == 1 and later["unsubscribes"] == 1
+    assert kv("imap_last_uid") == "7"
+
+
+BAD_ID = (
+    b"From: Aria Tan <aria.tan@example.org>\r\nSubject: Re: hi\r\n"
+    b"In-Reply-To: <send-001@example.com>\r\nMessage-ID: <<<>>>@@\r\n"
+    b"Date: Wed, 14 Oct 2026 10:00:00 +0000\r\n\r\nhi"
+)
+BAD_DATE = (
+    b"From: Aria Tan <aria.tan@example.org>\r\nSubject: Re: hi\r\n"
+    b"In-Reply-To: <send-001@example.com>\r\n"
+    b"Date: Fri, 31 Dec 9999 23:59:59 -1200\r\n\r\nhello"
+)
+
+
+@pytest.mark.parametrize("raw", [BAD_ID, BAD_DATE])
+def test_malformed_headers_never_raise_out_of_ingest(world, raw):
+    counters = Counters()
+    ingest(raw, counters, NOW, ())
+    assert counters.scanned == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["Fri, 31 Dec 9999 23:59:59 -1200", "Sun, 01 Jan 1066 00:00:00 +0000", "not a date", ""],
+)
+def test_out_of_range_or_broken_dates_read_as_none(value):
+    assert mailbox._parse_date(value) is None
+
+
+def test_a_normal_date_is_read_as_utc():
+    assert mailbox._parse_date("Wed, 14 Oct 2026 10:00:00 +0200") == datetime(
+        2026, 10, 14, 8, 0, tzinfo=UTC
+    )
+
+
+def test_a_last_line_of_defence_counts_a_failing_parse_and_goes_on(world, monkeypatch):
+    def boom(raw):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(mailbox, "_parse_inbound", boom)
+    counters = Counters()
+    assert ingest(fixture("plain_reply.eml"), counters, NOW, ()) is None
+    assert (counters.scanned, counters.unreadable) == (1, 1)
+
+
+def test_bad_mail_does_not_block_the_sync_for_good(world):
+    imap = FakeImap({1: BAD_ID, 2: BAD_DATE, 3: fixture("unsubscribe_reply.eml")})
+    result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert result["ok"] and result["done"] and result["scanned"] == 3
+    assert result["unsubscribes"] == 1
+    assert kv("imap_last_uid") == "3"
+    again = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert again["scanned"] == 0 and again["done"]
 
 
 def test_a_long_delivery_report_is_read_further(world):
