@@ -23,6 +23,11 @@ bounce by the failed recipient. Only sends with status `sent` are considered.
 Full message bodies are never stored: `events.detail` holds at most 300 characters. The position is
 kept in `settings` (`imap_last_uid`, `imap_uidvalidity`, `imap_last_sync`). A call handles at most
 `MAX_PER_CALL` messages within `TIME_LIMIT_S` seconds and says `done: false` when more are waiting.
+
+A server answer that is not OK never moves the position past unread mail: a failed SEARCH raises
+`MailboxSyncError`; a FETCH answered `NO` (imaplib raises only on BAD) stops the call at that UID
+(`done: false`) and the message is skipped as unreadable only after `MAX_REFUSALS` calls in a row
+(`settings` key `imap_refused`). A FETCH that is OK but empty (expunged mail) is skipped at once.
 """
 
 # Adapted from Harvey (MIT, Ethan Rogers): reference/harvey/integrations/mail_provider.py
@@ -63,6 +68,8 @@ MAX_HIGHLIGHTS = 20
 LAST_UID_KEY = "imap_last_uid"
 UIDVALIDITY_KEY = "imap_uidvalidity"
 LAST_SYNC_KEY = "imap_last_sync"
+REFUSED_KEY = "imap_refused"  # "<uidvalidity>:<uid>:<tries>" of a message the server would not give
+MAX_REFUSALS = 3  # the third refusal in a row skips that message so the sync cannot wedge
 
 BOUNCE_SENDERS = ("mailer-daemon", "postmaster", "mail delivery subsystem")
 BOUNCE_SUBJECTS = (
@@ -77,7 +84,7 @@ _AUTO_SUBJECT_RE = re.compile(
     re.IGNORECASE,
 )
 _UNSUB_RE = re.compile(
-    r"\bunsubscribe\b|\bremove\s+me\b|\bstop\s+emailing\b|"
+    r"\bunsubscrib\w*|\bremove\s+me\b|\bstop\s+emailing\b|"
     r"\bnot\s+interested,?\s+please\s+remove\b",
     re.IGNORECASE,
 )
@@ -231,7 +238,8 @@ def parse_inbound(raw: bytes) -> Inbound | None:
     Whatever is wrong with the message, this never raises."""
     try:
         return _parse_inbound(raw)
-    except Exception:  # a broken message must never stop the sync  # noqa: BLE001
+    except Exception as exc:  # a broken message must never stop the sync  # noqa: BLE001
+        log.warning("mailbox: a message could not be parsed (%s)", type(exc).__name__)
         return None
 
 
@@ -516,7 +524,8 @@ def ingest(raw: bytes, counters: Counters | None = None, now: datetime | None = 
         return None
     try:
         kind = classify(msg)
-    except Exception:  # noqa: BLE001 - last line of defence: skip, never abort the sync
+    except Exception as exc:  # noqa: BLE001 - last line of defence: skip, never abort the sync
+        log.warning("mailbox: a message could not be classified (%s)", type(exc).__name__)
         counters.unreadable += 1
         return None
     if kind.name == "soft_bounce":
@@ -557,12 +566,18 @@ def imap_date(when: datetime) -> str:
     return f"{when.day:02d}-{_MONTHS[when.month - 1]}-{when.year}"
 
 
+class _FetchRefused(Exception):
+    """The server answered a FETCH with NO (imaplib only raises on BAD): a temporary failure,
+    not proof that the message is gone, so the caller must not move past it yet."""
+
+
 def _fetch(conn: imaplib.IMAP4, uid: int, parts: str) -> dict[str, bytes]:
-    """FETCH by UID with `BODY.PEEK` parts; returns `{"header": ..., "text": ...}` as present."""
+    """FETCH by UID with `BODY.PEEK` parts; returns `{"header": ..., "text": ...}` as present
+    (empty for an expunged message: `OK` with no data). Raises `_FetchRefused` on `NO`."""
     typ, data = conn.uid("FETCH", str(uid), parts)
     out: dict[str, bytes] = {}
     if typ != "OK":
-        return out
+        raise _FetchRefused(typ)
     for item in data or []:
         if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], bytes):
             label = item[0].upper() if isinstance(item[0], bytes) else b""
@@ -574,8 +589,9 @@ def _fetch(conn: imaplib.IMAP4, uid: int, parts: str) -> dict[str, bytes]:
 
 
 def fetch_message(conn: imaplib.IMAP4, uid: int) -> bytes | None:
-    """Headers plus the start of the text of one message (read-only `BODY.PEEK`). A delivery
-    report's text is read further, because the failed recipient comes after the explanation."""
+    """Headers plus the start of the text of one message (read-only `BODY.PEEK`); None when the
+    server has no such message (expunged). A delivery report's text is read further, because the
+    failed recipient comes after the explanation. A server `NO` raises `_FetchRefused`."""
     got = _fetch(conn, uid, f"(BODY.PEEK[HEADER] BODY.PEEK[TEXT]<0.{FIRST_FETCH_BYTES}>)")
     header, text = got.get("header", b""), got.get("text", b"")
     if not header:
@@ -600,6 +616,17 @@ def _save_position(uid: int, validity: str) -> None:
     with db.session() as conn:
         db.upsert(conn, "settings", ["key"], key=LAST_UID_KEY, value=str(uid))
         db.upsert(conn, "settings", ["key"], key=UIDVALIDITY_KEY, value=validity)
+
+
+def _refusal_load(validity: str) -> tuple[int, int]:
+    """(uid, tries) of the message the server last refused, or (0, 0)."""
+    head, _, rest = _kv_get(REFUSED_KEY).partition(":")
+    uid, _, tries = rest.partition(":")
+    return (_int(uid), _int(tries)) if head == validity and uid else (0, 0)
+
+
+def _refusal_save(validity: str, uid: int, tries: int) -> None:
+    _kv_set(REFUSED_KEY, f"{validity}:{uid}:{tries}" if uid else "")
 
 
 def _int(value: str) -> int:
@@ -677,13 +704,33 @@ def sync_mailbox(
         typ, data = conn.uid("SEARCH", None, criteria)
         if typ != "OK":
             raise MailboxSyncError("search", "The mailbox search failed.", "Try again later.")
-        found = sorted({int(x) for x in (data[0] or b"").split()} if data else set())
+        try:
+            found = sorted({int(x) for x in (data[0] or b"").split()} if data else set())
+        except (ValueError, TypeError, AttributeError):
+            raise MailboxSyncError(
+                "search", "The mailbox search gave an unreadable answer.", "Try again later."
+            ) from None
         waiting = [u for u in found if u > last_uid]
         done_here = 0
+        stalled = False
+        refused_uid, refused_tries = _refusal_load(validity)
         for uid in waiting[:max_messages]:
             if done_here and time.monotonic() - started > time_limit:
                 break
-            raw = fetch_message(conn, uid)
+            try:
+                raw = fetch_message(conn, uid)
+            except _FetchRefused:
+                # A `NO` is usually temporary (Gmail: "[UNAVAILABLE] Temporary System Error"):
+                # stop here without moving past the message, and give up on it only when the
+                # server has refused it MAX_REFUSALS calls in a row.
+                tries = refused_tries + 1 if refused_uid == uid else 1
+                if tries < MAX_REFUSALS:
+                    _refusal_save(validity, uid, tries)
+                    refused_uid, refused_tries = uid, tries
+                    stalled = True
+                    break
+                log.warning("mailbox sync: the server refused one message %d times; skipped", tries)
+                raw = None
             if raw is None:
                 counters.unreadable += 1
             else:
@@ -691,6 +738,9 @@ def sync_mailbox(
             done_here += 1
             last_uid = uid
             _save_position(last_uid, validity)
+            if refused_uid == uid:
+                _refusal_save(validity, 0, 0)
+                refused_uid = refused_tries = 0
         if not waiting and validity:
             _save_position(last_uid, validity)  # last_uid is 0 after a renumbering
         remaining = len(waiting) - done_here
@@ -710,10 +760,10 @@ def sync_mailbox(
         "mailbox sync: %d scanned, %d replies, %d bounces, %d unsubscribes",
         counters.scanned, counters.reply, counters.bounce, counters.unsubscribe,
     )  # fmt: skip
-    return _reply(counters, remaining, last_uid)
+    return _reply(counters, remaining, last_uid, stalled)
 
 
-def _reply(c: Counters, remaining: int, last_uid: int) -> dict[str, Any]:
+def _reply(c: Counters, remaining: int, last_uid: int, stalled: bool = False) -> dict[str, Any]:
     done = remaining <= 0
     out: dict[str, Any] = {
         "ok": True,
@@ -733,7 +783,12 @@ def _reply(c: Counters, remaining: int, last_uid: int) -> dict[str, Any]:
     }
     if not done:
         out["next_cursor"] = str(last_uid)
-        out["next_step"] = "More mail is waiting: call sync_mailbox again."
+        out["next_step"] = (
+            "The mail server refused to hand over one message just now. Try again later: "
+            "sync_mailbox retries that message and skips it only after 3 refusals in a row."
+            if stalled
+            else "More mail is waiting: call sync_mailbox again."
+        )
     else:
         out["next_step"] = (
             "Call get_analytics to see the numbers."

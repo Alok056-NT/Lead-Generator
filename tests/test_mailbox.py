@@ -139,6 +139,9 @@ def test_auto_submitted_no_is_a_normal_mail():
     "text",
     [
         "Please UNSUBSCRIBE me",
+        "Please make sure I am unsubscribed",
+        "get me unsubscribed",
+        "I keep unsubscribing and nothing happens",
         "remove me from the list",
         "Remove   me.",
         "Stop emailing me, thanks",
@@ -157,7 +160,6 @@ def test_unsubscribe_phrases(text):
         "Can we remove meeting notes from the doc?",
         "Please remove member access for Sam",
         "We should stop emailers from guessing here",
-        "Our unsubscribed list is clean",
         "Not interested, please removed",
     ],
 )
@@ -757,6 +759,35 @@ def test_a_last_line_of_defence_counts_a_failing_parse_and_goes_on(world, monkey
     assert (counters.scanned, counters.unreadable) == (1, 1)
 
 
+def test_a_failing_parse_is_logged_by_class_name_only(world, monkeypatch, caplog):
+    def boom(raw):
+        raise RuntimeError("secret-looking text from the message body")
+
+    monkeypatch.setattr(mailbox, "_parse_inbound", boom)
+    with caplog.at_level("WARNING", logger="leadgen.mailbox"):
+        assert mailbox.parse_inbound(fixture("plain_reply.eml")) is None
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("RuntimeError" in m and "parsed" in m for m in messages)
+    assert not any("secret-looking" in m for m in messages)
+    assert all(r.exc_info is None for r in caplog.records)
+
+
+def test_a_failing_classify_is_counted_and_logged_by_class_name_only(world, monkeypatch, caplog):
+    def boom(msg):
+        raise KeyError("secret-looking text from the message body")
+
+    monkeypatch.setattr(mailbox, "classify", boom)
+    counters = Counters()
+    with caplog.at_level("WARNING", logger="leadgen.mailbox"):
+        assert ingest(fixture("plain_reply.eml"), counters, NOW, ()) is None
+    assert (counters.scanned, counters.unreadable) == (1, 1)
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("KeyError" in m and "classified" in m for m in messages)
+    assert not any("secret-looking" in m for m in messages)
+    assert all(r.exc_info is None for r in caplog.records)
+    assert events() == []
+
+
 def test_bad_mail_does_not_block_the_sync_for_good(world):
     imap = FakeImap({1: BAD_ID, 2: BAD_DATE, 3: fixture("unsubscribe_reply.eml")})
     result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
@@ -795,6 +826,113 @@ def test_mail_from_the_users_own_address_is_ignored(world):
     )
     result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
     assert result["ignored"] == 1 and events() == []
+
+
+class RefusingImap(FakeImap):
+    """Answers FETCH of one UID with `NO` (imaplib only raises on BAD) while `refusals` lasts,
+    like Gmail's "[UNAVAILABLE] Temporary System Error"."""
+
+    def __init__(self, messages, refuse_uid: int, refusals: int, **kw) -> None:
+        super().__init__(messages, **kw)
+        self.refuse_uid = refuse_uid
+        self.refusals = refusals
+
+    def uid(self, command, *args):
+        if command.upper() == "FETCH" and int(args[0]) == self.refuse_uid and self.refusals > 0:
+            self.refusals -= 1
+            self.commands.append((command.upper(), *args))
+            return "NO", [b"[UNAVAILABLE] Temporary System Error"]
+        return super().uid(command, *args)
+
+
+def _three_mails():
+    return {
+        1: fixture("plain_reply.eml"),
+        2: fixture("not_interested_remove.eml"),
+        3: fixture("out_of_office.eml"),
+    }
+
+
+def test_a_refused_fetch_stops_the_call_and_a_later_ok_records_the_unsubscribe(world):
+    imap = RefusingImap(_three_mails(), refuse_uid=2, refusals=1)
+    first = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert first["ok"] and first["done"] is False and first["scanned"] == 1
+    assert first["unreadable"] == 0 and first["remaining"] == 2
+    assert first["next_cursor"] == "1" and "later" in first["next_step"]
+    assert kv("imap_last_uid") == "1" and suppressed() == set()
+    second = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert second["done"] and second["scanned"] == 2 and second["unsubscribes"] == 1
+    assert second["unreadable"] == 0 and suppressed()
+    assert kv("imap_last_uid") == "3" and kv("imap_refused") == ""
+
+
+def test_three_refusals_in_a_row_skip_the_message_and_the_sync_goes_on(world, caplog):
+    imap = RefusingImap(_three_mails(), refuse_uid=2, refusals=99)
+    with caplog.at_level("WARNING", logger="leadgen.mailbox"):
+        one = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+        two = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+        assert one["done"] is False and two["done"] is False
+        assert two["scanned"] == 0 and kv("imap_last_uid") == "1"
+        assert kv("imap_refused") == "4242:2:2"
+        three = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert three["done"] and three["unreadable"] == 1 and three["scanned"] == 1
+    assert three["unsubscribes"] == 0 and kv("imap_last_uid") == "3"
+    assert kv("imap_refused") == ""
+    assert any("refused" in r.getMessage() for r in caplog.records)
+
+
+def test_a_recovering_server_clears_the_count_and_a_stale_count_is_ignored(world):
+    imap = RefusingImap(_three_mails(), refuse_uid=2, refusals=2)
+    mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert kv("imap_refused") == "4242:2:2"
+    done = mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))  # the server recovers
+    assert done["done"] and done["unreadable"] == 0 and done["unsubscribes"] == 1
+    assert kv("imap_refused") == ""
+    mailbox._kv_set("imap_refused", "other:2:2")  # a count from another numbering of the mailbox
+    assert mailbox._refusal_load("4242") == (0, 0)
+
+
+def test_ok_with_no_data_is_skipped_straight_away(world):
+    class Gone(FakeImap):
+        def uid(self, command, *args):
+            if command.upper() == "FETCH" and int(args[0]) == 2:
+                self.commands.append(("FETCH", *args))
+                return "OK", [None]  # the message was expunged between SEARCH and FETCH
+            return super().uid(command, *args)
+
+    result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(Gone(_three_mails())))
+    assert result["done"] and result["unreadable"] == 1 and result["scanned"] == 2
+    assert kv("imap_last_uid") == "3" and kv("imap_refused") == ""
+
+
+def test_a_refused_second_fetch_of_a_long_report_also_waits(world):
+    class SecondNo(FakeImap):
+        def uid(self, command, *args):
+            if command.upper() == "FETCH" and f"<0.{mailbox.REPORT_FETCH_BYTES}>" in args[1]:
+                self.commands.append(("FETCH", *args))
+                return "NO", [b"busy"]
+            return super().uid(command, *args)
+
+    raw = fixture("gmail_bounce_dsn.eml") + b"\r\n" + b"x" * (mailbox.FIRST_FETCH_BYTES + 10)
+    result = mailbox.sync_mailbox(30, mailbox=FakeMailbox(SecondNo({1: raw})))
+    assert result["done"] is False and result["scanned"] == 0 and kv("imap_last_uid") == ""
+
+
+@pytest.mark.parametrize("answer", [("NO", [b"search failed"]), ("OK", [b"12 x"])])
+def test_a_bad_search_answer_never_moves_the_position(world, answer):
+    class BadSearch(FakeImap):
+        def uid(self, command, *args):
+            if command.upper() == "SEARCH":
+                self.commands.append(("SEARCH", *args))
+                return answer
+            return super().uid(command, *args)
+
+    imap = BadSearch(_three_mails())
+    with pytest.raises(MailboxSyncError) as err:
+        mailbox.sync_mailbox(30, mailbox=FakeMailbox(imap))
+    assert err.value.code == "search" and imap.logged_out
+    assert kv("imap_last_uid") == "" and events() == []
 
 
 def test_a_connection_lost_midway_keeps_what_was_done(world):
