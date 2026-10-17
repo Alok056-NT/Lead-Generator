@@ -15,7 +15,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T09 | Email finder and verification | done | Reviewed 2026-10-15 (fix round 2). manual check pending: 3 real people with free Hunter/Reoon keys (owner), statuses should look honest; note Hunter's real pattern tokens and Reoon/ZeroBounce error replies |
 | T10 | Drafting workflow | done | Reviewed 2026-10-15 (fix round 2) |
 | T11 | QA engine and AI review | done | Reviewed 2026-10-15 (fix round 2) |
-| T12 | Export (CSV) and lemlist push | review | manual check pending: with the owner's lemlist key, dry run, then push 1 lead to a test campaign; confirm the variables appear, and note whether a lead without email is accepted (then set `lemlist.EMAIL_REQUIRED = False`) |
+| T12 | Export (CSV) and lemlist push | changes | Review 2026-10-17: fix round 1 requested (partial leads reach lemlist without warning, misleading no-email hint, lemlist usage not recorded). manual check pending: with the owner's lemlist key, dry run, then push 1 lead to a test campaign; confirm the variables appear, and note whether a lead without email is accepted (then set `lemlist.EMAIL_REQUIRED = False`) |
 | T13 | MCP server | todo | |
 | T14 | Email sending | todo | |
 | T15 | Mailbox sync and analytics | todo | |
