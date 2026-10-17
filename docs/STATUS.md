@@ -24,7 +24,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T18 | User documentation | todo | |
 | T19 | End-to-end test and v1.0 release | todo | |
 | T20 | Claude Desktop extension (.mcpb), optional | todo | |
-| T21 | AI search fallback (free mode), **build right after T11** | review | manual check pending: Claude Desktop run of 3 companies in AI mode compared with an API run (owner/reviewer); also confirm web search and the connector work in one chat |
+| T21 | AI search fallback (free mode), **build right after T11** | changes | Review 2026-10-17: 2 fixes (spot-check state vs L21 state; site scrape never reaches /team, /people). manual check pending: Claude Desktop run of 3 companies in AI mode compared with an API run (owner/reviewer); also confirm web search and the connector work in one chat |
 
 ## Task summaries
 (Builder adds a short summary per task here.)
