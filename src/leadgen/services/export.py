@@ -54,9 +54,11 @@ GENERIC_COLUMNS = (
     "emailSubject", "emailBody",
 )  # fmt: skip
 
-# Instantly column -> internal row key. Instantly's built-in fields are email, first_name,
-# last_name, company_name, personalization, website (and job title / LinkedIn); every other
-# column becomes a custom variable named after its header (DECISIONS, T12).
+# Instantly column -> internal row key. Instantly's predefined variables are Email, First name,
+# Last name, Job title, Company name, Personalization, Phone, Website, Location and LinkedIn;
+# every other column becomes a custom variable named exactly like its header (case-sensitive),
+# and "custom variables should not be named similarly to the predefined variables", so the
+# custom columns avoid the words email / linkedin / name (DECISIONS, T12 round 1).
 INSTANTLY_COLUMNS: dict[str, str] = {
     "email": "email",
     "first_name": "firstName",
@@ -66,13 +68,13 @@ INSTANTLY_COLUMNS: dict[str, str] = {
     "website": "companyDomain",
     "job_title": "jobTitle",
     "linkedin_url": "linkedinUrl",
-    "greeting_name": "greetingName",
+    "greeting": "greetingName",
     "designation": "designation",
-    "linkedin_message": "linkedinMessage",
-    "linkedin_invite": "linkedinInvite",
-    "email_subject": "emailSubject",
-    "email_body": "emailBody",
-    "email_status": "emailStatus",
+    "follow_up_dm": "linkedinMessage",
+    "invite_note": "linkedinInvite",
+    "subject_line": "emailSubject",
+    "message_body": "emailBody",
+    "address_status": "emailStatus",
     "evidence_origin": "evidenceOrigin",
 }
 
@@ -112,8 +114,11 @@ GENERIC_NEXT_STEPS = (
 )
 INSTANTLY_NEXT_STEPS = (
     "In Instantly, upload the CSV and check the column mapping: email, first_name, last_name, "
-    "company_name, personalization and website map to Instantly's own fields; the other columns "
-    "can be mapped as custom variables (use them as {{email_subject}}, {{email_body}} ...).",
+    "company_name, job_title, linkedin_url, personalization and website map to Instantly's own "
+    "fields; map the other columns as custom variables. A custom variable is named exactly like "
+    "its column header (case-sensitive): use {{subject_line}}, {{message_body}}, {{follow_up_dm}}, "
+    "{{invite_note}}, {{greeting}}, {{address_status}} in your sequence. 'personalization' "
+    "holds the same text as message_body.",
     "Instantly needs an email on every lead, so people without one are left out of this file "
     "(see skipped_no_email); they are listed in qa_report.csv.",
 )
@@ -286,6 +291,22 @@ def build_rows(campaign_id: int, include: str = "approved") -> ExportData:
         rows.append(row)
         message_ids[pid] = [m["id"] for m in msgs]
     return ExportData(ev.campaign, include, rows, gate, ev, message_ids, withheld)
+
+
+def missing_messages(campaign: dict[str, Any], row: dict[str, Any]) -> list[str]:
+    """Channels the campaign uses for which this row has no exportable message.
+
+    `email` counts only when the row has an email address (a person without one cannot get an
+    email step anyway); `linkedin_message` counts when the campaign has the LinkedIn channel.
+    Used by the export warnings and by the lemlist push, which holds such leads back.
+    """
+    wanted = drafting.channels_for(campaign)
+    missing: list[str] = []
+    if "email" in wanted and row["email"] and not (row["emailSubject"] and row["emailBody"]):
+        missing.append("email")
+    if "linkedin_message" in wanted and not row["linkedinMessage"]:
+        missing.append("linkedin_message")
+    return missing
 
 
 def _suppressed(ev: review.Evaluation, person_id: int) -> bool:
@@ -481,6 +502,14 @@ def export_campaign(
     not_reviewed = sum(1 for m in data.ev.messages if m.get("ai_review") != "pass")
     if include != "approved" and not_reviewed:
         warnings.append(f"{not_reviewed} message(s) have not been passed by the AI review.")
+    incomplete = sum(1 for r in exported_rows if missing_messages(camp, r))
+    if incomplete:
+        warnings.append(
+            f"{incomplete} lead(s) are in the file without a message for every channel of this "
+            "campaign (an email or LinkedIn message is empty because it is not approved yet). "
+            "Their empty columns will leave blank steps in a sequence; finish QA and the AI "
+            "review and export again."
+        )
     if data.withheld:
         warnings.append(
             f"{data.withheld} message(s) were left out because they have a QA block; the "
@@ -513,6 +542,7 @@ def export_campaign(
             len(data.message_ids.get(r["personId"], [])) for r in exported_rows
         ),
         "skipped_no_email": skipped,
+        "incomplete_rows": incomplete,
         "removed": len(removed),
         "blocked_by_code": dict(data.gate["blocked_by"]),
         "messages_blocked": data.gate["messages"]["blocked"],

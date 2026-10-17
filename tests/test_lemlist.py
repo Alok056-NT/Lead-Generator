@@ -21,7 +21,7 @@ from qa_world import (
 
 from leadgen import db
 from leadgen.core import secrets
-from leadgen.providers import lemlist, registry
+from leadgen.providers import base, lemlist, registry
 from leadgen.providers.base import ProviderError
 from leadgen.services import lemlist as svc
 from leadgen.services.lemlist import LemlistError, list_lemlist_campaigns, push_to_lemlist
@@ -49,7 +49,7 @@ def test_registry_has_lemlist():
 
 
 @respx.mock
-def test_list_campaigns_auth_and_paging(key, sleeps):
+def test_list_campaigns_auth_and_paging(ready_db, key, sleeps):
     page1 = [{"_id": f"cam_{i}", "name": f"Campaign {i}", "status": "running"} for i in range(100)]
     page2 = [{"_id": "cam_last", "name": "Last", "status": "draft"}, {"name": "no id"}, "junk"]
     route = respx.get(f"{API}/campaigns").mock(
@@ -76,7 +76,7 @@ def test_provider_without_key():
 
 
 @respx.mock
-def test_provider_test_and_errors(key, sleeps):
+def test_provider_test_and_errors(ready_db, key, sleeps):
     respx.get(f"{API}/campaigns").mock(return_value=httpx.Response(200, json=[]))
     assert lemlist.LemlistProvider().test() == (True, "lemlist key works.")
     respx.get(f"{API}/campaigns").mock(
@@ -95,7 +95,7 @@ def test_provider_test_and_errors(key, sleeps):
 
 
 @respx.mock
-def test_create_lead_success_and_payload(key, sleeps):
+def test_create_lead_success_and_payload(ready_db, key, sleeps):
     route = respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
         return_value=httpx.Response(
             200, json={"_id": "lea_1", "warnings": [{"code": "FIELDS_KEPT", "message": "m"}]}
@@ -114,12 +114,14 @@ def test_create_lead_success_and_payload(key, sleeps):
     ("status", "text", "expected"),
     [
         (400, "Lead already in the campaign", "duplicate"),
+        (400, '{"error": "LEAD_ALREADY_IN_CAMPAIGN"}', "duplicate"),
+        (400, "lead_already_in_campaign", "duplicate"),
         (400, "Invalid email address", "rejected"),
         (409, "Lead already in other campaign", "rejected"),
         (405, '{"error": "Invalid email address"}', "rejected"),
     ],
 )
-def test_create_lead_per_lead_problems(key, sleeps, status, text, expected):
+def test_create_lead_per_lead_problems(ready_db, key, sleeps, status, text, expected):
     respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
         return_value=httpx.Response(status, text=text)
     )
@@ -139,7 +141,7 @@ def test_create_lead_per_lead_problems(key, sleeps, status, text, expected):
         (500, "boom", "http"),
     ],
 )
-def test_create_lead_fatal_problems(key, sleeps, status, text, code):
+def test_create_lead_fatal_problems(ready_db, key, sleeps, status, text, code):
     respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
         return_value=httpx.Response(status, text=text)
     )
@@ -149,7 +151,7 @@ def test_create_lead_fatal_problems(key, sleeps, status, text, code):
 
 
 @respx.mock
-def test_rate_limit_retries_with_retry_after(key, sleeps):
+def test_rate_limit_retries_with_retry_after(ready_db, key, sleeps):
     respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
         side_effect=[
             httpx.Response(429, headers={"Retry-After": "2"}, text="slow down"),
@@ -160,6 +162,18 @@ def test_rate_limit_retries_with_retry_after(key, sleeps):
         "lea_9"
     )
     assert sleeps == [2.0]
+
+
+@respx.mock
+def test_provider_records_usage_with_zero_credits(ready_db, key, sleeps):
+    respx.get(f"{API}/campaigns").mock(return_value=httpx.Response(200, json=[]))
+    respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
+        return_value=httpx.Response(200, json={"_id": "lea_1"})
+    )
+    provider = lemlist.LemlistProvider()
+    provider.list_campaigns()
+    provider.create_lead(TARGET, {"email": "a@example.com"})
+    assert base.usage("lemlist", "all") == {"calls": 2, "credits": 0}
 
 
 # --- service ------------------------------------------------------------------------------------
@@ -284,7 +298,8 @@ def test_people_without_email_are_skipped(ready_db, key, sleeps):
     )
     dry = push_to_lemlist(cid, TARGET)
     assert dry["no_email_for_lemlist_api"] == 1 and dry["to_push"] == 2
-    assert "CSV" in dry["no_email_hint"]
+    hint = dry["no_email_hint"]
+    assert "find_emails" in hint and "by hand" in hint
     reply = push_to_lemlist(cid, TARGET, dry_run=False, confirm=True)
     assert reply["pushed"]["created"] == 2 and route.call_count == 2
 
@@ -333,7 +348,7 @@ def test_invalid_arguments(ready_db):
 
 
 @respx.mock
-def test_list_lemlist_campaigns_service(key, sleeps):
+def test_list_lemlist_campaigns_service(ready_db, key, sleeps):
     respx.get(f"{API}/campaigns").mock(
         return_value=httpx.Response(200, json=[{"_id": "cam_1", "name": "Test", "status": "draft"}])
     )
@@ -349,3 +364,82 @@ def test_list_lemlist_campaigns_needs_key():
         list_lemlist_campaigns()
     assert err.value.code == "needs_key"
 
+
+
+def _break_email_message(pid: int) -> None:
+    with db.session() as conn:
+        conn.execute(
+            "UPDATE messages SET ai_review = 'fix' WHERE person_id = ? AND channel = 'email'",
+            (pid,),
+        )
+
+
+@respx.mock
+def test_incomplete_leads_are_held_back_by_default(ready_db, key, sleeps):
+    cid, ids = _build(3)
+    _break_email_message(ids[1])  # verified address, LinkedIn message ok, email message not ok
+    route = respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
+        return_value=httpx.Response(200, json={"_id": "lea_1"})
+    )
+    dry = push_to_lemlist(cid, TARGET)
+    assert dry["ready"] == 3 and dry["messages_incomplete"] == 1 and dry["to_push"] == 2
+    assert "allow_incomplete" in dry["messages_incomplete_hint"]
+    assert "finish QA" in dry["messages_incomplete_hint"].lower() or "Finish QA" in dry[
+        "messages_incomplete_hint"
+    ]
+    assert all(p["person_id"] != ids[1] for p in dry["preview"])
+    real = push_to_lemlist(cid, TARGET, dry_run=False, confirm=True)
+    assert real["pushed"]["created"] == 2 and route.call_count == 2
+    assert real["done"] is True and "held back" in real["message"]
+    # after the message is fixed, a second push sends just that lead
+    with db.session() as conn:
+        conn.execute("UPDATE messages SET ai_review = 'pass' WHERE person_id = ?", (ids[1],))
+    again = push_to_lemlist(cid, TARGET, dry_run=False, confirm=True)
+    assert again["messages_incomplete"] == 0 and again["pushed"]["created"] == 1
+    assert route.call_count == 3
+
+
+@respx.mock
+def test_missing_linkedin_message_is_held_back(ready_db, key):
+    cid, ids = _build(2)
+    with db.session() as conn:
+        conn.execute(
+            "DELETE FROM messages WHERE person_id = ? AND channel = 'linkedin_message'", (ids[0],)
+        )
+    reply = push_to_lemlist(cid, TARGET)
+    assert reply["messages_incomplete"] == 1 and reply["to_push"] == 1
+
+
+@respx.mock
+def test_allow_incomplete_pushes_with_a_warning(ready_db, key, sleeps):
+    cid, ids = _build(2)
+    _break_email_message(ids[0])
+    route = respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
+        return_value=httpx.Response(200, json={"_id": "lea_1"})
+    )
+    dry = push_to_lemlist(cid, TARGET, allow_incomplete=True)
+    assert dry["messages_incomplete"] == 0 and dry["to_push"] == 2
+    assert any("without a message" in w for w in dry["warnings"])
+    first = next(p for p in dry["preview"] if p["person_id"] == ids[0])
+    assert "emailBody" not in first["payload"]
+    real = push_to_lemlist(cid, TARGET, dry_run=False, confirm=True, allow_incomplete=True)
+    assert real["pushed"]["created"] == 2 and route.call_count == 2
+
+
+@respx.mock
+def test_guess_emails_are_counted_labelled_and_warned(ready_db, key, sleeps):
+    cid, ids = _build(2)
+    with db.session() as conn:
+        conn.execute("UPDATE emails SET status = 'guess' WHERE person_id = ?", (ids[0],))
+    # a guess address has no sendable email message (L23 blocks it) but a LinkedIn one is fine
+    dry = push_to_lemlist(cid, TARGET, allow_incomplete=True)
+    assert dry["guess_emails"] == 1
+    assert any("guess" in w for w in dry["warnings"])
+    guess = next(p for p in dry["preview"] if p["person_id"] == ids[0])
+    assert guess["payload"]["emailStatus"] == "guess"
+    route = respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
+        return_value=httpx.Response(200, json={"_id": "lea_1"})
+    )
+    real = push_to_lemlist(cid, TARGET, dry_run=False, confirm=True, allow_incomplete=True)
+    assert real["guess_emails"] == 1 and any("guess" in w for w in real["warnings"])
+    assert route.call_count == 2

@@ -121,8 +121,19 @@ def test_generic_and_instantly_csv(world):
     assert len(rows) == 3
     assert rows[0]["website"] == "northwind.example"
     assert rows[0]["first_name"] == "Aria" and rows[0]["company_name"] == COMPANY
-    assert rows[0]["personalization"] == rows[0]["email_body"] != ""
+    assert rows[0]["personalization"] == rows[0]["message_body"] != ""
     assert rows[0]["evidence_origin"] == "api"
+    assert rows[0]["subject_line"] and rows[0]["follow_up_dm"] and rows[0]["address_status"]
+
+
+def test_instantly_custom_columns_do_not_resemble_predefined_fields():
+    predefined = {"email", "first_name", "last_name", "job_title", "company_name",
+                  "personalization", "phone", "website", "location", "linkedin_url"}
+    for column in export.INSTANTLY_COLUMNS:
+        if column in predefined:
+            continue
+        assert not column.startswith(("email", "linkedin", "first", "last", "company", "job"))
+        assert column == column.lower()
 
 
 def test_same_minute_exports_get_distinct_names(world):
@@ -346,3 +357,31 @@ def test_linkedin_only_campaign(ready_db):
     _, rows = read(reply["path"])
     assert reply["exported"] == 1 and rows[0]["email"] == "" and rows[0]["emailBody"] == ""
     assert rows[0]["linkedinMessage"].startswith("Hi Aria")
+
+
+def test_incomplete_rows_warn_in_every_include_mode(world):
+    cid, _, ids = world
+    # Marcus's email message has a QA block (M03): he has an address but no exportable email
+    sql(
+        "UPDATE messages SET body = 'Hi Marcus, TODO' WHERE person_id = ? AND channel = 'email'",
+        ids[1],
+    )
+    for include in ("approved", "qa_pass", "all_confirmed"):
+        reply = export_campaign(cid, "lemlist", include=include)
+        assert reply["incomplete_rows"] == 1, include
+        assert any("without a message for every channel" in w for w in reply["warnings"]), include
+    # a complete export has no such warning
+    sql(
+        "UPDATE messages SET body = ? WHERE person_id = ? AND channel = 'email'",
+        _em_body("Marcus", 1),
+        ids[1],
+    )
+    reply = export_campaign(cid, "lemlist")
+    assert reply["incomplete_rows"] == 0
+    assert not any("every channel" in w for w in reply["warnings"])
+
+
+def test_missing_linkedin_message_counts_as_incomplete(world):
+    cid, _, ids = world
+    sql("DELETE FROM messages WHERE person_id = ? AND channel = 'linkedin_message'", ids[0])
+    assert export_campaign(cid, "generic")["incomplete_rows"] == 1

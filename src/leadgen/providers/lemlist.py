@@ -98,6 +98,7 @@ class LemlistProvider:
                 "/campaigns",
                 params={"version": "v2", "limit": PAGE_SIZE, "offset": page * PAGE_SIZE},
             )
+            base.record_usage(INFO.key, calls=1, credits=0)
             error = base.error_for_status(response, "lemlist")
             if error is not None:
                 raise error
@@ -130,6 +131,7 @@ class LemlistProvider:
         campaign or lemlist itself raises `ProviderError`.
         """
         response = self._request("POST", f"/campaigns/{campaign_id}/leads/", json=payload)
+        base.record_usage(INFO.key, calls=1, credits=0)
         status = response.status_code
         if 200 <= status < 300:
             try:
@@ -150,7 +152,9 @@ class LemlistProvider:
         if status == 404 and "campaign" in lowered:
             raise ProviderError("http", "lemlist says this campaign was not found.")
         if status in (400, 405, 409):
-            if status == 400 and "already in the campaign" in lowered:
+            if status == 400 and (
+                "already in the campaign" in lowered or "already_in_campaign" in lowered
+            ):
                 return LeadResult("duplicate", detail=text)
             return LeadResult("rejected", detail=text or f"HTTP {status}")
         error = base.error_for_status(response, "lemlist")
