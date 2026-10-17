@@ -16,7 +16,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T10 | Drafting workflow | done | Reviewed 2026-10-15 (fix round 2) |
 | T11 | QA engine and AI review | done | Reviewed 2026-10-15 (fix round 2) |
 | T12 | Export (CSV) and lemlist push | done | Review approved 2026-10-17 after fix round 1 (incomplete leads held back from lemlist, guess emails warned and labelled, lemlist usage recorded, Instantly columns from the help article). manual check pending: with the owner's lemlist key, dry run, then push 1 lead to a test campaign; confirm the variables appear, and note whether a lead without email is accepted (then set `lemlist.EMAIL_REQUIRED = False`) |
-| T13 | MCP server | review | manual check pending (owner): `claude mcp add lead-generator -- <venv>\Scripts\leadgen.exe mcp`, ask "what's my lead generator status?" and see `get_status` used |
+| T13 | MCP server | changes | Review round 1: `needs_key` / `quota_exhausted` / `budget_reached` replies need the PLAN 10 `error` object. manual check pending (owner): `claude mcp add lead-generator -- <venv>\Scripts\leadgen.exe mcp`, ask "what's my lead generator status?" and see `get_status` used |
 | T14 | Email sending | todo | |
 | T15 | Mailbox sync and analytics | todo | |
 | T16 | Local dashboard | todo | |
