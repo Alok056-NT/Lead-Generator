@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 build/
+!.claude/skills/build/
 dist/
 .pytest_cache/
 .ruff_cache/
