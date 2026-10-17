@@ -159,9 +159,6 @@ def cmd_tools(_args: argparse.Namespace) -> int:
     return 0
 
 
-_MAILBOX_KEYS = (
-    "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "IMAP_HOST", "IMAP_PORT",
-)  # fmt: skip
 _PRESETS = {
     "gmail": ("smtp.gmail.com", "587"),
     "outlook": ("smtp.office365.com", "587"),
@@ -170,7 +167,7 @@ _PRESETS = {
 
 def cmd_mailbox_set(args: argparse.Namespace) -> int:
     """Ask for the mailbox settings (password hidden), save them and test the log-in."""
-    from leadgen.send.smtp_imap import SmtpImapMailbox, default_imap_host
+    from leadgen.send.smtp_imap import default_imap_host, save_mailbox
 
     host_default, port_default = _PRESETS.get(args.preset or "", ("", "587"))
     host = input(f"SMTP server [{host_default}]: ").strip() or host_default
@@ -179,26 +176,9 @@ def cmd_mailbox_set(args: argparse.Namespace) -> int:
     password = getpass.getpass("Password or app password (hidden): ")
     imap_default = default_imap_host(host) if host else ""
     imap_host = input(f"IMAP server [{imap_default}]: ").strip() or imap_default
-    if not (host and user and password):
-        print("Server, address and password are all needed. Nothing was saved.")
-        return 1
-    previous = {name: secrets.stored(name) for name in _MAILBOX_KEYS}
-    for name, value in (
-        ("SMTP_HOST", host), ("SMTP_PORT", port), ("SMTP_USER", user),
-        ("SMTP_PASSWORD", password), ("IMAP_HOST", imap_host),
-    ):  # fmt: skip
-        secrets.set(name, value)
-    ok, message = SmtpImapMailbox.from_config().test()
-    if not ok:
-        for name, old in previous.items():
-            if old:
-                secrets.set(name, old)
-            else:
-                secrets.delete(name)
-        print(f"The mailbox was not saved. {message}")
-        return 1
-    print(f"Saved. {message}")
-    return 0
+    ok, message = save_mailbox(host, port, user, password, imap_host)
+    print(message)
+    return 0 if ok else 1
 
 
 def cmd_mailbox_test(_args: argparse.Namespace) -> int:

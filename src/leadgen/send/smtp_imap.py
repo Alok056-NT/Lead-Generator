@@ -1,15 +1,15 @@
 """Send plain-text email through the user's own mailbox (SMTP) and open it for reading (IMAP).
 
-# Adapted from Harvey (MIT, Ethan Rogers): reference/harvey/integrations/smtp_mail.py and
-# mail_provider.py (SendResult, the SMTP/IMAP hand-shakes). Harvey's async aiosmtplib code became
-# synchronous stdlib `smtplib` / `imaplib`, and the provider abstraction was dropped.
-
 The settings come from `secrets.env` (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, IMAP_HOST,
 IMAP_PORT, IMAP_USER, IMAP_PASSWORD) and `settings.yaml` (sender name and email). Port 465 uses
 implicit TLS; every other port must offer STARTTLS (a server that does not is refused, so the
 password never travels in clear text). One message goes to exactly one recipient, never Cc/Bcc.
 Passwords are never put in an error message or a log line.
 """
+
+# Adapted from Harvey (MIT, Ethan Rogers): reference/harvey/integrations/smtp_mail.py and
+# mail_provider.py (SendResult, the SMTP/IMAP hand-shakes). Harvey's async aiosmtplib code became
+# synchronous stdlib `smtplib` / `imaplib`, and the provider abstraction was dropped.
 
 from __future__ import annotations
 
@@ -127,6 +127,41 @@ def _logout(conn: imaplib.IMAP4) -> None:
         conn.logout()
     except (imaplib.IMAP4.error, OSError):
         pass
+
+
+MAILBOX_KEYS = ("SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "IMAP_HOST", "IMAP_PORT")
+
+
+def save_mailbox(
+    host: str, port: str | int, user: str, password: str, imap_host: str = ""
+) -> tuple[bool, str]:
+    """Save the mailbox settings to `secrets.env`, test the log-in, and undo the save on failure.
+
+    Returns `(ok, plain message)`. When the SMTP or IMAP log-in fails, the previously saved values
+    are put back (or removed if there were none), so a wrong password is never kept.
+    """
+    host, user, imap_host = host.strip(), user.strip(), imap_host.strip()
+    if not (host and user and password):
+        return False, "Server, address and password are all needed. Nothing was saved."
+    imap_host = imap_host or default_imap_host(host)
+    previous = {name: secrets.stored(name) for name in MAILBOX_KEYS}
+    for name, value in (
+        ("SMTP_HOST", host),
+        ("SMTP_PORT", str(port)),
+        ("SMTP_USER", user),
+        ("SMTP_PASSWORD", password),
+        ("IMAP_HOST", imap_host),
+    ):
+        secrets.set(name, value)
+    ok, message = SmtpImapMailbox.from_config().test()
+    if not ok:
+        for name, old in previous.items():
+            if old:
+                secrets.set(name, old)
+            else:
+                secrets.delete(name)
+        return False, f"The mailbox was not saved. {message}"
+    return True, f"Saved. {message}"
 
 
 class SmtpImapMailbox:

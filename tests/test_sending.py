@@ -621,6 +621,101 @@ def test_the_first_email_waits_for_the_gap_after_the_last_send(world, clock):
     assert 50 <= sum(clock.slept) <= 170  # gap 60-180 minus the 10 s already passed
 
 
+class TimedMailbox(FakeMailbox):
+    """A fake mailbox that notes the (fake) time of every attempt."""
+
+    def __init__(self, clock, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.clock = clock
+        self.attempts: list[datetime] = []
+
+    def send(self, to, subject, body, headers=None):
+        self.attempts.append(self.clock.now)
+        return super().send(to, subject, body, headers)
+
+
+def attempt_gaps(box: TimedMailbox) -> list[float]:
+    return [(b - a).total_seconds() for a, b in zip(box.attempts, box.attempts[1:], strict=False)]
+
+
+def test_there_is_a_random_gap_after_a_refused_recipient(world, clock):
+    cid, _, _ = world
+    queue_all(cid)
+    box = TimedMailbox(clock, errors=[MailboxError("recipient_refused", "no such user")])
+    run(clock, box)
+    gaps = attempt_gaps(box)
+    assert len(box.attempts) == 3 and len(gaps) == 2
+    assert all(60 <= g <= 180 for g in gaps)  # also the gap right after the refused one
+    assert sent_rows()[0]["status"] == "refused" and sent_rows()[0]["sent_at"]
+
+
+def test_there_is_a_random_gap_after_a_failed_attempt(world, clock):
+    cid, _, _ = world
+    queue_all(cid)
+    down = MailboxError("connect", "timed out")
+    box = TimedMailbox(clock, errors=[down, down, down])
+    result = run(clock, box)
+    assert result["reason"] == "send_errors"
+    gaps = attempt_gaps(box)
+    assert len(gaps) == 2 and all(60 <= g <= 180 for g in gaps)
+
+
+def test_the_first_attempt_of_a_run_waits_for_the_last_failed_attempt_of_the_previous_run(
+    world, clock
+):
+    cid, _, _ = world
+    queue_all(cid, limit=1)
+    run(clock, TimedMailbox(clock, errors=[MailboxError("smtp", "451 try later")]))
+    assert [r["status"] for r in sent_rows()] == ["failed"]
+    queue_all(cid, limit=1)
+    box = TimedMailbox(clock)
+    start = clock.now
+    run(clock, box)
+    assert len(box.attempts) == 1
+    assert 60 <= (box.attempts[0] - start).total_seconds() <= 180
+
+
+def test_removing_the_postal_address_after_queueing_stops_the_worker(world, clock):
+    cid, _, _ = world
+    queue_all(cid)
+    settings = load_settings()
+    settings.postal_address = ""
+    save_settings(settings)
+    box = FakeMailbox()
+    result = run(clock, box)
+    assert result == {"started": True, "sent": 0, "reason": "sender_details_missing"}
+    assert box.sent == []
+    assert [r["status"] for r in sent_rows()] == ["queued"] * 3
+    assert sending.worker_status()["reason"] == "sender_details_missing"
+
+
+def test_removing_the_sender_company_mid_run_stops_the_worker_with_the_rest_queued(world, clock):
+    cid, _, _ = world
+    queue_all(cid)
+
+    def sleep(seconds):
+        clock.sleep(seconds)
+        settings = load_settings()
+        settings.sender.company = ""
+        save_settings(settings)
+
+    box = FakeMailbox()
+    result = sending.run_worker(mailbox=box, sleep=sleep, rng=random.Random(1))
+    assert result["reason"] == "sender_details_missing" and result["sent"] == 1
+    assert [r["status"] for r in sent_rows()] == ["sent", "queued", "queued"]
+
+
+def test_broken_sending_settings_after_queueing_stop_the_worker(world, clock):
+    cid, _, _ = world
+    queue_all(cid)
+    settings = load_settings()
+    settings.sending.min_gap_s = 500  # above max_gap_s
+    save_settings(settings)
+    box = FakeMailbox()
+    assert run(clock, box)["reason"] == "settings_invalid"
+    assert box.sent == [] and [r["status"] for r in sent_rows()] == ["queued"] * 3
+
+
 def test_worker_does_not_send_in_the_recipients_quiet_hours(world, clock):
     cid, _, messages = world
     queue_all(cid)

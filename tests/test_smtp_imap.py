@@ -351,3 +351,54 @@ def test_with_footer_adds_a_blank_line_and_normalises_line_endings():
     assert "\r" not in text
     assert text.startswith("Hi Aria,\n\nBody.\n\n--\nPriya Nair")
     assert text.endswith(OPT_OUT_LINE + "\n")
+
+
+# --- save_mailbox ---------------------------------------------------------------------------
+
+
+def _fake_login(monkeypatch, result):
+    monkeypatch.setattr(SmtpImapMailbox, "test", lambda self: result)
+
+
+def test_save_mailbox_keeps_the_settings_after_a_good_login(monkeypatch):
+    _fake_login(monkeypatch, (True, "SMTP and IMAP both work."))
+    ok, message = smtp_imap.save_mailbox(
+        " smtp.mail.example ", 587, " priya@bh.example ", PASSWORD, "imap.mail.example"
+    )
+    assert ok and message.startswith("Saved.") and PASSWORD not in message
+    assert secrets.get("SMTP_HOST") == "smtp.mail.example"
+    assert secrets.get("SMTP_PORT") == "587"
+    assert secrets.get("SMTP_USER") == "priya@bh.example"
+    assert secrets.get("SMTP_PASSWORD") == PASSWORD
+    assert secrets.get("IMAP_HOST") == "imap.mail.example"
+
+
+def test_save_mailbox_restores_the_old_settings_after_a_failed_login(monkeypatch):
+    secrets.set("SMTP_HOST", "old.example")
+    secrets.set("SMTP_USER", "old@bh.example")
+    _fake_login(monkeypatch, (False, "SMTP login failed."))
+    ok, message = smtp_imap.save_mailbox("smtp.mail.example", "587", "new@bh.example", PASSWORD)
+    assert not ok and message == "The mailbox was not saved. SMTP login failed."
+    assert secrets.get("SMTP_HOST") == "old.example"
+    assert secrets.get("SMTP_USER") == "old@bh.example"
+    assert secrets.get("SMTP_PASSWORD") == ""  # there was none before: removed again
+    assert secrets.get("SMTP_PORT") == "" and secrets.get("IMAP_HOST") == ""
+
+
+def test_save_mailbox_fills_in_the_usual_imap_server(monkeypatch):
+    _fake_login(monkeypatch, (True, "ok"))
+    assert smtp_imap.save_mailbox("smtp.mail.example", 587, "a@bh.example", PASSWORD)[0]
+    assert secrets.get("IMAP_HOST") == "imap.mail.example"
+
+
+def test_save_mailbox_needs_server_address_and_password(monkeypatch):
+    _fake_login(monkeypatch, (True, "unused"))
+    for args in (
+        ("", "587", "a@bh.example", "x"),
+        ("h", "587", "", "x"),
+        ("h", "587", "a@b.c", ""),
+    ):
+        ok, message = smtp_imap.save_mailbox(*args)
+        assert not ok and "Nothing was saved" in message
+    assert secrets.get("SMTP_HOST") == ""
+

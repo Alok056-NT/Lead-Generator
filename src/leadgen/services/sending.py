@@ -539,6 +539,23 @@ def _sender_address(mailbox: SmtpImapMailbox, settings: config.Settings) -> str:
     return settings.sender.email.strip() or str(mailbox.from_email or "").strip()
 
 
+def _identity_ok(settings: config.Settings, mailbox: SmtpImapMailbox) -> bool:
+    """Sender name, company and a From address are all set."""
+    sender = settings.sender
+    return bool(
+        sender.name.strip() and sender.company.strip() and _sender_address(mailbox, settings)
+    )
+
+
+def _sender_problem(settings: config.Settings, mailbox: SmtpImapMailbox) -> str:
+    """Why the sender details forbid sending right now (the readiness rules), or ""."""
+    if not _identity_ok(settings, mailbox) or not settings.postal_address.strip():
+        return "sender_details_missing"
+    if _settings_problem(settings.sending):
+        return "settings_invalid"
+    return ""
+
+
 def _settings_problem(sending: config.Sending) -> str:
     try:
         parse_hhmm(sending.quiet_start)
@@ -622,7 +639,7 @@ def check_send_readiness(
 
     sender = settings.sender
     from_address = _sender_address(mailbox, settings)
-    identity_ok = bool(sender.name.strip() and sender.company.strip() and from_address)
+    identity_ok = _identity_ok(settings, mailbox)
     items.append(
         _item(
             "sender_identity",
@@ -1082,9 +1099,12 @@ def _next_item(
     return None, deferred
 
 
-def _last_sent_at() -> datetime | None:
+def _last_attempt_at() -> datetime | None:
+    """When the newest send attempt (sent, refused or failed) was made, from any campaign."""
     with db.session() as conn:
-        row = conn.execute("SELECT MAX(sent_at) FROM sends WHERE status = 'sent'").fetchone()
+        row = conn.execute(
+            "SELECT MAX(sent_at) FROM sends WHERE status IN ('sent', 'refused', 'failed')"
+        ).fetchone()
     return _parse(row[0]) if row and row[0] else None
 
 
@@ -1097,7 +1117,10 @@ def run_worker(
     """Send the queued emails one by one until the queue is empty or a stop rule applies.
 
     Returns `{"started", "sent", "reason"}`. `reason` is `queue_empty`, `quiet_hours`,
-    `daily_cap_reached`, `paused`, `bounce_rate`, `send_errors` or `mailbox_not_configured`.
+    `daily_cap_reached`, `paused`, `bounce_rate`, `send_errors`, `mailbox_not_configured`,
+    `sender_details_missing` (sender name/company/address or postal address removed after
+    queueing) or `settings_invalid`; the rows stay `queued`. The random gap is timed from the
+    last *attempt* (sent, refused or failed), so a failing mailbox is not hammered.
     `sleep` and `rng` can be replaced in tests (the clock is `_utcnow`, also replaceable).
     """
     nap = sleep or time.sleep
@@ -1111,6 +1134,7 @@ def run_worker(
         mailbox = mailbox or SmtpImapMailbox.from_config()
         gap: float | None = None
         waited = False
+        last_attempt = _last_attempt_at()
         while True:
             _heartbeat(sent=sent, started=started)
             if not mailbox.configured():
@@ -1127,6 +1151,10 @@ def run_worker(
                         else f"{MAX_CONSECUTIVE_ERRORS} sends in a row failed"
                     )
                 break
+            problem = _sender_problem(settings, mailbox)
+            if problem:
+                reason = problem
+                break
             now = _utcnow()
             if cap_status(settings, now)["remaining"] <= 0:
                 reason = "daily_cap_reached"
@@ -1138,9 +1166,8 @@ def run_worker(
             row, cand = found
             if gap is None:
                 gap = rng.uniform(settings.sending.min_gap_s, settings.sending.max_gap_s)
-            last = _last_sent_at()
-            if last is not None and not waited:
-                wait = (last + timedelta(seconds=gap) - now).total_seconds()
+            if last_attempt is not None and not waited:
+                wait = (last_attempt + timedelta(seconds=gap) - now).total_seconds()
                 if wait > 0:
                     left = wait
                     while left > 0:
@@ -1156,18 +1183,26 @@ def run_worker(
             try:
                 result = mailbox.send(cand.to, cand.subject, cand.body)
             except MailboxError as exc:
-                if exc.code == "recipient_refused":
-                    _set_send(
-                        row["id"], status="refused", error=f"recipient_refused: {exc.message}"[:300]
-                    )
-                elif exc.code == "invalid_message":
+                stamp = _stamp(_utcnow())
+                if exc.code == "invalid_message":  # rejected before any connection: no gap needed
                     _set_send(
                         row["id"], status="skipped", error=f"invalid_message: {exc.message}"[:300]
                     )
+                    continue
+                last_attempt = _parse(stamp)  # `sent_at` of a refused/failed row is the attempt
+                if exc.code == "recipient_refused":
+                    _set_send(
+                        row["id"], status="refused", sent_at=stamp,
+                        error=f"recipient_refused: {exc.message}"[:300],
+                    )  # fmt: skip
                 else:
-                    _set_send(row["id"], status="failed", error=f"{exc.code}: {exc.message}"[:300])
+                    _set_send(
+                        row["id"], status="failed", sent_at=stamp,
+                        error=f"{exc.code}: {exc.message}"[:300],
+                    )  # fmt: skip
                 continue
             stamp = _stamp(_utcnow())
+            last_attempt = _parse(stamp)
             with db.session() as conn:
                 db.update(
                     conn, "sends", row["id"], status="sent", sent_at=stamp,
