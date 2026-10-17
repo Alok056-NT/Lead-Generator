@@ -94,6 +94,14 @@ def needs_key_response(provider_key: str, why: str) -> dict[str, Any]:
     info = _info_or_raise(provider_key)
     return {
         "ok": False,
+        "error": {
+            "code": "needs_key",
+            "message": f"No {info.name} key is set.",
+            "hint": (
+                "Ask the user to add the key (dashboard, Keys page, or save_api_key with "
+                f"provider '{info.key}'), or use the AI's own web search instead."
+            ),
+        },
         "needs_key": {
             "provider": info.key,
             "name": info.name,
@@ -115,6 +123,14 @@ def quota_response(provider_key: str) -> dict[str, Any]:
     info = _info_or_raise(provider_key)
     return {
         "ok": False,
+        "error": {
+            "code": "quota_exhausted",
+            "message": f"{info.name} has no credits left.",
+            "hint": (
+                "Ask the user to add credits or a new key (dashboard, Keys page, or "
+                f"save_api_key with provider '{info.key}'), or use the AI's own web search."
+            ),
+        },
         "quota_exhausted": {
             "provider": info.key,
             "name": info.name,
@@ -131,6 +147,14 @@ def budget_response(kind: str, used: float, limit: float) -> dict[str, Any]:
     """Reply when a campaign budget (`search`, `hunter`, `verify`) is reached."""
     return {
         "ok": False,
+        "error": {
+            "code": "budget_reached",
+            "message": f"The {kind} budget is reached ({used:g} of {limit:g} used).",
+            "hint": (
+                "Ask the user to raise the budget (update_campaign) or approve more spending, "
+                "then repeat the call with confirm=true; or use the AI's own web search."
+            ),
+        },
         "budget_reached": {
             "kind": kind,
             "used": used,
@@ -159,6 +183,7 @@ def error_response(provider_key: str, exc: ProviderError, why: str = "") -> dict
             "name": info.name,
             "code": exc.code,
             "message": exc.message,
+            "hint": "Try again; if it repeats, tell the user.",
         },
     }
 

@@ -53,6 +53,8 @@ def test_search_provider_fallback_order():
 
 def test_needs_key_response_shape():
     reply = registry.needs_key_response("serper", "To find people")
+    error = reply.pop("error")
+    assert error["code"] == "needs_key" and error["message"] and "save_api_key" in error["hint"]
     assert reply == {
         "ok": False,
         "needs_key": {
@@ -77,6 +79,8 @@ def test_quota_and_budget_responses():
     quota = registry.quota_response("serper")
     assert quota["ok"] is False and quota["quota_exhausted"]["provider"] == "serper"
     assert quota["fallback_available"] == "ai_web_search" and quota["fallback_hint"]
+    assert quota["error"]["code"] == "quota_exhausted"
+    assert quota["error"]["message"] and quota["error"]["hint"]
     budget = registry.budget_response("search", 300, 300)
     assert budget["budget_reached"] == {
         "kind": "search",
@@ -85,6 +89,8 @@ def test_quota_and_budget_responses():
         "how_to_continue": "Ask the user, then repeat the call with confirm=true.",
     }
     assert budget["fallback_available"] == "ai_web_search" and budget["fallback_hint"]
+    assert budget["error"]["code"] == "budget_reached"
+    assert budget["error"]["message"] and "confirm=true" in budget["error"]["hint"]
 
 
 def test_error_response_routes_codes():
@@ -92,6 +98,7 @@ def test_error_response_routes_codes():
     assert "quota_exhausted" in registry.error_response("hunter", ProviderError("quota"))
     other = registry.error_response("serper", ProviderError("http", "HTTP 500"))
     assert other["error"]["code"] == "http" and other["ok"] is False
+    assert other["error"]["hint"]
 
 
 @respx.mock

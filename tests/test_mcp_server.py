@@ -240,6 +240,8 @@ def test_missing_key_gives_the_needs_key_shape(mcp):
     mcp("approve_companies", campaign_id=cid)
     reply = mcp("find_people", campaign_id=cid, confirm=True)
     assert reply["ok"] is False
+    assert reply["error"]["code"] == "needs_key"
+    assert reply["error"]["message"] and reply["error"]["hint"]
     assert reply["needs_key"]["provider"] == "serper"
     assert reply["fallback_available"] == "ai_web_search"
 
@@ -247,6 +249,23 @@ def test_missing_key_gives_the_needs_key_shape(mcp):
 def test_search_web_without_a_key_is_needs_key(mcp):
     reply = mcp("search_web", query="largest logistics companies in Singapore")
     assert reply["ok"] is False and "needs_key" in reply
+    assert reply["error"]["code"] == "needs_key"
+    assert reply["error"]["message"] and reply["error"]["hint"]
+
+
+def test_budget_reached_gives_the_error_shape(mcp, fake_search):
+    offer_id = stored_offer(mcp)
+    cid = make_campaign(mcp, offer_id, budget={"search": 0})["id"]
+    mcp(
+        "add_companies", campaign_id=cid,
+        companies=[{"name": COMPANY, "domain": "northwind.example"}],
+    )  # fmt: skip
+    mcp("approve_companies", campaign_id=cid)
+    reply = mcp("find_people", campaign_id=cid, confirm=False)
+    assert error_code(reply) == "budget_reached"
+    assert reply["error"]["message"] and "confirm=true" in reply["error"]["hint"]
+    assert reply["budget_reached"]["kind"] == "search"
+    assert not fake_search.calls
 
 
 def test_validation_error_has_the_error_shape(mcp):
