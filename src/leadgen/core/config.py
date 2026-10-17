@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets as _random
 from typing import Any
 
 import yaml
@@ -109,3 +110,12 @@ def save_settings(settings: Settings) -> None:
     data = settings.model_dump(mode="json")
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, default_flow_style=False)
     atomic_write_text(paths.settings_path(), text, private=os.name == "posix")
+
+
+def ensure_mcp_secret() -> str:
+    """The secret path part for the HTTP MCP endpoint; a random one is made and saved if empty."""
+    settings = load_settings()
+    if not settings.mcp_http.secret:
+        settings.mcp_http.secret = _random.token_urlsafe(24)
+        save_settings(settings)
+    return settings.mcp_http.secret

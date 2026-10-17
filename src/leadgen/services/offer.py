@@ -419,6 +419,66 @@ def save_profile(offer_id: int, profile: dict[str, Any]) -> OfferProfile:
     return parsed
 
 
+def ingest_source(
+    *,
+    url: str | None = None,
+    text: str | None = None,
+    file_path: str | None = None,
+    name: str | None = None,
+    offer_id: int | None = None,
+    cursor: str | int | None = None,
+    file_root: Path | None = None,
+) -> dict[str, Any]:
+    """The entry point of the `ingest_offer_source` tool: read a new source, or read on.
+
+    Give exactly one of `url`, `text` or `file_path` to create an offer; the reply is the
+    `ingest_*` result plus the first chunk (`text`, `next_cursor`). Give `offer_id` and the
+    `cursor` of the previous reply to read the next chunk of an offer already stored. With
+    `file_root` set (remote mode) a file must lie inside that folder.
+    """
+    if offer_id is not None:
+        if any((url, text, file_path)):
+            return _error(
+                "conflicting_input",
+                "Give either offer_id (to read more of an offer) or a new source, not both.",
+                "To read more of an offer pass only offer_id and cursor.",
+            )
+        try:
+            start = int(cursor or 0)
+        except (TypeError, ValueError):
+            raise OfferError("invalid_cursor", "cursor must be a number.") from None
+        return {"ok": True, "offer_id": int(offer_id), **read_offer_text(int(offer_id), start)}
+    given = [value for value in (url, text, file_path) if value and str(value).strip()]
+    if len(given) != 1:
+        return _error(
+            "one_source_needed",
+            "Give exactly one of url, text or file_path.",
+            "Ask the user for a website address, pasted text or a document path.",
+        )
+    if url and url.strip():
+        result = ingest_url(url)
+    elif text and text.strip():
+        result = ingest_text(text, name)
+    else:
+        path = Path(str(file_path)).expanduser()
+        if file_root is not None:
+            try:
+                inside = path.resolve().is_relative_to(file_root.resolve())
+            except OSError:
+                inside = False
+            if not inside:
+                return _error(
+                    "file_outside_workspace",
+                    "In this connection only files inside the Lead Generator folder can be read.",
+                    f"Ask the user to copy the file into {file_root} or to paste its text.",
+                )
+        result = ingest_file(path)
+    if not result.get("ok"):
+        return result
+    first = read_offer_text(result["offer_id"], 0)
+    return {**result, "text": first["text"], "next_cursor": first["next_cursor"]}
+
+
 def guide_text() -> str:
     """The instructions that tell the AI how to write the profile (`guides/offer_profile.md`)."""
     guide = resources.files("leadgen").joinpath("guides", "offer_profile.md")

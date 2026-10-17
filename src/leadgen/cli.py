@@ -20,8 +20,6 @@ MIN_PYTHON = (3, 11)
 
 # Components built by later tasks; doctor lists them so the owner can see what is coming.
 _LATER_COMPONENTS = (
-    "search and email providers",
-    "MCP server",
     "dashboard",
     "email sending",
 )
@@ -141,6 +139,26 @@ def cmd_keys_test(args: argparse.Namespace) -> int:
     return 0 if result["ok"] else 1
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Run the MCP server: stdio by default, Streamable HTTP with --http."""
+    from leadgen import mcp_server
+
+    if args.http:
+        mcp_server.run_http(args.host or "127.0.0.1", args.port, args.allowed_host or ())
+    else:
+        mcp_server.run_stdio()
+    return 0
+
+
+def cmd_tools(_args: argparse.Namespace) -> int:
+    """Print the MCP tools (name and first sentence of the description)."""
+    from leadgen import mcp_server
+
+    for name, summary in mcp_server.tool_summaries():
+        print(f"{name:<28} {summary}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(prog="leadgen", description="Lead Generator")
@@ -148,6 +166,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="check the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("version", help="show the version").set_defaults(func=cmd_version)
     sub.add_parser("paths", help="show workspace locations").set_defaults(func=cmd_paths)
+    mcp = sub.add_parser("mcp", help="run the MCP server (stdio; --http for remote clients)")
+    mcp.add_argument("--http", action="store_true", help="serve Streamable HTTP at /mcp/<secret>")
+    mcp.add_argument("--host", default=None, help="address to bind (default 127.0.0.1 only)")
+    mcp.add_argument("--port", type=int, default=None, help="port (default from settings, 8766)")
+    mcp.add_argument(
+        "--allowed-host",
+        action="append",
+        help="extra Host header to accept, e.g. a tunnel name (repeatable)",
+    )
+    mcp.set_defaults(func=cmd_mcp)
+    sub.add_parser("tools", help="list the MCP tools").set_defaults(func=cmd_tools)
     keys = sub.add_parser("keys", help="manage API keys").add_subparsers(
         dest="keys_command", required=True
     )
