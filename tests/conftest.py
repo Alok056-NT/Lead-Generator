@@ -22,11 +22,11 @@ def workspace(tmp_path, monkeypatch):
 @pytest.fixture
 def sleeps(monkeypatch):
     """Replace retry sleeps and provider rate limiters so provider tests never wait."""
-    from leadgen.providers import base, brave, ddg, hunter, reoon, serper, zerobounce
+    from leadgen.providers import base, brave, ddg, hunter, lemlist, reoon, serper, zerobounce
 
     recorded: list[float] = []
     monkeypatch.setattr(base, "_sleep", recorded.append)
-    for module in (serper, brave, ddg, hunter, reoon, zerobounce):
+    for module in (serper, brave, ddg, hunter, lemlist, reoon, zerobounce):
         monkeypatch.setattr(module, "_limiter", base.RateLimiter(10_000))
     return recorded
 

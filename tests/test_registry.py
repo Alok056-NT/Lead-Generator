@@ -132,7 +132,7 @@ def test_save_api_key_refuses_unusable_input(provider, key):
 
 
 def test_check_provider_unbuilt_and_unknown():
-    assert registry.check_provider("lemlist")["ok"] is False
+    assert registry.check_provider("smtp")["ok"] is False
     with pytest.raises(ValueError):
         registry.check_provider("nope")
 
@@ -155,7 +155,8 @@ def test_list_providers(ready_db):
     assert not items["brave"]["configured"] and items["brave"]["masked_key"] == ""
     assert items["brave"]["remaining_free"] == 1000.0
     assert items["hunter"]["configured"] and items["hunter"]["implemented"] is True
-    assert items["lemlist"]["implemented"] is False
+    assert items["lemlist"]["implemented"] is True
+    assert items["smtp"]["implemented"] is False
     assert items["hunter"]["remaining_free"] == 46.0
     assert items["ddg"]["configured"] is False and items["ddg"]["env_keys"] == []
     assert items["smtp"]["masked_key"] == "" and items["smtp"]["remaining_free"] is None
@@ -170,7 +171,7 @@ def test_cli_keys_list(capsys, ready_db):
     assert cli.main(["keys", "list"]) == 0
     out = capsys.readouterr().out
     assert "serper" in out and "…WXYZ" in out and "serper-key" not in out
-    assert "lemlist" in out and "not built yet" in out
+    assert "smtp" in out and "not built yet" in out
 
 
 @respx.mock

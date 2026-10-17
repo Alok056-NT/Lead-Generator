@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from leadgen.core import secrets
-from leadgen.providers import brave, ddg, hunter, reoon, serper, zerobounce
+from leadgen.providers import brave, ddg, hunter, lemlist, reoon, serper, zerobounce
 from leadgen.providers.base import Provider, ProviderError, ProviderInfo
 from leadgen.providers.search import SearchProvider
 
@@ -23,8 +23,8 @@ BUDGET_FALLBACK_HINT = (
     "(slower, free), or you can raise the budget."
 )
 
-# lemlist and SMTP are implemented in T12 and T14; their info is listed now so `list_providers`
-# is complete. Their free-tier text is unverified (DECISIONS).
+# SMTP is implemented in T14; its info is listed now so `list_providers` is complete. Its
+# free-tier text is unverified (DECISIONS).
 ALL_PROVIDERS: dict[str, ProviderInfo] = {
     info.key: info
     for info in (
@@ -34,16 +34,7 @@ ALL_PROVIDERS: dict[str, ProviderInfo] = {
         hunter.INFO,
         reoon.INFO,
         zerobounce.INFO,
-        ProviderInfo(
-            key="lemlist",
-            name="lemlist",
-            purpose="Pushes LinkedIn campaign leads into lemlist",
-            env_keys=["LEMLIST_API_KEY"],
-            free_tier="Needs a lemlist plan",
-            signup_url="https://www.lemlist.com/",
-            paid=True,
-            default=False,
-        ),
+        lemlist.INFO,
         ProviderInfo(
             key="smtp",
             name="Your mailbox (SMTP/IMAP)",
@@ -65,6 +56,7 @@ _FACTORIES: dict[str, Callable[[], Provider]] = {
     "hunter": hunter.HunterProvider,
     "reoon": reoon.ReoonProvider,
     "zerobounce": zerobounce.ZeroBounceProvider,
+    "lemlist": lemlist.LemlistProvider,
 }
 
 
