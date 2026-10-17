@@ -245,3 +245,90 @@ def test_the_flag_set_by_hand_clears_after_a_passing_first_check(ready_db):
     assert got["after_recheck"] is True
     out = answer(cid, got["people"], ["ok"] * 5)
     assert out["needs_recheck"] is False and state(cid) == "ok"
+
+
+def _passed_with_one_wrong_then_promoted(count=10):
+    """One 'wrong' answer, then the user promotes that person by hand."""
+    from leadgen.services import people as people_mod
+
+    cid, ids = build(count)
+    got = spot_check.get_spot_check(cid, seed=3)
+    wrong = got["people"][0]["person_id"]
+    results = [{"person_id": wrong, "verdict": "wrong"}] + [
+        {"person_id": p["person_id"], "verdict": "ok"} for p in got["people"][1:]
+    ]
+    spot_check.record_spot_check(cid, results)
+    people_mod.set_person_status(cid, [wrong], "confirmed", "checked the profile by hand")
+    return cid, ids, wrong, got
+
+
+def test_one_wrong_person_promoted_by_hand_does_not_fail_the_campaign(ready_db):
+    cid, ids, wrong, got = _passed_with_one_wrong_then_promoted()
+    assert person(wrong)["status"] == "confirmed" and person(wrong)["spot_check"] == "wrong"
+    assert state(cid) == "ok"  # one wrong never fails the campaign
+    assert camp.get_campaign(cid)["options"]["ai_search_needs_recheck"] is False
+    again = spot_check.get_spot_check(cid)
+    assert again["needed"] is False and again["status"] == "passed"
+    ok_one = next(p["person_id"] for p in got["people"] if p["person_id"] != wrong)
+    add_message(wrong)
+    add_message(ok_one)
+    gate = review.export_gate(cid)
+    # only the hand-promoted wrong person is blocked (L21 per person); the ok one is not
+    assert gate["blocked_by"].get("L21") == 1
+    assert wrong not in gate["leads"]["exportable_ids"]
+    assert ok_one in gate["leads"]["exportable_ids"]
+    # a resample that passes agrees with QA: "no longer blocked" and state ok
+    fresh = spot_check.get_spot_check(cid, resample=True)
+    assert fresh["needed"] is True and wrong not in {p["person_id"] for p in fresh["people"]}
+    out = answer(cid, fresh["people"], ["ok"] * len(fresh["people"]))
+    assert "no longer blocked" in out["message"] and state(cid) == "ok"
+
+
+def test_removing_the_ok_people_draws_a_new_sample_instead_of_saying_passed(ready_db):
+    from leadgen.services import people as people_mod
+
+    cid, ids = build(10)
+    got = spot_check.get_spot_check(cid, seed=5)
+    answer(cid, got["people"], ["ok"] * len(got["people"]))
+    assert state(cid) == "ok"
+    sampled = [p["person_id"] for p in got["people"]]
+    people_mod.set_person_status(cid, sampled, "review")
+    assert state(cid) == "incomplete"
+    unchecked = [i for i in ids if i not in sampled]
+    add_message(unchecked[0])
+    gate = review.export_gate(cid)
+    assert gate["leads"]["exportable_ids"] == [] and gate["blocked_by"]["L21"] == 1
+    new = spot_check.get_spot_check(cid)
+    assert new["needed"] is True and new["round"] == 2
+    assert not {p["person_id"] for p in new["people"]} & set(sampled)
+    out = answer(cid, new["people"], ["ok"] * len(new["people"]))
+    assert "no longer blocked" in out["message"] and state(cid) == "ok"
+    assert review.export_gate(cid)["blocked_by"].get("L21") is None
+
+
+def test_only_a_wrong_promoted_lead_left_has_nobody_to_sample(ready_db):
+    from leadgen.services import people as people_mod
+
+    cid, ids = build(1)
+    got = spot_check.get_spot_check(cid)
+    answer(cid, got["people"], ["wrong"])
+    people_mod.set_person_status(cid, ids, "confirmed", "checked by hand")
+    assert state(cid) == "incomplete"
+    out = spot_check.get_spot_check(cid)
+    assert out["needed"] is False and out["status"] == "nothing_to_sample"
+
+
+def test_record_message_says_blocked_when_no_ok_lead_remains(ready_db):
+    from leadgen.services import people as people_mod
+
+    cid, ids = build(10)
+    got = spot_check.get_spot_check(cid)
+    ok = got["people"][:-1]
+    spot_check.record_spot_check(
+        cid, [{"person_id": p["person_id"], "verdict": "ok"} for p in ok]
+    )
+    last = got["people"][-1]["person_id"]
+    people_mod.set_person_status(cid, [p["person_id"] for p in ok], "review")
+    out = spot_check.record_spot_check(cid, [{"person_id": last, "verdict": "wrong"}])
+    assert "no longer blocked" not in out["message"]
+    assert "No confirmed AI-search lead" in out["message"]

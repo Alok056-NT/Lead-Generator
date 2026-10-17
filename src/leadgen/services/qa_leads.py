@@ -29,6 +29,7 @@ from leadgen.providers.search import SearchResult
 from leadgen.services import confirm as rules
 from leadgen.services import drafting
 from leadgen.services.emails import clean_domain, is_role_address
+from leadgen.services.spot_check import spot_state
 
 # --- codes --------------------------------------------------------------------------------------
 
@@ -531,18 +532,9 @@ def _duplicates(
 
 
 def _ai_spot_state(people: Sequence[Mapping[str, Any]], campaign: Mapping[str, Any]) -> str:
+    """"" / "ok" / "incomplete" / "failed"; the rule lives in `spot_check.spot_state`."""
     ai = [p for p in people if p.get("evidence_origin") == "ai_web_search"]
-    if not ai:
-        return ""
-    if (campaign.get("options") or {}).get("ai_search_needs_recheck") or any(
-        p.get("spot_check") == "wrong" for p in ai
-    ):
-        return "failed"
-    if any(p.get("spot_check") == "pending" for p in ai) or not any(
-        p.get("spot_check") == "ok" for p in ai
-    ):
-        return "incomplete"
-    return "ok"
+    return spot_state(ai, campaign.get("options") or {})
 
 
 def load_leads(campaign: Mapping[str, Any]) -> LeadData:

@@ -97,15 +97,23 @@ def _ai_people(campaign_id: int) -> list[dict[str, Any]]:
         )
 
 
-def _already_checked(campaign_id: int) -> bool:
-    """True when any AI-search person of the campaign (any status) has a recorded answer."""
-    with db.session() as conn:
-        n = conn.execute(
-            "SELECT COUNT(*) FROM people WHERE campaign_id = ? AND evidence_origin = ? "
-            "AND spot_check IN ('ok', 'wrong')",
-            (campaign_id, ORIGIN),
-        ).fetchone()[0]
-    return n > 0
+def spot_state(ai_people: Sequence[Mapping[str, Any]], options: Mapping[str, Any]) -> str:
+    """The campaign's spot-check state, shared with QA (L21) so the two cannot drift apart.
+
+    `ai_people` are the confirmed AI-search people. Returns "" (none), "failed" (the campaign
+    flag `ai_search_needs_recheck` is set), "incomplete" (answers pending, or no confirmed
+    AI-search lead has an `ok` answer) or "ok". A single `wrong` person never fails the campaign:
+    that person is blocked on their own (L21 per person).
+    """
+    if not ai_people:
+        return ""
+    if options.get("ai_search_needs_recheck"):
+        return "failed"
+    if any(p.get("spot_check") == "pending" for p in ai_people) or not any(
+        p.get("spot_check") == "ok" for p in ai_people
+    ):
+        return "incomplete"
+    return "ok"
 
 
 def _shape(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -147,7 +155,7 @@ def get_spot_check(
     recheck = bool(camp["options"].get("ai_search_needs_recheck"))
     if pending:
         chosen = pending
-    elif not (recheck or resample) and _already_checked(campaign_id):
+    elif not resample and spot_state(leads, camp["options"]) == "ok":
         return {
             "ok": True,
             "needed": False,
@@ -158,6 +166,17 @@ def get_spot_check(
         pool = [p for p in leads if not p["spot_check"]] or [
             p for p in leads if p["spot_check"] == "ok"
         ]
+        if not pool:
+            return {
+                "ok": True,
+                "needed": False,
+                "status": "nothing_to_sample",
+                "message": (
+                    "Every confirmed AI-search lead was already answered 'wrong' (and promoted "
+                    "by hand), so there is nobody to sample. Find other leads or review these "
+                    "by hand."
+                ),
+            }
         used_seed = secrets.randbits(32) if seed is None else int(seed)
         ids = sorted(p["id"] for p in pool)
         picked = set(random.Random(used_seed).sample(ids, sample_size(len(ids))))
@@ -266,13 +285,19 @@ def record_spot_check(campaign_id: int, results: list[dict[str, Any]]) -> dict[s
         campaign_mod.update_campaign(campaign_id, ai_search_needs_recheck=False)
         flagged = False
     _save_state(campaign_id, state)
-    if flagged:
+    final = spot_state(_ai_people(campaign_id), {"ai_search_needs_recheck": flagged})
+    if final == "failed":
         message = (
             "Two or more answers were wrong, so every AI-search lead stays blocked (L21). Call "
             "get_spot_check for a second sample and record it; fewer than two wrong clears it."
         )
     elif left:
         message = f"{left} answer(s) still pending."
+    elif final == "incomplete":
+        message = (
+            "No confirmed AI-search lead has an 'ok' answer yet, so they stay blocked (L21). "
+            "Call get_spot_check for a new sample."
+        )
     else:
         message = "Spot check recorded; the AI-search leads are no longer blocked by L21."
     return {

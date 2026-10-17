@@ -425,6 +425,8 @@ def test_l21_state_comes_from_the_campaigns_spot_checks(ready_db):
     assert state() == "ok"
     with db.session() as conn:
         db.update(conn, "people", ids[1], spot_check="wrong")
+    assert state() == "ok"  # one wrong answer never fails the campaign (that person is blocked)
+    camp.update_campaign(cid, ai_search_needs_recheck=True)
     assert state() == "failed"
     api = make_campaign()["id"]
     add_person(api, add_company(api))

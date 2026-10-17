@@ -1376,7 +1376,7 @@ def test_find_emails_without_keys_uses_the_ai_examples_and_labels_the_result_gue
 
 
 @respx.mock
-def test_scrape_site_sources_returns_page_urls_and_reads_the_extra_paths(real_scrape):
+def test_scrape_site_sources_returns_page_urls_and_counts_only_good_pages(real_scrape):
     respx.get(ROBOTS).mock(return_value=httpx.Response(404))
     html = {"content-type": "text/html"}
     respx.get(f"{SITE}/").mock(
@@ -1389,22 +1389,49 @@ def test_scrape_site_sources_returns_page_urls_and_reads_the_extra_paths(real_sc
         )
     )
     respx.get(f"{SITE}/about").mock(return_value=httpx.Response(404))
-    respx.get(f"{SITE}/about-us").mock(return_value=httpx.Response(404))
+    about_us = respx.get(f"{SITE}/about-us").mock(
+        return_value=httpx.Response(200, headers=html, text="nothing here")
+    )
     team = respx.get(f"{SITE}/team").mock(
         return_value=httpx.Response(200, headers=html, text="late@acme.example")
     )
+    people = respx.get(f"{SITE}/people").mock(return_value=httpx.Response(404))
     found = emails.scrape_site_sources("acme.example")
+    # the 404s do not count: 3 good pages so far (/, /contact-us, /about-us) + /team = 4 of 5
     assert found == [
         ("a.tan@acme.example", f"{SITE}/"),
         ("bob.lee@acme.example", f"{SITE}/contact-us"),
+        ("late@acme.example", f"{SITE}/team"),
     ]
-    assert team.call_count == 0  # only the first five pages are asked for
+    assert about_us.call_count == 1 and team.call_count == 1 and people.call_count == 1
     assert emails.scrape_site_emails("acme.example") == [a for a, _u in found]
+    # a smaller max_pages stops once that many pages answered
     emails._site_cache.clear()
+    team.reset()
+    narrow = emails.scrape_site_sources("acme.example", max_pages=2)
+    assert narrow == found[:2] and team.call_count == 0
+
+
+@respx.mock
+def test_scrape_finds_the_team_page_when_contact_and_about_are_404(real_scrape):
+    respx.get(ROBOTS).mock(return_value=httpx.Response(404))
+    html = {"content-type": "text/html"}
+    for path in ("/", "/contact", "/contact-us", "/about", "/about-us"):
+        respx.get(f"{SITE}{path}").mock(return_value=httpx.Response(404))
+    respx.get(f"{SITE}/team").mock(
+        return_value=httpx.Response(200, headers=html, text="Reach aria.tan@acme.example")
+    )
     respx.get(f"{SITE}/people").mock(return_value=httpx.Response(404))
-    wider = emails.scrape_site_sources("acme.example", max_pages=6)
-    assert team.call_count == 1  # /team is the sixth path
-    assert wider == [*found, ("late@acme.example", f"{SITE}/team")]
+    assert emails.scrape_site_emails("acme.example") == ["aria.tan@acme.example"]
+
+
+@respx.mock
+def test_scrape_never_asks_for_more_than_the_request_cap(real_scrape, monkeypatch):
+    monkeypatch.setattr(emails, "SITE_PATHS", tuple(f"/p{i}" for i in range(20)))
+    respx.get(ROBOTS).mock(return_value=httpx.Response(404))
+    pages = respx.get(url__regex=rf"{SITE}/p\d+").mock(return_value=httpx.Response(404))
+    assert emails.scrape_site_sources("acme.example") == []
+    assert pages.call_count == emails.SITE_MAX_REQUESTS
 
 
 def test_addresses_on_domain_reads_text():

@@ -75,7 +75,8 @@ GATEWAY_WORDS = (
     "trendmicro",
 )  # fmt: skip
 SITE_PATHS = ("", "/contact", "/contact-us", "/about", "/about-us", "/team", "/people")
-SITE_MAX_PAGES = 5  # pages asked for per domain (the first five of SITE_PATHS)
+SITE_MAX_PAGES = 5  # pages that must come back as 200 HTML before the scrape stops
+SITE_MAX_REQUESTS = 7  # hard cap on page requests per domain (robots.txt is one more)
 PAGE_SIZE_MAX = 25
 _DEFERRED = "deferred"
 CALL_TIME_LIMIT_S = 25.0  # no new person is started after this many seconds of one call
@@ -446,8 +447,11 @@ def known_pattern(domain: str) -> tuple[str, str] | None:
 
 def scrape_site_sources(domain: str, max_pages: int = SITE_MAX_PAGES) -> list[tuple[str, str]]:
     """`(email, page url)` for addresses on the company's own domain, found on its home page,
-    `/contact`, `/contact-us`, `/about`, `/about-us`, `/team` and `/people` (the first
-    `max_pages` of them are asked for).
+    `/contact`, `/contact-us`, `/about`, `/about-us`, `/team` and `/people`.
+
+    Stops after `max_pages` pages that really answered 200 with HTML; 404s, failures and paths
+    blocked by robots.txt do not count, so a site without `/contact` still reaches `/team`. At
+    most `SITE_MAX_REQUESTS` (7) pages are requested per domain whatever happens, plus robots.txt.
 
     Free, no key. Uses the T05 URL guard (public addresses only, also on redirects), honours
     robots.txt and asks for at most one page per second. Cached per process (by domain); every
@@ -466,13 +470,17 @@ def scrape_site_sources(domain: str, max_pages: int = SITE_MAX_PAGES) -> list[tu
             _site_limiter.acquire()
             robots = offer_web._load_robots(client, base_url)
             agent = offer_web.http.USER_AGENT
-            for path in SITE_PATHS[: max(1, int(max_pages))]:
+            good = 0
+            for path in SITE_PATHS[:SITE_MAX_REQUESTS]:
+                if good >= max(1, int(max_pages)):
+                    break
                 url = base_url + (path or "/")
                 if not robots.can_fetch(agent, url):
                     continue
                 _site_limiter.acquire()
                 page = offer_web._fetch(client, url)
                 if page.status == 200 and page.html:
+                    good += 1
                     seen = {a for a, _u in found}
                     found.extend(
                         (a, url) for a in _extract_addresses(page.html, domain) if a not in seen
