@@ -6,3 +6,4 @@
 *.gif binary
 *.ico binary
 *.webp binary
+tests/fixtures/mail/*.eml -text

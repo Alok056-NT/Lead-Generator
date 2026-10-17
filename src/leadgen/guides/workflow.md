@@ -203,10 +203,24 @@ Ask how the user wants the leads delivered.
 
 ## 11. After sending
 
-If emails were sent from the tool, `sync_mailbox` reads replies, bounces and unsubscribes, and
-`get_analytics` summarises them. Add anyone who asks not to be contacted with
-`add_suppression`. If `sync_mailbox`, `get_analytics` or `add_suppression` answer
-`not_available_yet`, tell the user plainly.
+If emails were sent from the tool:
+
+1. `sync_mailbox` reads the user's mailbox (read-only: it never deletes, moves or marks mail as
+   read) and records replies, bounces, unsubscribes and out-of-office answers for the emails the
+   tool sent. While `done` is false call it again. Tell the user in plain words who replied
+   (`highlights`), which addresses bounced (they are now marked invalid and will not be emailed
+   again) and who asked to be removed (they are on the do-not-contact list). Nothing is answered
+   automatically: replying to people is the user's job.
+2. `get_analytics` shows sent, bounced, delivered, replied and unsubscribed with rates, optionally
+   by `designation`, `sector`, `company`, `country` or `day`. Out-of-office answers are not
+   replies. A row marked `small_sample` has fewer than 20 delivered emails: say "too few to
+   judge" and do not draw conclusions from it. LinkedIn invites and replies are tracked in
+   lemlist, not here.
+3. Add anyone who asks not to be contacted by other means with `add_suppression` (emails,
+   domains or LinkedIn links). Only the user can take someone off the list
+   (`leadgen suppression remove`).
+4. A tool that answers `not_available_yet` (for example `open_dashboard` before the dashboard
+   exists): tell the user plainly and offer what exists.
 
 ## 12. Recovery and honesty
 

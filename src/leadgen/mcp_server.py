@@ -27,16 +27,19 @@ from leadgen.core import config, paths
 from leadgen.providers.base import ProviderError
 from leadgen.services import (
     ai_search,
+    analytics,
     drafting,
     emails,
     export,
     guide,
     lemlist,
+    mailbox,
     offer,
     people,
     review,
     sending,
     spot_check,
+    suppression,
 )
 from leadgen.services import campaign as campaign_svc
 from leadgen.services import companies as companies_svc
@@ -955,39 +958,64 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Sync the mailbox",
-        """Reads the user's mailbox for replies, bounces and unsubscribes. Not available in this
-        version yet.""",
+        """Reads the user's mailbox (read-only: nothing is deleted, moved or marked read) for
+        replies, bounces and unsubscribes to the emails this tool sent, and records them. A
+        bounce marks the address invalid and adds it to the do-not-contact list; an unsubscribe
+        request adds the sender to the list and cancels their queued emails; automatic
+        out-of-office answers are kept apart and do not count as replies. Nothing is answered
+        automatically. Handles up to 60 messages per call: while done is false call it again.
+        Tell the user plainly who replied (highlights) and call get_analytics for the numbers.
+        since_days only matters the first time. Needs the mailbox set up (see
+        check_send_readiness). Free.""",
         WRITE | {"open_world": True},
     )
-    def sync_mailbox() -> dict[str, Any]:
-        return not_available_yet("sync_mailbox", "T15")
+    def sync_mailbox(
+        since_days: Annotated[
+            int, Field(description="First sync only: how many days back to read (1-365).")
+        ] = 30,
+    ) -> dict[str, Any]:
+        return mailbox.sync_mailbox(since_days)
 
     @tool(
         "Get analytics",
-        """Sent, bounced, replied and unsubscribed counts and rates by designation, sector,
-        company or day. Not available in this version yet.""",
+        """Sent, bounced, delivered, replied and unsubscribed counts and rates for the emails
+        sent from this tool, optionally by designation, sector, company, country or day, plus
+        a per-day series and the local lemlist / LinkedIn counts. Out-of-office answers are
+        not replies. A group with fewer than 20 delivered emails is flagged small_sample: say
+        "too few to judge" and do not draw conclusions from it. The numbers are as fresh as
+        the last sync_mailbox: call that first. LinkedIn results live in lemlist. Free.""",
         READ,
     )
     def get_analytics(
-        campaign_id: CampaignId,
+        campaign_id: Annotated[
+            int | None, Field(description="Campaign number; leave out for all campaigns.")
+        ] = None,
         group_by: Annotated[
-            str | None, Field(description="designation, sector, company or day.")
+            Literal["designation", "sector", "company", "country", "day"] | None,
+            Field(description="designation, sector, company, country or day."),
         ] = None,
     ) -> dict[str, Any]:
-        return not_available_yet("get_analytics", "T15")
+        return analytics.get_analytics(campaign_id, group_by)
 
     @tool(
         "Add to do-not-contact list",
-        """Adds emails, domains or LinkedIn links to the do-not-contact list that every check
-        respects. Not available in this version yet.""",
+        """Adds emails, domains or LinkedIn profile links to the do-not-contact list that every
+        check and the sender respect (a listed domain also covers its sub-domains). Use it when
+        the user or a lead says not to contact someone. Values of the wrong kind are reported
+        as invalid. You can only add: taking someone off the list is done by the user with the
+        `leadgen suppression remove` command. Free.""",
         WRITE,
     )
     def add_suppression(
-        values: Annotated[list[str], Field(description="Emails, domains or LinkedIn links.")],
-        kind: Annotated[Literal["email", "domain", "linkedin"], Field(description="Kind.")],
-        reason: Annotated[str, Field(description="Why.")] = "",
+        values: Annotated[
+            list[str], Field(description="Emails, domains or LinkedIn profile links (up to 500).")
+        ],
+        kind: Annotated[
+            Literal["email", "domain", "linkedin"], Field(description="What the values are.")
+        ],
+        reason: Annotated[str, Field(description="Why, in a few words.")] = "",
     ) -> dict[str, Any]:
-        return not_available_yet("add_suppression", "T15")
+        return suppression.add(values, kind, reason)
 
     @tool(
         "Open the dashboard",

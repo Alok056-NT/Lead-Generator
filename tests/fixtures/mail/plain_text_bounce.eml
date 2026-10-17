@@ -1,0 +1,18 @@
+From: Mail Delivery System <MAILER-DAEMON@example.com>
+To: Jordan Reyes <jordan.reyes@example.com>
+Date: Thu, 15 Oct 2026 07:45:10 +0000
+Subject: Undeliverable: Quick question about your warehouse routing
+Message-ID: <bounce-002@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+This is the mail system at host mx.example.com.
+
+I'm sorry to have to inform you that your message could not be delivered
+to one or more recipients. The recipient was:
+
+    <dev.park@example.org>: host mx.example.org said:
+    550 5.1.1 User unknown (in reply to RCPT TO command)
+
+Your original message follows in the next lines.

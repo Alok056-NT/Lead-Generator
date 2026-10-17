@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     send_id    INTEGER NOT NULL REFERENCES sends(id) ON DELETE CASCADE,
-    type       TEXT NOT NULL,                       -- reply / bounce / unsubscribe / open / click
+    type       TEXT NOT NULL,                       -- reply / auto_reply / bounce / unsubscribe / open / click
     at         TEXT NOT NULL,
     detail     TEXT NOT NULL DEFAULT ''
 );

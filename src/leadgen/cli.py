@@ -240,6 +240,43 @@ def cmd_send_worker(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_suppression_list(args: argparse.Namespace) -> int:
+    """Show the do-not-contact list."""
+    from leadgen.services import suppression
+
+    db.init_db()
+    rows = suppression.list(args.kind)
+    for row in rows:
+        reason = f"  ({row['reason']})" if row["reason"] else ""
+        print(f"{row['kind']:<9} {row['value']}{reason}")
+    print(f"{len(rows)} entr{'y' if len(rows) == 1 else 'ies'}.")
+    return 0
+
+
+def cmd_suppression_add(args: argparse.Namespace) -> int:
+    """Add values to the do-not-contact list."""
+    from leadgen.services import suppression
+
+    db.init_db()
+    result = suppression.add(args.values, args.kind, args.reason or "added by hand")
+    print(f"Added {len(result['added'])}, already listed {len(result['already_listed'])}.")
+    for bad in result["invalid"]:
+        print(f"Not a valid {args.kind}: {bad['value']}")
+    return 1 if result["invalid"] else 0
+
+
+def cmd_suppression_remove(args: argparse.Namespace) -> int:
+    """Take one value off the do-not-contact list (only the owner can; the AI cannot)."""
+    from leadgen.services import suppression
+
+    db.init_db()
+    if suppression.remove(args.value, args.kind):
+        print(f"Removed {args.value}. It can be contacted again.")
+        return 0
+    print(f"{args.value} is not on the {args.kind} list.")
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(prog="leadgen", description="Lead Generator")
@@ -278,6 +315,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("send-worker", help="send the queued emails (background worker)").set_defaults(
         func=cmd_send_worker
     )
+    supp = sub.add_parser("suppression", help="the do-not-contact list").add_subparsers(
+        dest="suppression_command", required=True
+    )
+    sp_list = supp.add_parser("list", help="show the list")
+    sp_list.add_argument("--kind", choices=("email", "domain", "linkedin"))
+    sp_list.set_defaults(func=cmd_suppression_list)
+    sp_add = supp.add_parser("add", help="add emails, domains or LinkedIn links")
+    sp_add.add_argument("kind", choices=("email", "domain", "linkedin"))
+    sp_add.add_argument("values", nargs="+")
+    sp_add.add_argument("--reason", default="")
+    sp_add.set_defaults(func=cmd_suppression_add)
+    sp_remove = supp.add_parser("remove", help="take one value off the list")
+    sp_remove.add_argument("kind", choices=("email", "domain", "linkedin"))
+    sp_remove.add_argument("value")
+    sp_remove.set_defaults(func=cmd_suppression_remove)
     keys = sub.add_parser("keys", help="manage API keys").add_subparsers(
         dest="keys_command", required=True
     )

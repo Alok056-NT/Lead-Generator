@@ -1,0 +1,51 @@
+From: Microsoft Outlook <postmaster@example.org>
+To: Jordan Reyes <jordan.reyes@example.com>
+Date: Tue, 13 Oct 2026 14:11:09 +0000
+Subject: Undeliverable: Quick question about your warehouse routing
+Message-ID: <ndr-001@example.org>
+X-MS-Exchange-Message-Is-Ndr: 1
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status; boundary="ndr-boundary-0002"
+
+--ndr-boundary-0002
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Delivery has failed to these recipients or groups:
+
+sam.dolan@example.org
+
+The email address you entered couldn't be found. Please check the
+recipient's email address and try to resend the message, or ask the
+recipient to check for a typo in their address.
+
+Diagnostic information for administrators:
+
+Generating server: mail.example.com
+sam.dolan@example.org
+Remote server returned '550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient not found by SMTP address lookup'
+
+--ndr-boundary-0002
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mail.example.com
+
+Final-Recipient: rfc822; sam.dolan@example.org
+Action: failed
+Status: 5.1.10
+Diagnostic-Code: smtp; 550 5.1.10 RESOLVER.ADR.RecipientNotFound; Recipient not found by SMTP address lookup
+
+--ndr-boundary-0002
+Content-Type: message/rfc822
+
+From: Jordan Reyes <jordan.reyes@example.com>
+To: sam.dolan@example.org
+Date: Tue, 13 Oct 2026 14:11:07 +0000
+Subject: Quick question about your warehouse routing
+Message-ID: <send-003@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+
+Hi Sam, would a short call about warehouse routing be useful this month?
+
+--ndr-boundary-0002--

@@ -18,6 +18,7 @@ import respx
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters
 from qa_world import PROFILE
+from qa_world import make_campaign as make_email_campaign
 from starlette.testclient import TestClient
 
 from leadgen import cli, mcp_server
@@ -50,12 +51,7 @@ EXTRA_TOOLS = {
     "skip_task",
     "acknowledge_compliance",
 }
-STUBS = {
-    "sync_mailbox": {},
-    "get_analytics": {"campaign_id": 1},
-    "add_suppression": {"values": ["x@example.com"], "kind": "email"},
-    "open_dashboard": {},
-}
+STUBS = {"open_dashboard": {}}
 COMPANY = "Northwind Logistics"
 
 
@@ -294,6 +290,65 @@ def test_stubs_say_not_available_yet(mcp):
         reply = mcp(name, **args)
         assert error_code(reply) == "not_available_yet", name
         assert reply["error"]["hint"]
+
+
+def test_add_suppression_tool_adds_and_reports_bad_values(mcp):
+    reply = mcp("add_suppression", values=["Aria.Tan@Example.org", "nope"], kind="email",
+                reason="asked")  # fmt: skip
+    assert reply["ok"] and reply["added"] == ["aria.tan@example.org"]
+    assert reply["invalid"][0]["value"] == "nope" and reply["total_on_list"] == 1
+    again = mcp("add_suppression", values=["aria.tan@example.org"], kind="email")
+    assert again["already_listed"] == ["aria.tan@example.org"]
+    assert error_code(mcp("add_suppression", values=[], kind="email")) == "invalid_value"
+
+
+def test_there_is_no_tool_to_remove_from_the_do_not_contact_list(mcp):
+    names = set(tools_by_name(mcp))
+    assert not any("remove" in n and "suppress" in n for n in names)
+    assert "remove_suppression" not in names
+
+
+def test_get_analytics_tool_works_with_and_without_a_campaign(mcp):
+    empty = mcp("get_analytics")
+    assert empty["ok"] and empty["totals"]["sent"] == 0 and empty["campaign"] is None
+    cid = make_email_campaign(channels=("email",))["id"]
+    one = mcp("get_analytics", campaign_id=cid, group_by="company")
+    assert one["ok"] and one["groups"] == [] and one["group_by"] == "company"
+    assert error_code(mcp("get_analytics", campaign_id=9999)) == "not_found"
+
+
+def test_get_analytics_rejects_an_unknown_group_by(mcp):
+    result = mcp.portal.call(mcp.client.call_tool, "get_analytics", {"group_by": "colour"})
+    assert result.is_error
+
+
+def test_sync_mailbox_tool_says_when_the_mailbox_is_not_set_up(mcp):
+    reply = mcp("sync_mailbox")
+    assert error_code(reply) == "not_configured"
+    assert "leadgen mailbox set" in reply["error"]["hint"]
+    assert error_code(mcp("sync_mailbox", since_days=0)) == "invalid_value"
+
+
+def test_sync_mailbox_tool_runs_the_sync(mcp, monkeypatch):
+    seen = {}
+
+    def fake(since_days):
+        seen["since_days"] = since_days
+        return {"ok": True, "done": True, "scanned": 0}
+
+    monkeypatch.setattr(mcp_server.mailbox, "sync_mailbox", fake)
+    assert mcp("sync_mailbox", since_days=7)["ok"] and seen == {"since_days": 7}
+    assert mcp("sync_mailbox")["ok"] and seen == {"since_days": 30}
+
+
+def test_mailbox_tool_descriptions_state_the_rules(mcp):
+    tools = tools_by_name(mcp)
+    sync = tools["sync_mailbox"].description
+    assert "read-only" in sync and "auto" in sync and "Not available" not in sync
+    assert "small_sample" in tools["get_analytics"].description
+    assert "leadgen suppression remove" in tools["add_suppression"].description
+    for name in ("sync_mailbox", "get_analytics", "add_suppression"):
+        assert "Not available" not in tools[name].description
 
 
 def test_error_reply_mapping(caplog):
