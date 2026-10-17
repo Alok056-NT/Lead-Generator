@@ -35,6 +35,7 @@ from leadgen.services import (
     offer,
     people,
     review,
+    sending,
     spot_check,
 )
 from leadgen.services import campaign as campaign_svc
@@ -898,27 +899,59 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Check send readiness",
-        """Checks whether the campaign can send email from the user's mailbox (mailbox, sender
-        identity, postal address, country rules, caps). Not available in this version yet.""",
-        READ,
+        """Checks whether the campaign can send email from the user's own mailbox. Returns a
+        checklist where every item is ok or missing with how to fix it: mailbox set up and the
+        SMTP/IMAP log-in works, sender name and company, postal address, locale, a recorded
+        compliance acknowledgement for EVERY target country (rules lists each country's summary,
+        policy and required elements), approved emails that pass the send check, do-not-contact
+        list, kill switch, bounce rate and today's cap (with warm-up). Also shows the send queue
+        and whether the background worker is running. Logs in to the mailbox but sends
+        nothing. Free.""",
+        READ | {"open_world": True},
     )
     def check_send_readiness(campaign_id: CampaignId) -> dict[str, Any]:
-        return not_available_yet("check_send_readiness", "T14")
+        return sending.check_send_readiness(campaign_id)
+
+    @tool(
+        "Record compliance acknowledgement",
+        """Records that the user has read a country's cold-email rule and accepts it for this
+        campaign. Show the user that country's rules entry from check_send_readiness first
+        (summary, policy, required elements; it is not legal advice) and call this only after
+        they agree. For a country whose policy is block_without_consent, consent_basis is
+        required: the user's own statement of the basis on which these people may be emailed
+        (guessed or scraped addresses do not qualify). Without it the acknowledgement does not
+        count. Never invent a consent_basis. Free.""",
+        WRITE,
+    )
+    def acknowledge_compliance(
+        campaign_id: CampaignId,
+        country: Annotated[str, Field(description="Two-letter country code, e.g. SG.")],
+        consent_basis: Annotated[
+            str, Field(description="The user's statement of their basis; only if they gave one.")
+        ] = "",
+    ) -> dict[str, Any]:
+        return sending.acknowledge_compliance(campaign_id, country, consent_basis)
 
     @tool(
         "Send emails",
-        """Sends approved emails from the user's own mailbox with a daily cap, spacing and
-        suppression. Always dry_run first, then confirm after a clear yes. Not available in
-        this version yet.""",
+        """Sends the campaign's approved emails from the user's own mailbox. ALWAYS run a dry run
+        first (dry_run=true, the default): it makes no connection and shows each email exactly as
+        it would be sent (subject label, footer with postal address and opt-out line included),
+        what was skipped and why, and the cap. Show the user the emails. Only after a clear yes
+        call with dry_run=false and confirm=true: the emails are QUEUED and a background worker
+        sends them one at a time with a gap of 1-3 minutes, within the daily cap and outside the
+        recipient's quiet hours, so the reply comes at once and most emails go out later. It
+        stops by itself on a high bounce rate or repeated errors. Needs a ready
+        check_send_readiness. Cannot be undone once an email is sent.""",
         OUTWARD,
     )
     def send_emails(
         campaign_id: CampaignId,
-        limit: Annotated[int, Field(description="Most emails to send in this call.")] = 20,
+        limit: Annotated[int, Field(description="Most emails to queue in this call (1-50).")] = 10,
         dry_run: Annotated[bool, Field(description="True = preview only (default).")] = True,
         confirm: Confirm = False,
     ) -> dict[str, Any]:
-        return not_available_yet("send_emails", "T14")
+        return sending.send_emails(campaign_id, limit, dry_run, confirm)
 
     @tool(
         "Sync the mailbox",

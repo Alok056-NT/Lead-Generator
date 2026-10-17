@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 from leadgen import __version__, db
@@ -21,7 +22,6 @@ MIN_PYTHON = (3, 11)
 # Components built by later tasks; doctor lists them so the owner can see what is coming.
 _LATER_COMPONENTS = (
     "dashboard",
-    "email sending",
 )
 
 
@@ -159,6 +159,107 @@ def cmd_tools(_args: argparse.Namespace) -> int:
     return 0
 
 
+_MAILBOX_KEYS = (
+    "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "IMAP_HOST", "IMAP_PORT",
+)  # fmt: skip
+_PRESETS = {
+    "gmail": ("smtp.gmail.com", "587"),
+    "outlook": ("smtp.office365.com", "587"),
+}
+
+
+def cmd_mailbox_set(args: argparse.Namespace) -> int:
+    """Ask for the mailbox settings (password hidden), save them and test the log-in."""
+    from leadgen.send.smtp_imap import SmtpImapMailbox, default_imap_host
+
+    host_default, port_default = _PRESETS.get(args.preset or "", ("", "587"))
+    host = input(f"SMTP server [{host_default}]: ").strip() or host_default
+    port = input(f"SMTP port [{port_default}]: ").strip() or port_default
+    user = input("Mailbox address (user name): ").strip()
+    password = getpass.getpass("Password or app password (hidden): ")
+    imap_default = default_imap_host(host) if host else ""
+    imap_host = input(f"IMAP server [{imap_default}]: ").strip() or imap_default
+    if not (host and user and password):
+        print("Server, address and password are all needed. Nothing was saved.")
+        return 1
+    previous = {name: secrets.stored(name) for name in _MAILBOX_KEYS}
+    for name, value in (
+        ("SMTP_HOST", host), ("SMTP_PORT", port), ("SMTP_USER", user),
+        ("SMTP_PASSWORD", password), ("IMAP_HOST", imap_host),
+    ):  # fmt: skip
+        secrets.set(name, value)
+    ok, message = SmtpImapMailbox.from_config().test()
+    if not ok:
+        for name, old in previous.items():
+            if old:
+                secrets.set(name, old)
+            else:
+                secrets.delete(name)
+        print(f"The mailbox was not saved. {message}")
+        return 1
+    print(f"Saved. {message}")
+    return 0
+
+
+def cmd_mailbox_test(_args: argparse.Namespace) -> int:
+    """Log in to the saved mailbox over SMTP and IMAP (nothing is sent)."""
+    from leadgen.send.smtp_imap import SmtpImapMailbox
+
+    ok, message = SmtpImapMailbox.from_config().test()
+    print(message)
+    return 0 if ok else 1
+
+
+def cmd_send_pause(_args: argparse.Namespace) -> int:
+    """Kill switch: stop sending (the worker stops before its next email)."""
+    from leadgen.services import sending
+
+    db.init_db()
+    sending.pause()
+    print("Sending is paused. Run `leadgen send resume` to switch it on again.")
+    return 0
+
+
+def cmd_send_resume(_args: argparse.Namespace) -> int:
+    """Switch sending on again and forget earlier send errors."""
+    from leadgen.services import sending
+
+    db.init_db()
+    sending.resume()
+    print("Sending is on again. Queued emails go out when the worker runs (`leadgen send-worker`).")
+    return 0
+
+
+def cmd_send_status(_args: argparse.Namespace) -> int:
+    """Show the send queue, the worker and today's cap."""
+    from leadgen.services import sending
+
+    db.init_db()
+    queue = sending.queue_status()
+    cap = sending.cap_status(config.load_settings(), datetime.now(UTC))
+    worker = queue["worker"]
+    last_stop = f" (last stop: {worker['reason']})" if worker["reason"] else ""
+    paused = "yes - " + queue["pause_reason"] if queue["paused"] else "no"
+    print(f"Paused       : {paused}")
+    print(f"Worker       : {'running' if worker['running'] else 'not running'}{last_stop}")
+    print(
+        f"Queue        : {queue['queued']} queued, {queue['sent']} sent, {queue['failed']} "
+        f"failed, {queue['refused']} refused, {queue['skipped']} skipped"
+    )
+    print(f"Today        : {cap['sent_today']} of {cap['cap_today']} allowed")
+    return 0
+
+
+def cmd_send_worker(_args: argparse.Namespace) -> int:
+    """Send the queued emails one by one (runs until the queue is empty or a stop rule applies)."""
+    from leadgen.services import sending
+
+    db.init_db()
+    result = sending.run_worker()
+    print(f"Sent {result['sent']} email(s). Stopped: {result['reason']}.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(prog="leadgen", description="Lead Generator")
@@ -177,6 +278,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mcp.set_defaults(func=cmd_mcp)
     sub.add_parser("tools", help="list the MCP tools").set_defaults(func=cmd_tools)
+    mailbox = sub.add_parser("mailbox", help="set up and test the sending mailbox").add_subparsers(
+        dest="mailbox_command", required=True
+    )
+    mb_set = mailbox.add_parser("set", help="save the SMTP/IMAP settings (password is prompted)")
+    mb_set.add_argument("--preset", choices=sorted(_PRESETS), help="fill in a known provider")
+    mb_set.set_defaults(func=cmd_mailbox_set)
+    mailbox.add_parser("test", help="log in to the saved mailbox").set_defaults(
+        func=cmd_mailbox_test
+    )
+    send = sub.add_parser("send", help="control email sending").add_subparsers(
+        dest="send_command", required=True
+    )
+    send.add_parser("pause", help="stop sending (kill switch)").set_defaults(func=cmd_send_pause)
+    send.add_parser("resume", help="switch sending on again").set_defaults(func=cmd_send_resume)
+    send.add_parser("status", help="show the queue and today's cap").set_defaults(
+        func=cmd_send_status
+    )
+    sub.add_parser("send-worker", help="send the queued emails (background worker)").set_defaults(
+        func=cmd_send_worker
+    )
     keys = sub.add_parser("keys", help="manage API keys").add_subparsers(
         dest="keys_command", required=True
     )

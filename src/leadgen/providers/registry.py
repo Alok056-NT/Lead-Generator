@@ -9,6 +9,7 @@ from leadgen.core import secrets
 from leadgen.providers import brave, ddg, hunter, lemlist, reoon, serper, zerobounce
 from leadgen.providers.base import Provider, ProviderError, ProviderInfo
 from leadgen.providers.search import SearchProvider
+from leadgen.send import smtp_imap
 
 FALLBACK_HINT = (
     "No key or credits? The AI can run these searches with its own web search instead "
@@ -23,8 +24,6 @@ BUDGET_FALLBACK_HINT = (
     "(slower, free), or you can raise the budget."
 )
 
-# SMTP is implemented in T14; its info is listed now so `list_providers` is complete. Its
-# free-tier text is unverified (DECISIONS).
 ALL_PROVIDERS: dict[str, ProviderInfo] = {
     info.key: info
     for info in (
@@ -35,16 +34,7 @@ ALL_PROVIDERS: dict[str, ProviderInfo] = {
         reoon.INFO,
         zerobounce.INFO,
         lemlist.INFO,
-        ProviderInfo(
-            key="smtp",
-            name="Your mailbox (SMTP/IMAP)",
-            purpose="Sends approved emails and reads replies from your own mailbox",
-            env_keys=["SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"],
-            free_tier="Uses your own mailbox (Gmail or Workspace app password, Outlook, any)",
-            signup_url="",
-            paid=False,
-            default=False,
-        ),
+        smtp_imap.INFO,
     )
 }
 
@@ -57,6 +47,7 @@ _FACTORIES: dict[str, Callable[[], Provider]] = {
     "reoon": reoon.ReoonProvider,
     "zerobounce": zerobounce.ZeroBounceProvider,
     "lemlist": lemlist.LemlistProvider,
+    "smtp": smtp_imap.SmtpImapMailbox.from_config,
 }
 
 

@@ -50,6 +50,7 @@ class Sending(_Section):
     quiet_start: str = "20:00"
     quiet_end: str = "08:00"
     max_bounce_rate: float = 0.05
+    paused: bool = False  # kill switch: `leadgen send pause|resume`
 
 
 class Dashboard(_Section):

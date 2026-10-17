@@ -176,15 +176,37 @@ Ask how the user wants the leads delivered.
   `no_email_hint` (leads without an email are skipped), `messages_incomplete_hint` (leads held
   back because a message is missing; `allow_incomplete=true` pushes them anyway, only if the
   user asks), `guess_emails` and `warnings`.
-- **Send emails from the user's mailbox**: `check_send_readiness`, then `send_emails` as a dry
-  run, then with `confirm=true` after a clear yes. If these tools answer `not_available_yet`,
-  say that sending from the tool is not available in this version and offer CSV or lemlist.
+- **Send emails from the user's mailbox** (opt-in; every safety rail is on):
+  1. `check_send_readiness`. Go through every `missing` item with the user and relay its `fix`.
+     The mailbox is set up by the user in a terminal (`leadgen mailbox set`; Gmail needs an app
+     password, which needs 2-Step Verification; Outlook/Microsoft 365 may need an admin to
+     switch on SMTP AUTH). Never ask for the password in chat.
+  2. Compliance: for each target country show the user its entry in `rules` (regime, summary,
+     policy, required elements; say it is not legal advice), and only after they agree call
+     `acknowledge_compliance(campaign_id, country, consent_basis)`. A country with policy
+     `block_without_consent` needs the user's own `consent_basis` (the basis on which they may
+     email people there; guessed or scraped addresses do not qualify); never invent one.
+  3. `send_emails` as a dry run (the default). Show the user the emails exactly as they will be
+     sent (footer, postal address and any subject label such as `<ADV>` are added
+     automatically) and what was skipped and why.
+  4. Only after a clear yes call `send_emails(dry_run=false, confirm=true)`. The emails are
+     queued and a background worker sends them one at a time, 1-3 minutes apart, within the
+     daily cap (it starts at 20 and grows by 5 a day to 50, counted over all campaigns) and
+     outside the recipient's quiet hours (20:00-08:00 local), so most go out over the next
+     hours. Tell the user so. Progress is in the `queue` part of `check_send_readiness`.
+  5. Sending stops by itself when more than 5% of the last 20 bounced or 3 sends fail in a row,
+     and the user can stop it any time with `leadgen send pause` (`leadgen send resume` to
+     continue after looking into it). If `worker_started` is false and nothing is running, the
+     user can start it with `leadgen send-worker`.
+  If the tool says the mailbox or a setting is missing, explain it plainly and offer CSV or
+  lemlist meanwhile.
 
 ## 11. After sending
 
 If emails were sent from the tool, `sync_mailbox` reads replies, bounces and unsubscribes, and
 `get_analytics` summarises them. Add anyone who asks not to be contacted with
-`add_suppression`. If these answer `not_available_yet`, tell the user plainly.
+`add_suppression`. If `sync_mailbox`, `get_analytics` or `add_suppression` answer
+`not_available_yet`, tell the user plainly.
 
 ## 12. Recovery and honesty
 

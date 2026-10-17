@@ -30,7 +30,7 @@ from leadgen.services import companies as companies_svc
 from leadgen.services import guide
 from leadgen.services import lemlist as lemlist_svc
 
-# Tools in PLAN section 10 (1-40), plus the five extra tools the follow-ups asked for.
+# Tools in PLAN section 10 (1-40), plus the extra tools the follow-ups asked for.
 PLAN_TOOLS = {
     "get_status", "get_workflow_guide", "list_providers", "save_api_key", "ingest_offer_source",
     "save_offer_profile", "get_offer", "list_designation_templates", "create_campaign",
@@ -48,10 +48,9 @@ EXTRA_TOOLS = {
     "export_gate",
     "list_lemlist_campaigns",
     "skip_task",
+    "acknowledge_compliance",
 }
 STUBS = {
-    "check_send_readiness": {"campaign_id": 1},
-    "send_emails": {"campaign_id": 1},
     "sync_mailbox": {},
     "get_analytics": {"campaign_id": 1},
     "add_suppression": {"values": ["x@example.com"], "kind": "email"},
