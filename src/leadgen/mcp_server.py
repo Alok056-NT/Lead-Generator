@@ -1121,8 +1121,12 @@ def http_app(
     secret: str,
     host: str = "127.0.0.1",
     allowed_hosts: Sequence[str] = (),
+    json_response: bool = False,
 ) -> Any:
     """The ASGI app for Streamable HTTP at `/mcp/<secret>`; every other path is a 404.
+
+    `json_response=True` answers each call with plain JSON instead of an event stream (needed
+    behind Cloudflare quick tunnels, which do not support server-sent events).
 
     On a loopback `host`, requests must carry a Host header for localhost (DNS-rebinding
     guard) plus any `allowed_hosts` given (for example a tunnel's host name).
@@ -1138,7 +1142,10 @@ def http_app(
             enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins
         )
     return server.streamable_http_app(
-        streamable_http_path=f"/mcp/{secret}", host=host, transport_security=security
+        streamable_http_path=f"/mcp/{secret}",
+        host=host,
+        transport_security=security,
+        json_response=json_response,
     )
 
 
@@ -1155,7 +1162,7 @@ def run_http(
     secret = config.ensure_mcp_secret()
     if port is None:
         port = config.load_settings().mcp_http.port or DEFAULT_HTTP_PORT
-    app = http_app(build_server(remote=True), secret, host, allowed_hosts)
+    app = http_app(build_server(remote=True), secret, host, allowed_hosts, json_response=True)
     shown = "localhost" if host in LOOPBACK else host
     print(f"Lead Generator MCP server: http://{shown}:{port}/mcp/{secret}", file=sys.stderr)
     if host not in LOOPBACK:

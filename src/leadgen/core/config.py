@@ -120,3 +120,11 @@ def ensure_mcp_secret() -> str:
         settings.mcp_http.secret = _random.token_urlsafe(24)
         save_settings(settings)
     return settings.mcp_http.secret
+
+
+def rotate_mcp_secret() -> str:
+    """Replace the HTTP MCP secret with a new random one (old addresses stop working)."""
+    settings = load_settings()
+    settings.mcp_http.secret = _random.token_urlsafe(24)
+    save_settings(settings)
+    return settings.mcp_http.secret

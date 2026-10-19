@@ -148,9 +148,11 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         import threading
         import webbrowser
 
+        from leadgen.services import dashboard_ctl
+
         settings = config.load_settings()
         port = args.port or settings.dashboard.port
-        address = f"http://{settings.dashboard.host}:{port}/"
+        address = dashboard_ctl.url_for(settings.dashboard.host, port)
         threading.Timer(1.5, webbrowser.open, args=(address,)).start()
     return app.serve(args.port)
 
@@ -162,6 +164,69 @@ def cmd_tools(_args: argparse.Namespace) -> int:
     for name, summary in mcp_server.tool_summaries():
         print(f"{name:<28} {summary}")
     return 0
+
+
+def cmd_connect(args: argparse.Namespace) -> int:
+    """Connect an AI app: claude (Desktop), claude-code or chatgpt."""
+    from leadgen.services import connect, tunnel
+
+    if args.target == "chatgpt":
+        return tunnel.connect_chatgpt(port=args.port, rotate_secret=args.rotate_secret)
+    if args.target == "claude-code":
+        result = connect.connect_claude_code()
+        print(result["message"])
+        if not result["ran"]:
+            print(f"  {result['command']}")
+        return 0 if result["ran"] else 1
+    try:
+        result = connect.connect_claude(Path(args.config) if args.config else None)
+    except connect.ConnectError as exc:
+        print(exc)
+        return 1
+    verb = {"added": "Added Lead Generator to", "updated": "Updated Lead Generator in",
+            "unchanged": "Lead Generator is already set up in"}[result["action"]]  # fmt: skip
+    print(f"{verb} Claude Desktop's settings ({result['path']}).")
+    if result["backup"]:
+        print(f"Your old settings were copied to {result['backup']}.")
+    if result["action"] != "unchanged":
+        print(result["restart"])
+    else:
+        print("If you don't see the tools, " + result["restart"][0].lower() + result["restart"][1:])
+    print('Then ask Claude: "What is my Lead Generator status?"')
+    return 0
+
+
+def cmd_disconnect(args: argparse.Namespace) -> int:
+    """Remove Lead Generator from Claude Desktop's settings (nothing else is touched)."""
+    from leadgen.services import connect
+
+    try:
+        result = connect.disconnect_claude(Path(args.config) if args.config else None)
+    except connect.ConnectError as exc:
+        print(exc)
+        return 1
+    if result["action"] == "not_connected":
+        print("Lead Generator was not in Claude Desktop's settings. Nothing changed.")
+        return 0
+    print(f"Removed Lead Generator from Claude Desktop's settings ({result['path']}).")
+    if result["backup"]:
+        print(f"Your old settings were copied to {result['backup']}.")
+    print(result["restart"])
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the public (ChatGPT) connection, or just change the secret with --rotate-secret."""
+    from leadgen.services import tunnel
+
+    if args.public:
+        return tunnel.run_public(port=args.port, rotate_secret=args.rotate_secret)
+    if args.rotate_secret:
+        config.rotate_mcp_secret()
+        print("A new secret was made. Any ChatGPT address you used before no longer works.")
+        return 0
+    print("Nothing to do. Use `leadgen serve --public` to connect ChatGPT.")
+    return 1
 
 
 _PRESETS = {
@@ -304,6 +369,21 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--open", action="store_true", help="open it in the browser")
     dash.set_defaults(func=cmd_dashboard)
     sub.add_parser("tools", help="list the MCP tools").set_defaults(func=cmd_tools)
+    conn = sub.add_parser("connect", help="connect Claude Desktop, Claude Code or ChatGPT")
+    conn.add_argument("target", choices=("claude", "claude-code", "chatgpt"))
+    conn.add_argument("--config", default=None, help="Claude Desktop settings file (claude only)")
+    conn.add_argument("--port", type=int, default=None, help="local port (chatgpt only)")
+    conn.add_argument("--rotate-secret", action="store_true", help="new secret (chatgpt only)")
+    conn.set_defaults(func=cmd_connect)
+    disc = sub.add_parser("disconnect", help="remove Lead Generator from Claude Desktop")
+    disc.add_argument("target", choices=("claude",))
+    disc.add_argument("--config", default=None, help="Claude Desktop settings file")
+    disc.set_defaults(func=cmd_disconnect)
+    serve = sub.add_parser("serve", help="share the server with ChatGPT through a secure tunnel")
+    serve.add_argument("--public", action="store_true", help="start the server and the tunnel")
+    serve.add_argument("--port", type=int, default=None, help="local port (default 8766)")
+    serve.add_argument("--rotate-secret", action="store_true", help="make a new secret address")
+    serve.set_defaults(func=cmd_serve)
     mailbox = sub.add_parser("mailbox", help="set up and test the sending mailbox").add_subparsers(
         dest="mailbox_command", required=True
     )
@@ -357,6 +437,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the CLI and return the exit code."""
     args = build_parser().parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # a Windows console code page must not crash a print
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError):
+            pass
     if args.command != "version":
         try:
             setup_logging()
