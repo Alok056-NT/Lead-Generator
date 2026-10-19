@@ -38,7 +38,7 @@ def test_windows_installer_details():
     assert "LOCALAPPDATA" in body and "LeadGenerator\\venv" in body
     assert "pip uninstall" in body  # an upgrade takes the new files
     assert "Read-Host" in body
-    assert "ExecutionPolicy" not in body.split("\n", 12)[-1] or True
+    assert "Set-ExecutionPolicy" not in body  # the script never changes the machine policy
     assert body.isascii()  # Windows PowerShell 5.1 reads it without a byte order mark
 
 
