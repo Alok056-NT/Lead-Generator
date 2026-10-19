@@ -51,7 +51,6 @@ EXTRA_TOOLS = {
     "skip_task",
     "acknowledge_compliance",
 }
-STUBS = {"open_dashboard": {}}
 COMPANY = "Northwind Logistics"
 
 
@@ -160,7 +159,7 @@ def test_workflow_guide_covers_the_card():
     for needle in (
         "get_status", "confirm=true", "20 rows", "Never fabricate", "next_step",
         "leadgen keys set", "allow_incomplete", "messages_incomplete_hint", "recheck_people",
-        "get_spot_check", "section=\"ai_search\"", "not_available_yet",
+        "get_spot_check", "section=\"ai_search\"",
     ):  # fmt: skip
         assert needle in text, needle
 
@@ -285,11 +284,30 @@ def test_bad_tool_arguments_are_an_sdk_error_not_a_crash(mcp):
     assert result.is_error
 
 
-def test_stubs_say_not_available_yet(mcp):
-    for name, args in STUBS.items():
-        reply = mcp(name, **args)
-        assert error_code(reply) == "not_available_yet", name
-        assert reply["error"]["hint"]
+def test_open_dashboard_returns_the_address(mcp, monkeypatch):
+    from leadgen.services import dashboard_ctl
+
+    monkeypatch.setattr(
+        dashboard_ctl,
+        "ensure_running",
+        lambda: {"ok": True, "url": "http://127.0.0.1:8765/", "started": True},
+    )
+    assert mcp("open_dashboard") == {"ok": True, "url": "http://127.0.0.1:8765/", "started": True}
+
+
+def test_open_dashboard_error_has_a_hint(mcp, monkeypatch):
+    from leadgen.services import dashboard_ctl
+
+    monkeypatch.setattr(
+        dashboard_ctl,
+        "ensure_running",
+        lambda: {
+            "ok": False,
+            "error": {"code": "port_busy", "message": "Busy.", "hint": "Change it."},
+        },
+    )
+    reply = mcp("open_dashboard")
+    assert error_code(reply) == "port_busy" and reply["error"]["hint"]
 
 
 def test_add_suppression_tool_adds_and_reports_bad_values(mcp):

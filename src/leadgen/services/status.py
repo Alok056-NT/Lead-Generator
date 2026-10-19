@@ -64,6 +64,46 @@ def set_key(provider_key: str, key: str) -> dict[str, Any]:
     return registry.save_api_key(provider_key, key)
 
 
+def _unknown_provider(provider_key: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": {
+            "code": "unknown_provider",
+            "message": f"There is no provider called '{provider_key}'.",
+            "hint": "Use a provider key from list_providers.",
+        },
+    }
+
+
+def delete_key(provider_key: str) -> dict[str, Any]:
+    """Remove a provider's saved key from `secrets.env` (a key set in the environment stays).
+
+    Replies in the tool error shape for an unknown provider. Never returns a key.
+    """
+    info = registry.ALL_PROVIDERS.get(provider_key)
+    if info is None or len(info.env_keys) != 1:
+        return _unknown_provider(provider_key)
+    removed = secrets.delete(info.env_keys[0])
+    still = bool(secrets.get(info.env_keys[0]))
+    message = "The key was removed." if removed else "No key was saved for this provider."
+    if still:
+        message += " A key is still set in the computer's environment variables."
+    return {
+        "ok": True,
+        "provider": provider_key,
+        "removed": removed,
+        "configured": still,
+        "message": message,
+    }
+
+
+def probe_key(provider_key: str) -> dict[str, Any]:
+    """`check_key` for adapters; an unknown provider gets the tool error shape (up to 1 credit)."""
+    if provider_key not in registry.ALL_PROVIDERS:
+        return _unknown_provider(provider_key)
+    return registry.check_provider(provider_key)
+
+
 def check_key(provider_key: str) -> dict[str, Any]:
     """Test a provider's saved key (see `registry.check_provider`)."""
     return registry.check_provider(provider_key)

@@ -19,12 +19,6 @@ from leadgen.services import status
 
 MIN_PYTHON = (3, 11)
 
-# Components built by later tasks; doctor lists them so the owner can see what is coming.
-_LATER_COMPONENTS = (
-    "dashboard",
-)
-
-
 def _workspace_writable(root: Path) -> bool:
     try:
         with tempfile.TemporaryFile(dir=root):
@@ -94,10 +88,6 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         healthy = False
         print(f"Database      : PROBLEM - {type(exc).__name__}")
 
-    print("Later components:")
-    for name in _LATER_COMPONENTS:
-        print(f"  {name:<28} not installed yet")
-
     print("\nAll good." if healthy else "\nProblems found. See the lines marked above.")
     return 0 if healthy else 1
 
@@ -148,6 +138,21 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     else:
         mcp_server.run_stdio()
     return 0
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    """Run the local dashboard in this window (Ctrl+C stops it)."""
+    from leadgen.dashboard import app
+
+    if args.open:
+        import threading
+        import webbrowser
+
+        settings = config.load_settings()
+        port = args.port or settings.dashboard.port
+        address = f"http://{settings.dashboard.host}:{port}/"
+        threading.Timer(1.5, webbrowser.open, args=(address,)).start()
+    return app.serve(args.port)
 
 
 def cmd_tools(_args: argparse.Namespace) -> int:
@@ -294,6 +299,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="extra Host header to accept, e.g. a tunnel name (repeatable)",
     )
     mcp.set_defaults(func=cmd_mcp)
+    dash = sub.add_parser("dashboard", help="run the local dashboard page (127.0.0.1 only)")
+    dash.add_argument("--port", type=int, default=None, help="port (default from settings, 8765)")
+    dash.add_argument("--open", action="store_true", help="open it in the browser")
+    dash.set_defaults(func=cmd_dashboard)
     sub.add_parser("tools", help="list the MCP tools").set_defaults(func=cmd_tools)
     mailbox = sub.add_parser("mailbox", help="set up and test the sending mailbox").add_subparsers(
         dest="mailbox_command", required=True

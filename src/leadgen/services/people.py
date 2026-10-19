@@ -264,6 +264,9 @@ def _person_shape(row: Mapping[str, Any], company_name: str = "") -> dict[str, A
     }
 
 
+person_shape = _person_shape  # public name for the dashboard views (services/browse.py)
+
+
 def _brief(cand: rules.Candidate, company_name: str) -> dict[str, Any]:
     return {
         "name": cand.raw_name,

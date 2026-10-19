@@ -28,6 +28,7 @@ from leadgen.providers.base import ProviderError
 from leadgen.services import (
     ai_search,
     analytics,
+    dashboard_ctl,
     drafting,
     emails,
     export,
@@ -70,16 +71,6 @@ INSTRUCTIONS = (
 
 def _error(code: str, message: str, hint: str = "") -> dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message, "hint": hint}}
-
-
-def not_available_yet(tool: str, task: str) -> dict[str, Any]:
-    """The reply of a tool whose task is not built yet (T14, T15, T16)."""
-    return _error(
-        "not_available_yet",
-        f"{tool} is not available in this version yet (it arrives with task {task}).",
-        "Tell the user plainly that this step is not available yet, and offer what exists: "
-        "export_campaign (CSV) or push_to_lemlist.",
-    )
 
 
 def _error_reply(tool: str, exc: Exception) -> dict[str, Any]:
@@ -898,7 +889,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             allow_incomplete=allow_incomplete,
         )  # fmt: skip
 
-    # ---- 31-36: sending, mailbox, analytics, suppression, dashboard (later tasks) ---------------
+    # ---- 31-36: sending, mailbox, analytics, suppression, dashboard ----------------
 
     @tool(
         "Check send readiness",
@@ -1019,12 +1010,14 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Open the dashboard",
-        """Starts the local dashboard page (leads, messages, keys, analytics) and returns its
-        address. Not available in this version yet.""",
-        WRITE,
+        """Starts the local dashboard page (leads, messages, API keys, export, analytics) if it is
+        not running and returns its address (http://127.0.0.1:8765/ by default). Give the user
+        the address; the page only opens on their own computer. Recommend it for browsing more
+        than 20 rows and for pasting API keys safely. Changes nothing in the campaign.""",
+        {"idempotent": True},
     )
     def open_dashboard() -> dict[str, Any]:
-        return not_available_yet("open_dashboard", "T16")
+        return dashboard_ctl.ensure_running()
 
     # ---- 37-40: AI search mode and spot check -------------------------------------------------
 

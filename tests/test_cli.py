@@ -15,7 +15,7 @@ def test_doctor_healthy_in_fresh_workspace(capsys, workspace):
     assert __version__ in out
     assert str(workspace) in out
     assert "Settings      : valid" in out
-    assert "not installed yet" in out
+    assert "not installed yet" not in out
 
 
 def test_doctor_masks_keys(capsys):
