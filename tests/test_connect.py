@@ -191,10 +191,33 @@ def test_server_entry_uses_the_venv_program_and_workspace(monkeypatch, tmp_path,
     python.write_text("", encoding="utf-8")
     monkeypatch.setattr(sys, "executable", str(python))
     entry = connect.server_entry()
-    assert Path(entry["command"]) == exe.resolve() and entry["args"] == ["mcp"]
+    assert Path(entry["command"]) == exe and entry["args"] == ["mcp"]
     assert entry["env"] == {"LEADGEN_HOME": str(workspace)}  # the conftest sets it
     monkeypatch.delenv("LEADGEN_HOME")
     assert "env" not in connect.server_entry()
+
+
+def test_launcher_stays_inside_the_venv_when_python_is_a_symlink(monkeypatch, tmp_path):
+    """On macOS/Linux `venv/bin/python` is a symlink to the system Python: don't follow it."""
+    scripts = tmp_path / "venv" / "bin"
+    scripts.mkdir(parents=True)
+    exe = scripts / ("leadgen.exe" if sys.platform == "win32" else "leadgen")
+    exe.write_text("", encoding="utf-8")
+    python = scripts / "python"
+    python.write_text("", encoding="utf-8")
+    system = tmp_path / "usr" / "bin" / "python3"
+    real_resolve = Path.resolve
+
+    def fake_resolve(self, *args, **kwargs):  # what a symlinked venv python would do
+        return system if self == python else real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    monkeypatch.setattr(sys, "executable", str(python))
+    command, args = connect.leadgen_launcher()
+    assert Path(command) == exe and args == ["mcp"]
+    exe.unlink()  # no leadgen program: the fallback is the venv python, not the system one
+    command, args = connect.leadgen_launcher()
+    assert Path(command) == python and args == ["-m", "leadgen", "mcp"]
 
 
 def test_server_entry_falls_back_to_python_module(monkeypatch, tmp_path):
@@ -202,7 +225,7 @@ def test_server_entry_falls_back_to_python_module(monkeypatch, tmp_path):
     python.write_text("", encoding="utf-8")
     monkeypatch.setattr(sys, "executable", str(python))
     command, args = connect.leadgen_launcher()
-    assert Path(command) == python.resolve() and args == ["-m", "leadgen", "mcp"]
+    assert Path(command) == python and args == ["-m", "leadgen", "mcp"]
 
 
 # --- Claude Code ------------------------------------------------------------------------------

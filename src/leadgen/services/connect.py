@@ -55,13 +55,15 @@ def leadgen_launcher() -> tuple[str, list[str]]:
     """The command and arguments that start the MCP server from this installation.
 
     Uses the `leadgen` program next to the running Python (inside the venv) when it exists,
-    else `python -m leadgen`.
+    else `python -m leadgen`. The path is made absolute but never resolved: on macOS/Linux a venv's
+    `bin/python` is a symlink, and following it would land outside the venv.
     """
-    scripts = Path(sys.executable).resolve().parent
+    python = Path(sys.executable).absolute()
+    scripts = python.parent
     exe = scripts / ("leadgen.exe" if os.name == "nt" else "leadgen")
     if exe.exists():
         return str(exe), ["mcp"]
-    return str(Path(sys.executable).resolve()), ["-m", "leadgen", "mcp"]
+    return str(python), ["-m", "leadgen", "mcp"]
 
 
 def server_entry() -> dict[str, Any]:
