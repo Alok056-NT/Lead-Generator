@@ -54,7 +54,7 @@ Lead Generator always tells you the cost before it spends credits, and waits for
 - **What it is for:** A free web search with no key. It is the last resort.
 - **Free allowance:** Free, but unreliable. It often blocks automated use, so searches can fail.
 - **Is it needed?** No. It is off unless you turn it on.
-- **How to turn it on:** Open `settings.yaml` in your LeadGenerator folder (`leadgen paths` shows where). Change `allow_ddg_fallback: false` to `allow_ddg_fallback: true`.
+- **How to turn it on:** Open `settings.yaml` in your LeadGenerator folder (`leadgen paths` shows where). Create the file if it is not there. Add the line `allow_ddg_fallback: true`. (If the line is already there and says `false`, change it to `true`.)
 - **Where to paste the key:** Nothing to paste.
 - **When it stops:** Searches fail or are refused for a while. Use [free mode](FREE_MODE.md) instead.
 

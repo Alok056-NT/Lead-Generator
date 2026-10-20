@@ -10,7 +10,7 @@ First version, built task by task (see `docs/STATUS.md`). Not yet released as 1.
 ### Added
 - Install scripts for Windows (`install.ps1`) and Mac/Linux (`install.sh`), and `leadgen doctor`.
 - Connectors: Claude Desktop and Claude Code (`leadgen connect claude`, `leadgen connect claude-code`) and ChatGPT through a temporary secure link (`leadgen connect chatgpt`).
-- An MCP server with 45 tools and a written workflow guide for the AI.
+- An MCP server with 46 tools and a written workflow guide for the AI.
 - Learning an offer from a web page, a pasted text, a Word, PDF or text file, or a public Google Doc.
 - Campaigns with job-role groups, minimum seniority, exclusions and competitors.
 - Company lists with name and website checks.

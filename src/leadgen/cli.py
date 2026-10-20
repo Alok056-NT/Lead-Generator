@@ -161,8 +161,19 @@ def cmd_compliance(args: argparse.Namespace) -> int:
     """Print the email rules per country (a short list, or the full Markdown page)."""
     from leadgen.core import compliance, countries
 
+    if args.output and not args.markdown:
+        print("--output needs --markdown", file=sys.stderr)
+        return 2
     if args.markdown:
-        sys.stdout.write(compliance.render_markdown())
+        text = compliance.render_markdown()
+        if args.output:
+            # UTF-8 with LF line endings on every platform, so the file is identical everywhere.
+            target = Path(args.output)
+            with target.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+            print(f"Wrote {target}")
+        else:
+            sys.stdout.write(text)
         return 0
     for country in countries.all_countries():
         rule = compliance.rule_for(country.iso2)
@@ -383,6 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
     dash.set_defaults(func=cmd_dashboard)
     comp = sub.add_parser("compliance", help="show the email rules per country")
     comp.add_argument("--markdown", action="store_true", help="print the full page as Markdown")
+    comp.add_argument("--output", default=None, help="with --markdown: write the page to this file")
     comp.set_defaults(func=cmd_compliance)
     sub.add_parser("tools", help="list the MCP tools").set_defaults(func=cmd_tools)
     conn = sub.add_parser("connect", help="connect Claude Desktop, Claude Code or ChatGPT")

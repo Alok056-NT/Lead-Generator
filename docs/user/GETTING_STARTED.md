@@ -103,7 +103,7 @@ Only approved companies are searched. This list is where you control the cost of
 
 > **Claude:** To find people I need a search key. Serper gives 2,500 free searches and needs no card. Sign up at serper.dev, copy your key, then in a terminal run `leadgen dashboard --open`, go to the **API keys** page and paste it there. Please don't paste it into this chat.
 
-Do exactly that. The dashboard opens in your browser and only ever shows the last 4 characters of a key. Click **Test**. It should say the key works.
+Do exactly that. The dashboard opens in your browser and only ever shows the last 4 characters of a key. Click **Save and test**. It should say the key works.
 
 (No key? Say **"use free mode"** and skip ahead. See [Free mode](FREE_MODE.md).)
 

@@ -36,7 +36,13 @@ You need Python 3.11 or newer. The installer prints the exact command to install
 Then run the install command again.
 
 **The Windows one-line command (`irm ... | iex`) says it cannot find the file.**
-That command downloads the installer from the project's page on GitHub. It only works once the project is published there. If you have the project files on disk, run `install.ps1` from that folder instead.
+That command downloads the installer from GitHub (`raw.githubusercontent.com`). Check these causes:
+
+- No internet connection.
+- A proxy, antivirus or company network is blocking `raw.githubusercontent.com`.
+- The line was not copied whole. Copy all of it, in one go.
+
+If you have the project files on disk, run `install.ps1` from that folder instead.
 
 **You want a particular version, or a different folder.**
 Set these before you run the installer. In PowerShell:
@@ -77,7 +83,7 @@ ChatGPT reaches your computer through a temporary secure link. Check these in or
 2. **Copy the whole address,** including the long secret at the end, and use the address printed in *this* run. It changes every time you start.
 3. In ChatGPT, open your Lead Generator connection and press **Refresh**.
 4. If you see no "Add custom MCP server" button, your ChatGPT plan or workspace does not allow it (yet). The rules and menu names change, so check on screen. On a Business, Enterprise or Education workspace an admin must allow custom connectors. Or use Claude.
-5. Some ChatGPT plans do not allow actions that change data. If ChatGPT refuses to save a campaign, that is the plan, not a fault in Lead Generator.
+5. Some ChatGPT plans do not allow actions that change data. If ChatGPT refuses to save a campaign, that is probably the plan, not a fault in Lead Generator.
 6. If you think the address leaked, close the window and run `leadgen serve --rotate-secret`. The old address stops working.
 
 If ChatGPT seems lost, say: "Call get_workflow_guide first and follow it."
@@ -102,7 +108,7 @@ When a service runs out, the AI tells you ("quota exhausted"). Nothing is lost: 
 - **Serper** (search): buy more credits, add a Brave key, or use [free mode](FREE_MODE.md).
 - **Hunter** (email patterns, monthly credits): wait for next month. Lead Generator uses the company's website and a standard pattern meanwhile, and marks unchecked addresses "guess".
 - **Reoon** (email checks, 20 a day): continue tomorrow, or add a ZeroBounce key.
-- **Budget reached:** each campaign has a budget for searches and checks so one run cannot use everything. The AI asks before going past it. Say yes if you want to continue, or change the budget on the **Settings** page of the dashboard.
+- **Budget reached:** each campaign has a budget for searches and checks so one run cannot use everything. The AI asks before going past it. Answer yes when it asks you to go over the budget, or ask Claude to raise this campaign's budget (the AI does this with `update_campaign`).
 
 Details for each service: [Providers](PROVIDERS.md).
 

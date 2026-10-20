@@ -126,3 +126,16 @@ def test_cli_compliance(capsys):
     assert "DE" in short and "block_without_consent" in short
     assert main(["compliance", "--markdown"]) == 0
     assert capsys.readouterr().out == compliance.render_markdown()
+
+
+def test_cli_compliance_output_file_is_exact_utf8(tmp_path, capsys):
+    from leadgen.cli import main
+
+    target = tmp_path / "COMPLIANCE.md"
+    assert main(["compliance", "--markdown", "--output", str(target)]) == 0
+    data = target.read_bytes()
+    assert data == compliance.render_markdown().encode("utf-8")
+    assert b"\r\n" not in data
+    assert "广告".encode() in data
+    assert main(["compliance", "--output", str(target)]) == 2
+    assert "--markdown" in capsys.readouterr().err

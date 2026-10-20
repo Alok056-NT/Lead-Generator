@@ -45,7 +45,7 @@ Do this in ChatGPT on the web, on a computer. The menu names below are from Open
 2. Choose **Add custom MCP server**.
 3. Give it a name such as "Lead Generator" and a short description.
 4. Paste your address as the server URL.
-5. For authentication choose **No authentication**. (The secret in the address is the protection.)
+5. For authentication choose **No authentication**. (The secret in the address is the protection.) If "No authentication" is not offered, check what the screen offers, or use Claude instead.
 6. Read the warning, then tick **I understand and want to continue**.
 7. Click **Create as a plugin**. ChatGPT lists the tools it found. There are about 45.
 8. Start a new chat, type **@** and pick **Lead Generator**.
@@ -66,7 +66,7 @@ ChatGPT should call the `get_status` tool. Approve the tool call if it asks. The
 ## Things to know
 
 - ChatGPT may ignore the built-in "prompt" that tells the AI how to work. That is fine: the AI can fetch the same instructions with the `get_workflow_guide` tool. If it seems lost, say: "Call get_workflow_guide first and follow it."
-- Some ChatGPT plans limit tools that change data ("write" actions). If ChatGPT refuses to save a campaign or key, that is the plan limit, not a Lead Generator fault. Claude has no such limit.
+- Some ChatGPT plans limit tools that change data ("write" actions). If ChatGPT refuses to save a campaign or key, that is probably the plan limit, not a Lead Generator fault. Claude has no such limit.
 - Paste API keys on the local dashboard page (`leadgen dashboard --open`), not into the chat. A chat is stored by ChatGPT.
 - The link needs the window open. If you restart your computer or close the window, run the command again. The address changes each time, so update the server URL in ChatGPT (open the connection on `chatgpt.com/plugins`, edit the URL, and press Refresh).
 - Cloudflare's free "quick tunnels" are meant for testing: no uptime promise and a limit of 200 requests in flight at once. That is plenty for one person chatting.

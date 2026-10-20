@@ -81,9 +81,9 @@ Ask Claude: "Check if my campaign is ready to send." Claude goes through this li
 |---|---|
 | Email channel | The campaign uses email. |
 | Mailbox | Your mailbox is saved and the login test passes. |
-| Sender | Your name, company and role are in `settings.yaml`. They go in the email footer. |
-| Postal address | A real postal address is in `settings.yaml` (`postal_address`). Several countries require one in every commercial email. |
-| Language | A language setting (`locale`) is set. |
+| Sender | Your name, company and role are set on the dashboard Settings page (or in `settings.yaml`). They go in the email footer. |
+| Postal address | A real postal address is set on the dashboard Settings page (or as `postal_address` in `settings.yaml`). Several countries require one in every commercial email. |
+| Language | A language setting is set on the dashboard Settings page (or as `locale` in `settings.yaml`). |
 | Sending settings | The `sending:` section of `settings.yaml` is valid. |
 | Country rules | You have read and accepted the rule for each target country. See [Compliance](COMPLIANCE.md). For countries that need consent first, you must also write down your consent basis. |
 | Messages | There are approved emails that passed every check. |
@@ -111,7 +111,9 @@ Run `leadgen mailbox test` any time to check the login again.
 
 ### Sender details and address
 
-Open `settings.yaml` in your LeadGenerator folder (run `leadgen paths`). Fill in:
+The easiest place is the dashboard **Settings** page (run `leadgen dashboard --open`). Fill in **Sender**, **Postal address** and **Language** there.
+
+The other way is to edit `settings.yaml` in your LeadGenerator folder (run `leadgen paths`). Create the file if it is not there, then add these lines:
 
 ```
 sender:
