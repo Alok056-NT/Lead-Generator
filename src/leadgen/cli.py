@@ -157,6 +157,19 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return app.serve(args.port)
 
 
+def cmd_compliance(args: argparse.Namespace) -> int:
+    """Print the email rules per country (a short list, or the full Markdown page)."""
+    from leadgen.core import compliance, countries
+
+    if args.markdown:
+        sys.stdout.write(compliance.render_markdown())
+        return 0
+    for country in countries.all_countries():
+        rule = compliance.rule_for(country.iso2)
+        print(f"{country.iso2}  {country.name:<22} {rule.default_policy}")
+    return 0
+
+
 def cmd_tools(_args: argparse.Namespace) -> int:
     """Print the MCP tools (name and first sentence of the description)."""
     from leadgen import mcp_server
@@ -368,6 +381,9 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--port", type=int, default=None, help="port (default from settings, 8765)")
     dash.add_argument("--open", action="store_true", help="open it in the browser")
     dash.set_defaults(func=cmd_dashboard)
+    comp = sub.add_parser("compliance", help="show the email rules per country")
+    comp.add_argument("--markdown", action="store_true", help="print the full page as Markdown")
+    comp.set_defaults(func=cmd_compliance)
     sub.add_parser("tools", help="list the MCP tools").set_defaults(func=cmd_tools)
     conn = sub.add_parser("connect", help="connect Claude Desktop, Claude Code or ChatGPT")
     conn.add_argument("target", choices=("claude", "claude-code", "chatgpt"))

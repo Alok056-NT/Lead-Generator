@@ -82,4 +82,4 @@ ChatGPT should call the `get_status` tool. Approve the tool call if it asks. The
 | ChatGPT says it cannot connect | Check the window is still open, the address was copied completely (including the secret), and that you used the address printed in this run. Press Refresh on the connection. |
 | No "Add custom MCP server" button | Your plan or workspace does not allow it yet. Ask your admin, or use Claude. |
 
-More help: [TROUBLESHOOTING.md](TROUBLESHOOTING.md) (coming with the user documentation).
+More help: [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

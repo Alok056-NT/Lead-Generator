@@ -107,3 +107,22 @@ def test_it_and_dk_summaries_cover_business_recipients():
         assert "should be confirmed" not in summary and "did not settle" not in summary
         assert summary.endswith(DISCLAIMER)
     assert any("danskerhverv.dk" in src for src in RULES["DK"].sources)
+
+
+def test_render_markdown_covers_every_country_and_disclaimer():
+    text = compliance.render_markdown()
+    assert DISCLAIMER in text
+    for iso in COUNTRIES:
+        assert f"({iso})" in text
+    assert text.index("Do not send without documented consent") < text.index("Allowed with care")
+    assert text.endswith("\n") and "\r" not in text
+
+
+def test_cli_compliance(capsys):
+    from leadgen.cli import main
+
+    assert main(["compliance"]) == 0
+    short = capsys.readouterr().out
+    assert "DE" in short and "block_without_consent" in short
+    assert main(["compliance", "--markdown"]) == 0
+    assert capsys.readouterr().out == compliance.render_markdown()
