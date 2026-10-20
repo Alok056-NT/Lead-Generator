@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from leadgen import db
-from leadgen.providers.search import SearchResult, is_cached
+from leadgen.providers.search import SearchResult, cached_results
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import companies as companies_mod
 from leadgen.services import confirm as rules
@@ -38,7 +38,7 @@ _PARAPHRASE_RE = re.compile(
     r"(?<![A-Za-z])(?:" + "|".join(re.escape(m) for m in PARAPHRASE_MARKERS) + r")(?![A-Za-z])",
     re.IGNORECASE,
 )
-_SEARCH_PROVIDERS = ("serper", "brave", "ddg")  # whose cached API searches count as "done"
+_SEARCH_PROVIDERS = ("serper", "brave", "ddg")  # whose cached API searches can be reused
 _NOT_VERBATIM_HINT = (
     "Copy titles, URLs and snippets exactly from your search tool; don't build URLs."
 )
@@ -199,18 +199,63 @@ def _insert_tasks(campaign_id: int, kind: str, items: Sequence[tuple[int | None,
     return len(items)
 
 
+def _cached_for(query: str, gl: str) -> list[SearchResult] | None:
+    for key in _SEARCH_PROVIDERS:
+        hit = cached_results(key, query, gl, people.SEARCH_NUM)
+        if hit is not None:
+            return hit
+    return None
+
+
+def fill_from_cache(campaign_id: int) -> int:
+    """Load cached API searches into this campaign and return how many pairs were filled.
+
+    The search cache is shared by all campaigns, so a company x group pair that an earlier
+    campaign searched through an API already has its results on disk. For every pair of this
+    campaign that has neither people nor a task yet, the cached results go through
+    `people.process_results` (free, `evidence_origin = "api"`) and a `submitted` task row
+    records that the pair is done, so running it again does nothing.
+    """
+    camp = _campaign(campaign_id)
+    have = _existing_keys(campaign_id, "people")
+    filled = 0
+    for row in people.approved_company_rows(campaign_id):
+        done_groups = _groups_with_people(campaign_id, row["id"])
+        company = people.company_view(row)
+        for label, query, gl in people.search_plan(camp, row):
+            if label in done_groups or (row["id"], query) in have:
+                continue
+            hit = _cached_for(query, gl)
+            if hit is None:
+                continue
+            people.process_results(camp, company, label, query, hit, origin="api")
+            have.add((row["id"], query))
+            with db.session() as conn:
+                task_id = db.insert(
+                    conn, "search_tasks", campaign_id=campaign_id, kind="people",
+                    company_id=row["id"], group_label=label, query=query, status="submitted",
+                    submitted_at=db.now(), result_count=len(hit),
+                )  # fmt: skip
+            _save_note(task_id, tool_name="api_cache")
+            filled += 1
+    return filled
+
+
 def ensure_tasks(campaign_id: int, kind: str = "people") -> int:
     """Create the search tasks for work not done yet and return how many were created.
 
     people: one per approved company x designation group, with the same query string as the API
-    path (`people.search_plan`); a pair is skipped when it was already searched through an API
-    (its search is cached, or people of that company and group exist). email: for each approved
-    company with a domain, confirmed people and no saved email pattern, `"@<domain>"` and
-    `site:<domain> (contact OR email)`. company: the `companies.research_queries` strings.
+    path (`people.search_plan`); a pair is skipped when this campaign already has people of that
+    company and group or a task for it. Pairs whose search is in the shared cache are first
+    filled from it (`fill_from_cache`), never skipped without their results. email: for each
+    approved company with a domain, confirmed people and no saved email pattern, `"@<domain>"`
+    and `site:<domain> (contact OR email)`. company: the `companies.research_queries` strings.
     Running it again creates nothing new.
     """
     _check_kind(kind)
     camp = _campaign(campaign_id)
+    if kind == "people":
+        fill_from_cache(campaign_id)
     have = _existing_keys(campaign_id, kind)
     new: list[tuple[int | None, str, str]] = []
 
@@ -228,11 +273,8 @@ def ensure_tasks(campaign_id: int, kind: str = "people") -> int:
     if kind == "people":
         for row in rows:
             done_groups = _groups_with_people(campaign_id, row["id"])
-            for label, query, gl in people.search_plan(camp, row):
-                searched = label in done_groups or any(
-                    is_cached(key, query, gl, people.SEARCH_NUM) for key in _SEARCH_PROVIDERS
-                )
-                if not searched:
+            for label, query, _gl in people.search_plan(camp, row):
+                if label not in done_groups:
                     add(row["id"], label, query)
     else:
         with db.session() as conn:
@@ -289,6 +331,7 @@ def get_search_tasks(
     camp = _campaign(campaign_id)
     size = min(max(1, int(batch_size)), BATCH_MAX)
     after = _cursor(cursor)
+    filled = fill_from_cache(campaign_id) if kind == "people" and after == 0 else 0
     created = ensure_tasks(campaign_id, kind) if after == 0 else 0
     with db.session() as conn:
         rows = db.query(
@@ -321,10 +364,16 @@ def get_search_tasks(
         "remaining": remaining,
         "open_total": _open_count(campaign_id, kind),
         "tasks_created": created,
+        "filled_from_cache": filled,
         "next_cursor": str(last) if remaining else None,
         "result_fields": RESULT_FIELDS,
         "instructions": INSTRUCTIONS[kind],
     }
+    if filled:
+        reply["cache_note"] = (
+            f"{filled} company x group searches were already in the search cache from an "
+            "earlier run; their results were loaded for free (evidence origin api)."
+        )
     if not tasks:
         reply["message"] = "No open search tasks."
     return reply

@@ -16,6 +16,7 @@ Two flows run on the same universe:
 
 from __future__ import annotations
 
+import functools
 import json
 import random
 from datetime import UTC, timedelta
@@ -48,7 +49,7 @@ from leadgen import db, mcp_server
 from leadgen.core import paths
 from leadgen.core.config import Settings, save_settings
 from leadgen.send.smtp_imap import SmtpImapMailbox
-from leadgen.services import sending
+from leadgen.services import people, sending
 
 # The three exports, spelled out here so that a changed column name fails this test.
 LEMLIST_COLUMNS = [
@@ -160,7 +161,14 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
     assert estimate["needs_confirmation"] is True
     held = mcp("find_people", campaign_id=cid)
     assert held.get("needs_confirmation") is True and world.calls["serper"] == 0
+    # force small chunks (24 searches would fit one call): several calls chained by next_cursor
+    monkeypatch.setattr(
+        people, "find_people", functools.partial(people.find_people, max_searches_per_call=10)
+    )
     found = run_chunked(mcp, "find_people", cid, confirm=True)
+    assert [r["searches_done"] for r in found] == [10, 10, 4]
+    assert [r["next_cursor"] for r in found] == ["10", "20", None]
+    assert [r["done"] for r in found] == [False, False, True]
     assert found[-1]["campaign_people"] == {
         "confirmed": CONFIRMED, "review": REVIEW, "rejected": 0, "removed": 0,
     }  # fmt: skip
@@ -182,7 +190,7 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
     stored_urls = {p["linkedin_url"] for p in confirmed + review}
     assert not stored_urls & {r["link"] for r in FABRICATED}  # Google never returns them
     again = run_chunked(mcp, "find_people", cid, confirm=True)  # the cache answers this one
-    assert again[-1]["cache_hits"] == 24 and world.calls["serper"] == 24
+    assert sum(r["cache_hits"] for r in again) == 24 and world.calls["serper"] == 24
 
     # 4. emails: estimate, a yes, chunks of 25 with a cursor
     email_estimate = mcp("estimate_email_search", campaign_id=cid)
@@ -402,8 +410,7 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
 def test_ai_search_flow_matches_the_api_flow(mcp, world):
     offer_id, _ = new_offer(mcp)
 
-    # AI mode first: the API run below fills the shared search cache, and a pair that was
-    # already searched through the API is not queued again.
+    # AI mode on a fresh cache: every pair becomes a task the fake AI answers
     ai = new_campaign(mcp, offer_id, "Lanternfish AI", channels=("linkedin",), search_mode="ai")
     refused = mcp("find_people", campaign_id=ai, confirm=True)
     assert refused["ok"] is False and refused["use_ai_search"] is True
@@ -454,6 +461,20 @@ def test_ai_search_flow_matches_the_api_flow(mcp, world):
     assert {p["linkedin_url"] for p in ai_confirmed} == {p["linkedin_url"] for p in api_confirmed}
     assert {p["linkedin_url"] for p in ai_review} - {p["linkedin_url"] for p in
         all_people(mcp, api, "review")} == {r["link"] for r in FABRICATED}  # fmt: skip
+
+    # an AI-mode campaign created AFTER the API run finds its searches in the shared cache: the
+    # cached results are loaded for free into the new campaign (evidence origin api), not hidden
+    late = new_campaign(mcp, offer_id, "Lanternfish AI late", channels=("linkedin",),
+                        search_mode="ai")  # fmt: skip
+    batch = mcp("get_search_tasks", campaign_id=late, kind="people")
+    assert batch["filled_from_cache"] == 24 and batch["tasks_created"] == 0
+    assert batch["tasks"] == [] and batch["open_total"] == 0
+    late_confirmed = all_people(mcp, late, "confirmed")
+    assert len(late_confirmed) == CONFIRMED
+    assert {p["linkedin_url"] for p in late_confirmed} == {p["linkedin_url"] for p in api_confirmed}
+    assert {p["evidence_origin"] for p in late_confirmed} == {"api"}
+    assert len(all_people(mcp, late, "review")) == REVIEW
+    assert world.calls["serper"] == 24  # the cache answered; no credit was spent
 
     # until the spot check is done, no AI-search lead may leave
     qa = mcp("run_qa", campaign_id=ai)

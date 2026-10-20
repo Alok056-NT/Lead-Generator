@@ -619,8 +619,8 @@ SEARCH_RESULTS: dict[str, list[dict]] = {
             "snippet": "Talent Development Manager at Quillon Telecom · Singapore",
         },  # confirm
         {
-            "title": "Ken Watanabe - Training Manager at Quillon Telecom | LinkedIn",
-            "link": "https://www.linkedin.com/in/ken-watanabe",
+            "title": "Ryo Kadota - Training Manager at Quillon Telecom | LinkedIn",
+            "link": "https://www.linkedin.com/in/ryo-kadota",
             "snippet": "Training Manager at Quillon Telecom · Singapore · Location: Tokyo, Japan",
         },  # review L05
     ],
@@ -674,8 +674,8 @@ SEARCH_RESULTS: dict[str, list[dict]] = {
             ),
         },  # confirm
         {
-            "title": "Harry Dunn - Training Coordinator at Thornbury Cold Storage | LinkedIn",
-            "link": "https://uk.linkedin.com/in/harry-dunn",
+            "title": "Jasper Lacey - Training Coordinator at Thornbury Cold Storage | LinkedIn",
+            "link": "https://uk.linkedin.com/in/jasper-lacey",
             "snippet": (
                 "Training Coordinator at Thornbury Cold Storage · Manchester, United Kingdom"
             ),
@@ -1309,7 +1309,7 @@ HUNTER_RESPONSES: dict[str, Any] = {
         "gita.nair@quillon.example.org": {"data": {"status": "valid"}},
         "felix.wong@quillon.example.org": {"data": {"status": "valid"}},
         "bella.sim@quillon.example.org": {"data": {"status": "valid"}},
-        "ken.watanabe@quillon.example.org": {"data": {"status": "valid"}},
+        "ryo.kadota@quillon.example.org": {"data": {"status": "valid"}},
         "helen.tay@quillon.example.org": {"data": {"status": "valid"}},
         "mark.dewi@quillon.example.org": {"data": {"status": "valid"}},
         "aisha.noor@quillon.example.org": {"data": {"status": "valid"}},
@@ -1317,7 +1317,7 @@ HUNTER_RESPONSES: dict[str, Any] = {
         "emily@thornbury.example.org": {"data": {"status": "accept_all"}},
         "callum@thornbury.example.org": {"data": {"status": "accept_all"}},
         "ruby@thornbury.example.org": {"data": {"status": "accept_all"}},
-        "harry@thornbury.example.org": {"data": {"status": "accept_all"}},
+        "jasper@thornbury.example.org": {"data": {"status": "accept_all"}},
         "isla@thornbury.example.org": {"data": {"status": "accept_all"}},
         "george@thornbury.example.org": {"data": {"status": "accept_all"}},
         "lauren@thornbury.example.org": {"data": {"status": "accept_all"}},
@@ -1452,7 +1452,7 @@ REOON_RESPONSES: dict[str, Any] = {
         "gita.nair@quillon.example.org": {"status": "safe", "is_catch_all": False},
         "felix.wong@quillon.example.org": {"status": "safe", "is_catch_all": False},
         "bella.sim@quillon.example.org": {"status": "safe", "is_catch_all": False},
-        "ken.watanabe@quillon.example.org": {"status": "safe", "is_catch_all": False},
+        "ryo.kadota@quillon.example.org": {"status": "safe", "is_catch_all": False},
         "helen.tay@quillon.example.org": {"status": "safe", "is_catch_all": False},
         "mark.dewi@quillon.example.org": {"status": "safe", "is_catch_all": False},
         "aisha.noor@quillon.example.org": {"status": "safe", "is_catch_all": False},
@@ -1460,7 +1460,7 @@ REOON_RESPONSES: dict[str, Any] = {
         "emily@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
         "callum@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
         "ruby@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
-        "harry@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
+        "jasper@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
         "isla@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
         "george@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},
         "lauren@thornbury.example.org": {"status": "catch_all", "is_catch_all": True},

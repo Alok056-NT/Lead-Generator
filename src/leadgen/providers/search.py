@@ -92,6 +92,14 @@ def is_cached(
     return _read_cache(provider_key, key, ttl_days) is not None
 
 
+def cached_results(
+    provider_key: str, query: str, country_gl: str = "", num: int = 10, ttl_days: int = 30
+) -> list[SearchResult] | None:
+    """The cached results of an earlier search (no HTTP call, no credit), or None when there are
+    none that are fresh."""
+    return _read_cache(provider_key, cache_key(provider_key, query, country_gl, num), ttl_days)
+
+
 def cached_search(
     provider: SearchProvider,
     query: str,
@@ -117,6 +125,7 @@ __all__ = [
     "SearchProvider",
     "SearchResult",
     "cache_key",
+    "cached_results",
     "cached_search",
     "is_cached",
     "normalize_query",

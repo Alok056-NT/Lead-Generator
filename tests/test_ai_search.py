@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from leadgen import db
+from leadgen.providers.search import SearchResult, cached_search
 from leadgen.services import ai_search, companies, emails, people, qa_leads
 from leadgen.services import campaign as camp
 from leadgen.services.ai_search import AISearchError
@@ -80,7 +81,24 @@ def test_people_tasks_use_the_api_queries_and_are_not_duplicated(cid):
     assert {r["kind"] for r in rows} == {"people"} and {r["status"] for r in rows} == {"open"}
 
 
-def test_pairs_already_searched_through_the_api_are_skipped(cid, monkeypatch):
+class _CachedApi:
+    """A search provider that answers from a dict (stands in for an earlier API campaign)."""
+
+    info = type("Info", (), {"key": "serper"})()
+
+    def __init__(self, answers):
+        self.answers = answers
+
+    def search(self, query, country_gl="", num=10):
+        return self.answers.get(query, [])
+
+
+def api_hit(name, headline, company=CO):
+    item = result(name, headline, company)
+    return SearchResult(title=item["title"], link=item["url"], snippet=item["snippet"], position=1)
+
+
+def test_pairs_that_already_have_people_are_skipped(cid):
     a = add_company(cid, CO)
     add_company(cid, "Lakeside Bank")
     with db.session() as conn:  # people of company A already found for the HR group
@@ -88,12 +106,46 @@ def test_pairs_already_searched_through_the_api_are_skipped(cid, monkeypatch):
             conn, "people", campaign_id=cid, company_id=a, raw_name="X Y",
             designation="HR leaders", linkedin_url="https://www.linkedin.com/in/x-y",
         )  # fmt: skip
-    camp_dict = camp.get_campaign(cid)
-    cached_query = people.build_queries(camp_dict, {"name": "Lakeside Bank"})[0][1]
-    monkeypatch.setattr(ai_search, "is_cached", lambda key, q, gl, num: q == cached_query)
-    assert ai_search.ensure_tasks(cid) == 2  # A/ld and Lakeside/hr
-    queries = [t["query"] for t in ai_search.get_search_tasks(cid)["tasks"]]
-    assert cached_query not in queries and len(queries) == 2
+    assert ai_search.ensure_tasks(cid) == 3  # A/ld, Lakeside/ld and Lakeside/hr
+    groups = {
+        t["designation_group"]
+        for t in ai_search.get_search_tasks(cid)["tasks"] if t["company"] == CO
+    }
+    assert "HR leaders" not in groups and len(groups) == 1
+
+
+def test_another_campaigns_cached_search_fills_this_campaign_instead_of_hiding_it(
+    offer_id, cid
+):
+    add_company(cid, CO)
+    plan = people.build_queries(camp.get_campaign(cid), {"name": CO})
+    assert len(plan) == 2
+    (ld_label, ld_query), (hr_label, hr_query) = plan
+    # an earlier API campaign searched the first pair; the cache is shared by all campaigns
+    api = _CachedApi({ld_query: [api_hit("Aria Tan", "Head of Learning and Development")]})
+    cached_search(api, ld_query, "sg", people.SEARCH_NUM)
+    cached_search(api, hr_query, "sg", people.SEARCH_NUM)  # cached with no results at all
+    first = ai_search.get_search_tasks(cid)
+    assert first["filled_from_cache"] == 2 and first["tasks_created"] == 0
+    assert first["tasks"] == [] and "cache" in first["cache_note"]
+    rows = person_rows(cid)
+    assert [(r["raw_name"], r["evidence_origin"], r["status"]) for r in rows] == [
+        ("Aria Tan", "api", "confirmed")
+    ]
+    with db.session() as conn:
+        done = db.query(conn, "SELECT status, result_count FROM search_tasks WHERE campaign_id=?",
+                        (cid,))  # fmt: skip
+    assert sorted((r["status"], r["result_count"]) for r in done) == [
+        ("submitted", 0), ("submitted", 1)
+    ]
+    again = ai_search.get_search_tasks(cid)  # nothing is loaded twice
+    assert again["filled_from_cache"] == 0 and len(person_rows(cid)) == 1
+    # a pair that is not cached is still queued
+    add_company(cid, "Lakeside Bank")
+    queued = ai_search.get_search_tasks(cid)
+    assert queued["tasks_created"] == 2 and queued["filled_from_cache"] == 0
+    assert {t["company"] for t in queued["tasks"]} == {"Lakeside Bank"}
+    assert ld_label != hr_label
 
 
 def test_email_tasks_need_confirmed_people_a_domain_and_no_known_pattern(offer_id):

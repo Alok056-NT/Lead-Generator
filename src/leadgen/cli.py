@@ -77,7 +77,7 @@ def _live_check(assume_yes: bool) -> bool:
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check the installation and print a plain-English health report.
 
-    With `--live` it also makes one cheap real call per configured provider (at most 3 credits).
+    With `--live` it also makes one cheap real call per configured provider (at most 2 credits).
     """
     healthy = True
 
@@ -414,7 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="check the installation")
     doctor.add_argument(
         "--live", action="store_true",
-        help="also test the real providers with one cheap call each (at most 3 credits)",
+        help="also test the real providers with one cheap call each (at most 2 credits)",
     )  # fmt: skip
     doctor.add_argument("--yes", action="store_true", help="with --live: do not ask first")
     doctor.set_defaults(func=cmd_doctor)
