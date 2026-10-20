@@ -1,11 +1,23 @@
-"""In-memory search provider for tests and the end-to-end run. Never touches the network."""
+"""In-memory search provider for tests and the end-to-end run. Never touches the network.
+
+`fakes_enabled()` is the switch for running the real MCP server with canned search results
+(the T19 transport test). It needs BOTH `LEADGEN_FAKE_PROVIDERS=1` and `LEADGEN_ALLOW_FAKES=1`,
+so one stray variable can never make a real installation answer from canned data.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Callable
+from pathlib import Path
 
 from leadgen.providers.base import ProviderError, ProviderInfo
 from leadgen.providers.search import SearchResult
+
+FAKE_ENV = "LEADGEN_FAKE_PROVIDERS"
+ALLOW_ENV = "LEADGEN_ALLOW_FAKES"
+DATA_ENV = "LEADGEN_FAKE_DATA"
 
 Responses = dict[str, list[SearchResult]] | Callable[[str, str, int], list[SearchResult]]
 
@@ -67,3 +79,53 @@ class FakeSearchProvider:
         else:
             found = self.responses.get(query, [])
         return list(found)[:num]
+
+
+# --- canned search for the real server (tests only) ---------------------------------------------
+
+
+def fakes_enabled() -> bool:
+    """True only when both `LEADGEN_FAKE_PROVIDERS` and `LEADGEN_ALLOW_FAKES` are set to 1."""
+    return os.environ.get(FAKE_ENV) == "1" and os.environ.get(ALLOW_ENV) == "1"
+
+
+def rules_responder(rules: list[dict]) -> Callable[[str, str, int], list[SearchResult]]:
+    """A responder from rules `{"contains": [text, ...], "results": [{title, link, snippet}]}`.
+
+    The first rule whose every `contains` text occurs in the query answers it; no rule, no
+    results.
+    """
+
+    def respond(query: str, country_gl: str, num: int) -> list[SearchResult]:
+        for rule in rules:
+            if all(text in query for text in rule.get("contains", [])):
+                return [
+                    SearchResult(
+                        title=str(r.get("title", "")),
+                        link=str(r.get("link", "")),
+                        snippet=str(r.get("snippet", "")),
+                        position=n,
+                    )
+                    for n, r in enumerate(rule.get("results", []), 1)
+                ]
+        return []
+
+    return respond
+
+
+def fake_search_from_env() -> FakeSearchProvider:
+    """The canned search provider for the file named by `LEADGEN_FAKE_DATA` (a JSON object
+    `{"rules": [...]}`, see `rules_responder`). Only call it when `fakes_enabled()` is true."""
+    name = os.environ.get(DATA_ENV, "").strip()
+    if not name:
+        raise ProviderError("not_configured", f"{DATA_ENV} is not set (fake providers need it).")
+    try:
+        data = json.loads(Path(name).read_text(encoding="utf-8"))
+        rules = data["rules"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ProviderError(
+            "not_configured", f"The fake data file cannot be read ({type(exc).__name__})."
+        ) from None
+    if not isinstance(rules, list):
+        raise ProviderError("not_configured", "The fake data file must hold a list of rules.")
+    return FakeSearchProvider(rules_responder(rules))

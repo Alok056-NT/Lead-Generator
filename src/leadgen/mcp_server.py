@@ -24,6 +24,7 @@ from pydantic import Field, ValidationError
 
 from leadgen import __version__, db
 from leadgen.core import config, paths
+from leadgen.providers import fake
 from leadgen.providers.base import ProviderError
 from leadgen.services import (
     ai_search,
@@ -205,6 +206,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
     """
     if init_db:
         db.init_db()
+    if fake.fakes_enabled():
+        log.warning("Fake providers are ON: search answers are canned data, for tests only.")
     server = MCPServer(
         SERVER_NAME,
         title="Lead Generator",

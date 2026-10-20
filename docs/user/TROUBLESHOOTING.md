@@ -64,6 +64,10 @@ The installer does not put `leadgen` on your PATH (the list of places your compu
 
 On a Mac or Linux: `~/.local/share/LeadGenerator/venv/bin/leadgen doctor`.
 
+## Check that your keys really work
+
+`leadgen doctor --live` makes one small real call to each service you have a key for: one search, one email check (Reoon, or ZeroBounce if Reoon has no key) and a look at your Hunter account. The search and the email check use one credit each; the Hunter call is free. It tells you the most it can spend, asks "Go ahead? [y/N]", and does nothing until you say yes (add `--yes` to skip the question). A service with no key is skipped. Plain `leadgen doctor` never makes these calls.
+
 ## Claude does not show the Lead Generator tools
 
 1. **Quit Claude Desktop completely and open it again.** Closing the window is not enough. Windows: right-click the Claude icon in the system tray (bottom right, you may need the little arrow) and choose Quit. Mac: Claude menu, Quit Claude.

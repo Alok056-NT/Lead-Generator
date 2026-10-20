@@ -3,6 +3,18 @@
 All notable changes to Lead Generator are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.0] - 2026-10-20
+
+First release.
+
+### Added
+- An end-to-end test (`tests/e2e/`): a made-up VR training studio, 12 invented companies in Singapore and the UK and about 120 canned search results are taken through every step an AI would drive, from reading the offer to analytics, in two ways (paid search and the AI's own web search) with the same confirmed people at the end. A second test runs the same kind of flow over the real MCP connection (`python -m leadgen mcp` as a child process).
+- `leadgen doctor --live`: one small real call per service you have a key for (a search, an email check, Hunter's free account call), at most 3 credits, asking first (`--yes` skips the question).
+- A test-only switch for canned search answers, `LEADGEN_FAKE_PROVIDERS=1`, honoured only when `LEADGEN_ALLOW_FAKES=1` is also set.
+
+### Changed
+- Version number 1.0.0.
+
 ## [0.1.0] - 2026-10-20
 
 First version, built task by task (see `docs/STATUS.md`). Not yet released as 1.0.

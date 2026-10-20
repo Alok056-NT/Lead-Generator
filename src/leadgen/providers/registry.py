@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from leadgen.core import secrets
-from leadgen.providers import brave, ddg, hunter, lemlist, reoon, serper, zerobounce
+from leadgen.providers import brave, ddg, fake, hunter, lemlist, reoon, serper, zerobounce
 from leadgen.providers.base import Provider, ProviderError, ProviderInfo
 from leadgen.providers.search import SearchProvider
 from leadgen.send import smtp_imap
@@ -58,7 +58,12 @@ def get_provider(provider_key: str) -> Provider | None:
 
 
 def get_search_provider() -> SearchProvider:
-    """First configured of Serper, Brave; else DuckDuckGo if allowed; else not_configured."""
+    """First configured of Serper, Brave; else DuckDuckGo if allowed; else not_configured.
+
+    The canned test provider is returned instead only when `fake.fakes_enabled()` (T19).
+    """
+    if fake.fakes_enabled():
+        return fake.fake_search_from_env()
     for provider in (serper.SerperProvider(), brave.BraveProvider()):
         if provider.configured():
             return provider

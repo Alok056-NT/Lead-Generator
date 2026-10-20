@@ -14,6 +14,7 @@ from pathlib import Path
 from leadgen import __version__, db
 from leadgen.core import config, paths, secrets
 from leadgen.core.logging import setup_logging
+from leadgen.providers import fake
 from leadgen.providers.registry import ALL_PROVIDERS
 from leadgen.services import status
 
@@ -46,8 +47,38 @@ def cmd_paths(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_doctor(_args: argparse.Namespace) -> int:
-    """Check the installation and print a plain-English health report."""
+def _live_check(assume_yes: bool) -> bool:
+    """`doctor --live`: say what it will spend, ask, run it, print the answers. True if all ok."""
+    from leadgen.services import live_check
+
+    steps = live_check.plan()
+    total = sum(s["credits"] for s in steps)
+    print("\nLive check with the real providers (uses your keys):")
+    for step in steps:
+        who = step["provider"] or "not set, will be skipped"
+        print(f"  {step['what']:<22} {who}")
+    print(f"This spends at most {total} credit(s) in all.")
+    if not assume_yes:
+        try:
+            answer = input("Go ahead? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Cancelled. Nothing was spent.")
+            return True
+    good = True
+    for result in live_check.run(steps):
+        mark = {"ok": "OK     ", "failed": "FAILED ", "skipped": "skipped"}[result["status"]]
+        print(f"  {mark} {result['id']:<7} {result['message']}")
+        good &= result["status"] != "failed"
+    return good
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Check the installation and print a plain-English health report.
+
+    With `--live` it also makes one cheap real call per configured provider (at most 3 credits).
+    """
     healthy = True
 
     py = sys.version_info
@@ -56,6 +87,8 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     verdict = "OK" if py_ok else "TOO OLD (need 3.11+)"
     print(f"Python        : {py.major}.{py.minor}.{py.micro} {verdict}")
     print(f"Lead Generator: {__version__}")
+    if fake.fakes_enabled():
+        print("Fake providers: ON (canned search answers, for tests only)")
 
     try:
         root = paths.home()
@@ -87,6 +120,9 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     except (sqlite3.Error, OSError) as exc:
         healthy = False
         print(f"Database      : PROBLEM - {type(exc).__name__}")
+
+    if getattr(args, "live", False) and healthy:
+        healthy &= _live_check(getattr(args, "yes", False))
 
     print("\nAll good." if healthy else "\nProblems found. See the lines marked above.")
     return 0 if healthy else 1
@@ -375,7 +411,13 @@ def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(prog="leadgen", description="Lead Generator")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("doctor", help="check the installation").set_defaults(func=cmd_doctor)
+    doctor = sub.add_parser("doctor", help="check the installation")
+    doctor.add_argument(
+        "--live", action="store_true",
+        help="also test the real providers with one cheap call each (at most 3 credits)",
+    )  # fmt: skip
+    doctor.add_argument("--yes", action="store_true", help="with --live: do not ask first")
+    doctor.set_defaults(func=cmd_doctor)
     sub.add_parser("version", help="show the version").set_defaults(func=cmd_version)
     sub.add_parser("paths", help="show workspace locations").set_defaults(func=cmd_paths)
     mcp = sub.add_parser("mcp", help="run the MCP server (stdio; --http for remote clients)")
