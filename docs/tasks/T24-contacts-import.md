@@ -23,11 +23,10 @@ Also accept, auto-detected, **LinkedIn's official "Connections.csv"** (Settings 
   - `signal`: store in new table `known_contacts` (project_id, keys as in contact_log, company, company_domain, title, relationship, notes, imported_at); companies are flagged "warm" (count of known contacts) and matching people get a `known_contact` flag shown in the dashboard and passed to drafting (`get_drafting_batch` includes `known_contact: {relationship, last_contacted}` so the AI can write "we spoke before" only when true).
   - `both`.
   - dry run returns counts (rows read, valid, errors, duplicates, would-exclude, would-signal, do-not-contact) and the first 20 errors; nothing is written.
-- `add_signal_companies(project_id, campaign_id)`: adds the warm companies from `known_contacts` to a campaign as candidates (normal company checks apply).
 - `export_template(path, fmt="csv"|"xlsx")`.
 
 ## MCP + CLI
-- Tools: `get_contacts_template` (returns template path and the column guide), `import_contacts(project_id, file_path, mode, dry_run=true)`, `add_signal_companies`.
+- Tools: `get_contacts_template` (returns template path and the column guide), `import_contacts(project_id, file_path, mode, dry_run=true)`. (Owner decision 24 Oct: no automatic "add warm companies to a campaign"; the warm flag is enough.)
 - CLI: `leadgen contacts template [--xlsx] [--out PATH]`, `leadgen contacts import PATH --project ID --mode exclude|signal|both [--apply]`.
 
 ## Tests (synthetic files created in the test)

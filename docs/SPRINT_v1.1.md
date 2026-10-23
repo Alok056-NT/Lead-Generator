@@ -26,7 +26,7 @@ Out of scope for Monday: T20 (.mcpb one-click extension), Gmail OAuth "Sign in w
 | Sat 11:00–15:00 | T24 old-contacts import (CSV/XLSX template, LinkedIn Connections.csv) |
 | Sat 15:00–18:00 | T25 verified-only email policy + one-page/whole-site offer intake |
 | Sat 18:00–Sun 02:00 | T26 dashboard v1.1 (projects home, project & campaign pages, plain language) |
-| Sun 02:00–06:00 | T27 mailbox connection wizard (Gmail/Workspace, Outlook, other) |
+| Sun 02:00–03:00 | T27 connect-your-mailbox help page (owner chose page over wizard) |
 | Sun 06:00–12:00 | T29 regression: e2e for projects, docs, CHANGELOG, owner test checklist |
 | Sun 12:00–18:00 | **Owner testing** with `docs/TESTING_CHECKLIST_v1.1.md`; fixes |
 | Mon morning | Tag `v1.1.0`, hand over |

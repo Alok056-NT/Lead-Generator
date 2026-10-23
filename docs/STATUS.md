@@ -29,7 +29,7 @@ Statuses: `todo` → `in progress` → `review` (builder done) → `done` (revie
 | T24 | Sprint v1.1: import old contacts (CSV/Excel template, LinkedIn export) | todo | |
 | T25 | Sprint v1.1: verified-only emails, one page / whole site intake | todo | |
 | T26 | Sprint v1.1: dashboard projects home + plain language | todo | |
-| T27 | Sprint v1.1: mailbox connection wizard | todo | |
+| T27 | Sprint v1.1: connect-your-mailbox help page | todo | |
 | T28 | Sprint v1.1: alternatives report (planner, no code) | in progress | |
 | T29 | Sprint v1.1: regression, docs, owner test checklist | todo | |
 | T21 | AI search fallback (free mode), **build right after T11** | done | Review approved 2026-10-17 after fix round 1 (spot-check state shared with L21; site scrape reaches /team, /people). manual check pending: Claude Desktop run of 3 companies in AI mode compared with an API run (owner/reviewer); also confirm web search and the connector work in one chat |
