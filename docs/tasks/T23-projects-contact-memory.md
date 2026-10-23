@@ -39,3 +39,6 @@ Migration test; project CRUD/validation; cooldown matching by each key and expir
 
 ## Acceptance
 All existing tests pass (updated only where they must pass a project); new tests pass; migrating a copy of the owner's real v1 workspace (if one exists) loses nothing.
+
+## Planner note for the reviewer (added 24 Oct during the build)
+- `people._searched_companies` must order the first `max_companies` companies by a value that never changes (company `id`, the order they were added), not `updated_at`: any edit bumps `updated_at`, so a chunked search can cover more than c companies. Require this fix (one line + the test that sets `updated_at`).
