@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Callable, Mapping, Sequence
 from importlib import resources
 from typing import Any
@@ -207,18 +208,26 @@ def _cached_for(query: str, gl: str) -> list[SearchResult] | None:
     return None
 
 
-def fill_from_cache(campaign_id: int) -> int:
-    """Load cached API searches into this campaign and return how many pairs were filled.
+def fill_from_cache(
+    campaign_id: int, max_pairs: int | None = None
+) -> tuple[int, set[tuple[int, str]]]:
+    """Load cached API searches into this campaign: `(pairs filled, cached pairs still waiting)`.
 
     The search cache is shared by all campaigns, so a company x group pair that an earlier
     campaign searched through an API already has its results on disk. For every pair of this
     campaign that has neither people nor a task yet, the cached results go through
     `people.process_results` (free, `evidence_origin = "api"`) and a `submitted` task row
-    records that the pair is done, so running it again does nothing.
+    records that the pair is done, so running it again does nothing. One call fills at most
+    `max_pairs` pairs (default `people.MAX_SEARCHES_PER_CALL`) and stops starting new ones after
+    `people.CALL_TIME_LIMIT_S` seconds, like `find_people`; the waiting pairs are returned as
+    `(company_id, query)` so the caller neither queues them nor forgets them.
     """
     camp = _campaign(campaign_id)
+    limit = people.MAX_SEARCHES_PER_CALL if max_pairs is None else max(1, int(max_pairs))
     have = _existing_keys(campaign_id, "people")
     filled = 0
+    waiting: set[tuple[int, str]] = set()
+    began = time.monotonic()
     for row in people.approved_company_rows(campaign_id):
         done_groups = _groups_with_people(campaign_id, row["id"])
         company = people.company_view(row)
@@ -227,6 +236,9 @@ def fill_from_cache(campaign_id: int) -> int:
                 continue
             hit = _cached_for(query, gl)
             if hit is None:
+                continue
+            if filled >= limit or (filled and time.monotonic() - began > people.CALL_TIME_LIMIT_S):
+                waiting.add((row["id"], query))
                 continue
             people.process_results(camp, company, label, query, hit, origin="api")
             have.add((row["id"], query))
@@ -238,7 +250,7 @@ def fill_from_cache(campaign_id: int) -> int:
                 )  # fmt: skip
             _save_note(task_id, tool_name="api_cache")
             filled += 1
-    return filled
+    return filled, waiting
 
 
 def ensure_tasks(campaign_id: int, kind: str = "people") -> int:
@@ -247,15 +259,20 @@ def ensure_tasks(campaign_id: int, kind: str = "people") -> int:
     people: one per approved company x designation group, with the same query string as the API
     path (`people.search_plan`); a pair is skipped when this campaign already has people of that
     company and group or a task for it. Pairs whose search is in the shared cache are first
-    filled from it (`fill_from_cache`), never skipped without their results. email: for each
-    approved company with a domain, confirmed people and no saved email pattern, `"@<domain>"`
-    and `site:<domain> (contact OR email)`. company: the `companies.research_queries` strings.
+    filled from it (`fill_from_cache`, one chunk per call); a cached pair that is still waiting
+    for a later call is never queued for the AI. email: for each approved company with a domain,
+    confirmed people and no saved email pattern, `"@<domain>"` and
+    `site:<domain> (contact OR email)`. company: the `companies.research_queries` strings.
     Running it again creates nothing new.
     """
+    return _ensure(campaign_id, kind)[0]
+
+
+def _ensure(campaign_id: int, kind: str) -> tuple[int, int, int]:
+    """`(tasks created, pairs filled from cache, cached pairs still waiting)`."""
     _check_kind(kind)
     camp = _campaign(campaign_id)
-    if kind == "people":
-        fill_from_cache(campaign_id)
+    filled, waiting = fill_from_cache(campaign_id) if kind == "people" else (0, set())
     have = _existing_keys(campaign_id, kind)
     new: list[tuple[int | None, str, str]] = []
 
@@ -267,14 +284,14 @@ def ensure_tasks(campaign_id: int, kind: str = "people") -> int:
     if kind == "company":
         for query in companies_mod.research_queries(campaign_id):
             add(None, "", query)
-        return _insert_tasks(campaign_id, kind, new)
+        return _insert_tasks(campaign_id, kind, new), 0, 0
 
     rows = people.approved_company_rows(campaign_id)
     if kind == "people":
         for row in rows:
             done_groups = _groups_with_people(campaign_id, row["id"])
             for label, query, _gl in people.search_plan(camp, row):
-                if label not in done_groups:
+                if label not in done_groups and (row["id"], query) not in waiting:
                     add(row["id"], label, query)
     else:
         with db.session() as conn:
@@ -293,7 +310,7 @@ def ensure_tasks(campaign_id: int, kind: str = "people") -> int:
                 continue
             add(row["id"], "email", f'"@{domain}"')
             add(row["id"], "email", f"site:{domain} (contact OR email)")
-    return _insert_tasks(campaign_id, kind, new)
+    return _insert_tasks(campaign_id, kind, new), filled, len(waiting)
 
 
 # --- handing tasks out ------------------------------------------------------------------------
@@ -324,15 +341,15 @@ def get_search_tasks(
     Creates the tasks first if none exist yet. Returns `tasks` (`task_id`, `query`, company and
     group), the `instructions` block (copy results verbatim, which fields to copy, submit an
     empty list when nothing relevant was found, never open LinkedIn pages), `remaining` (open
-    tasks after this batch) and `next_cursor`. Work in batches of 10 and report progress after
+    tasks after this batch), `next_cursor` and `cache_pending` (cached searches not loaded yet:
+    call again while it is above 0). Work in batches of 10 and report progress after
     each batch. Raises `AISearchError`.
     """
     _check_kind(kind)
     camp = _campaign(campaign_id)
     size = min(max(1, int(batch_size)), BATCH_MAX)
     after = _cursor(cursor)
-    filled = fill_from_cache(campaign_id) if kind == "people" and after == 0 else 0
-    created = ensure_tasks(campaign_id, kind) if after == 0 else 0
+    created, filled, pending = _ensure(campaign_id, kind) if after == 0 else (0, 0, 0)
     with db.session() as conn:
         rows = db.query(
             conn,
@@ -365,6 +382,7 @@ def get_search_tasks(
         "open_total": _open_count(campaign_id, kind),
         "tasks_created": created,
         "filled_from_cache": filled,
+        "cache_pending": pending,
         "next_cursor": str(last) if remaining else None,
         "result_fields": RESULT_FIELDS,
         "instructions": INSTRUCTIONS[kind],
@@ -374,7 +392,14 @@ def get_search_tasks(
             f"{filled} company x group searches were already in the search cache from an "
             "earlier run; their results were loaded for free (evidence origin api)."
         )
-    if not tasks:
+    if pending:
+        reply["message"] = (
+            f"{pending} more company x group searches are cached and still waiting to be loaded "
+            "(a call loads a limited number). An empty or short task list does NOT mean the "
+            "campaign is finished: call get_search_tasks again (without a cursor) until "
+            "cache_pending is 0."
+        )
+    elif not tasks:
         reply["message"] = "No open search tasks."
     return reply
 

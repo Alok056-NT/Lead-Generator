@@ -31,6 +31,7 @@ from leadgen.services import confirm as rules
 PAGE_SIZE_MAX = 50
 SEARCH_NUM = 10
 CALL_TIME_LIMIT_S = 50.0
+MAX_SEARCHES_PER_CALL = 30  # find_people default; ai_search.fill_from_cache uses it too
 STATUSES = ("confirmed", "review", "rejected", "removed")
 MANUAL_PREFIX = "MANUAL:"
 SAMPLE_SIZE = 5
@@ -441,7 +442,7 @@ def find_people(
     company_ids: Sequence[int] | None = None,
     confirm: bool = False,
     cursor: str | int | None = None,
-    max_searches_per_call: int = 30,
+    max_searches_per_call: int = MAX_SEARCHES_PER_CALL,
     provider: Any = None,
 ) -> dict[str, Any]:
     """Search every approved company x designation group and store what is found.

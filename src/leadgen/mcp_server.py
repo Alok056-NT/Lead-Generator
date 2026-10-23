@@ -1029,8 +1029,10 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         """AI search mode (free, no search key): returns up to 10 search tasks for you to run
         with YOUR OWN web search tool (kind people, email or company), plus the instructions.
         Run each query unchanged, then call submit_search_results. Report progress after each
-        batch and continue with next_cursor until remaining is 0. Read get_workflow_guide
-        section ai_search first. Check you really have a web search tool in this
+        batch and continue with next_cursor until remaining is 0. If the reply has
+        cache_pending above 0, some cached searches are still waiting to be loaded: call
+        get_search_tasks again (no cursor) until it is 0, even when tasks is empty. Read
+        get_workflow_guide section ai_search first. Check you really have a web search tool in this
         conversation; if not, tell the user how to switch it on or to add a search key.""",
         WRITE,
         keep=("instructions",),

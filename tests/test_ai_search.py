@@ -148,6 +148,49 @@ def test_another_campaigns_cached_search_fills_this_campaign_instead_of_hiding_i
     assert ld_label != hr_label
 
 
+def test_cache_fill_is_chunked_and_pending_pairs_are_not_queued(offer_id, cid, monkeypatch):
+    monkeypatch.setattr(people, "MAX_SEARCHES_PER_CALL", 2)
+    add_company(cid, CO)
+    add_company(cid, "Lakeside Bank")
+    camp_row = camp.get_campaign(cid)
+    plan = {
+        name: people.build_queries(camp_row, {"name": name}) for name in (CO, "Lakeside Bank")
+    }
+    api = _CachedApi({})
+    cached = [plan[CO][0][1], plan[CO][1][1], plan["Lakeside Bank"][0][1]]
+    for query in cached:
+        cached_search(api, query, "sg", people.SEARCH_NUM)
+    uncached = plan["Lakeside Bank"][1][1]
+    loaded = []
+    real = people.process_results
+
+    def spy(camp_, company, label, query, results, origin="api", **kw):
+        loaded.append(query)
+        return real(camp_, company, label, query, results, origin=origin, **kw)
+
+    monkeypatch.setattr(people, "process_results", spy)
+
+    first = ai_search.get_search_tasks(cid)
+    assert first["filled_from_cache"] == 2 and first["cache_pending"] == 1
+    # only the uncached pair is queued; the cached pair that is still waiting is not
+    assert first["tasks_created"] == 1 and [t["query"] for t in first["tasks"]] == [uncached]
+    assert "again" in first["message"] and "cache_pending" in first["message"]
+    assert loaded == cached[:2]
+    with db.session() as conn:
+        queries = {r["query"] for r in db.query(
+            conn, "SELECT query FROM search_tasks WHERE campaign_id = ?", (cid,))}  # fmt: skip
+    assert queries == set(cached[:2]) | {uncached}
+
+    second = ai_search.get_search_tasks(cid)
+    assert second["filled_from_cache"] == 1 and second["cache_pending"] == 0
+    assert second["tasks_created"] == 0 and [t["query"] for t in second["tasks"]] == [uncached]
+    assert loaded == cached  # each cached pair was loaded exactly once
+
+    third = ai_search.get_search_tasks(cid)
+    assert third["filled_from_cache"] == 0 and third["cache_pending"] == 0
+    assert third["tasks_created"] == 0 and loaded == cached
+
+
 def test_email_tasks_need_confirmed_people_a_domain_and_no_known_pattern(offer_id):
     cid = make_campaign(offer_id, "mail", channels=("email",))
     a = add_company(cid, CO, "northwind.example")

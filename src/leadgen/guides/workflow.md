@@ -121,7 +121,8 @@ or start a new one.
    web search tool and `submit_search_results(task_id, results, tool_name)`. Copy titles, URLs
    and snippets **verbatim**; never build or fix a URL; submit an empty list when nothing was
    found. Report progress after every batch of 10 and continue with `next_cursor` until
-   nothing remains. Use `skip_task` only when a task cannot be run.
+   nothing remains; if the reply says `cache_pending` above 0, call `get_search_tasks` again
+   (an empty task list is not "finished" then). Use `skip_task` only when a task cannot be run.
 2. Before delivering anything, do the **spot check**: `get_spot_check`, ask the user to click
    the links and say "ok" or "wrong" for each person, then `record_spot_check`. Do not open
    the links yourself.

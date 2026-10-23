@@ -45,7 +45,9 @@ If no web search tool can be had, stop AI search mode and tell the user to add a
    tool (for example "web_search").
 4. After the batch, **report progress** to the user in plain words: tasks done, how many people
    were confirmed or sent to review, tasks remaining. Then fetch the next batch (pass
-   `next_cursor`). Stop when `remaining` is 0.
+   `next_cursor`). Stop when `remaining` is 0 **and** `cache_pending` is 0: if `cache_pending`
+   is above 0, some searches already in the cache are still being loaded in chunks, so call
+   `get_search_tasks` again (no cursor), even when the task list was empty.
 5. For emails (channel `email`), when people are confirmed: `get_search_tasks(kind="email")` and
    do the same. Published addresses on the company's own domain teach the tool the company's
    email pattern. Then run `find_emails`; without a verifier key the addresses stay `guess`.
