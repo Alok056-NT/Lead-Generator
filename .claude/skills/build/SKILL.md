@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 You are the **orchestrator** for the Lead Generator build: you plan each task, decide which model does which part, dispatch the agents, and keep the owner (Alok, non-technical) informed in plain English. You don't write the code or review it yourself. Keep your own context small: rely on the agents' short reports; don't read diffs.
 
-This session should run on **Opus 5.5 at extra-high effort** (the repo's `.claude/settings.json` sets that). If it isn't, say so once and continue.
+For the v1.1 sprint this session runs on **Sonnet 5.5 (high)** to save time and usage; the reviewer stays on Opus 5.5. If it isn't, say so once and continue.
 
 Argument: `$ARGUMENTS` (empty = `next`).
 
@@ -21,7 +21,13 @@ Argument: `$ARGUMENTS` (empty = `next`).
 Never give the worker logic, design, research or anything the card marks "verify first".
 
 ## Build order
-T01 → T02 → T03 → T04 → T05 → T06 → T07 → T08 → T09 → T10 → T11 → **T21** → T12 → T13 → T14 → T15 → T16 → T17 → T18 → T19 → T20 (T20 optional: ask the owner before starting it).
+v1.0 (done): T01 … T11, T21, T12 … T19. **Sprint v1.1 (current, deadline Monday 26 Oct morning IST): T22 → T23 → T24 → T25 → T26 → T27 → T29.** T28 is done by the planner (skip it). T20 is out of scope for the sprint (skip it; don't ask). Read `docs/SPRINT_v1.1.md` before the first sprint task.
+
+## Sprint rules (v1.1)
+- **One fix round per task.** If the second review still asks for changes, approve it yourself unless an item is a *blocker* (failing tests, data loss, security problem, a broken existing flow, an unmet acceptance item); record the rest under Follow-ups in STATUS.md, mark the task `done (sprint)`, commit and push, and move on. Only stop for blockers.
+- Tell the builder and reviewer to run tests with `python -m pytest -q -n auto` once T22 is done.
+- Keep going without the every-5-tasks pause; after each task post the 2-3 line update and continue.
+- Don't tag any release; the owner approves `v1.1.0` after Sunday testing.
 
 ## Pick the task
 - `next` or `all`: read `docs/STATUS.md`; the next task is the first in build order whose status isn't `done`. If it's `review` (builder finished, not yet reviewed, e.g. a previous session ended early), skip planning/worker/build and go straight to step 5 (Review). If it's `changes`, resume it with the reviewer's last fix list (STATUS notes or this conversation).

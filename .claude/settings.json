@@ -1,6 +1,6 @@
 {
-  "model": "claude-opus-5-5",
-  "effortLevel": "xhigh",
+  "model": "claude-sonnet-5-5",
+  "effortLevel": "high",
   "permissions": {
     "allow": [
       "Edit(src/**)",
