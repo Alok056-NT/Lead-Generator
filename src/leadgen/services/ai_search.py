@@ -168,12 +168,21 @@ def _open_count(campaign_id: int, kind: str, after: int = 0) -> int:
 
 
 def _groups_with_people(campaign_id: int, company_id: int) -> set[str]:
-    """Designation groups that already have people for this company (an earlier search)."""
+    """Designation groups that already have people for this company from an earlier search.
+
+    People found by a search this tool tracks (a task row with the same query, e.g. a cache fill
+    or an AI submission) do not count: a person's group comes from the job title, not from the
+    search, so an L&D search that finds an HR manager must not mark the HR pair as done. Such
+    pairs are decided by their task row instead (`_existing_keys`).
+    """
     with db.session() as conn:
         rows = db.query(
             conn,
-            "SELECT DISTINCT designation FROM people WHERE campaign_id = ? AND company_id = ?",
-            (campaign_id, company_id),
+            "SELECT DISTINCT designation FROM people WHERE campaign_id = ? AND company_id = ? "
+            "AND (source_query IS NULL OR source_query NOT IN ("
+            "SELECT query FROM search_tasks WHERE campaign_id = ? AND company_id = ? "
+            "AND kind = 'people'))",
+            (campaign_id, company_id, campaign_id, company_id),
         )
     return {r["designation"] for r in rows}
 
@@ -342,14 +351,17 @@ def get_search_tasks(
     group), the `instructions` block (copy results verbatim, which fields to copy, submit an
     empty list when nothing relevant was found, never open LinkedIn pages), `remaining` (open
     tasks after this batch), `next_cursor` and `cache_pending` (cached searches not loaded yet:
-    call again while it is above 0). Work in batches of 10 and report progress after
+    call again while it is above 0; every call, with or without a cursor, loads one more chunk).
+    Work in batches of 10 and report progress after
     each batch. Raises `AISearchError`.
     """
     _check_kind(kind)
     camp = _campaign(campaign_id)
     size = min(max(1, int(batch_size)), BATCH_MAX)
     after = _cursor(cursor)
-    created, filled, pending = _ensure(campaign_id, kind) if after == 0 else (0, 0, 0)
+    # every call (with or without a cursor) loads one chunk of cached searches and reports what
+    # is still waiting, so an AI that only follows `next_cursor` still ends with all of them loaded
+    created, filled, pending = _ensure(campaign_id, kind)
     with db.session() as conn:
         rows = db.query(
             conn,
@@ -396,8 +408,8 @@ def get_search_tasks(
         reply["message"] = (
             f"{pending} more company x group searches are cached and still waiting to be loaded "
             "(a call loads a limited number). An empty or short task list does NOT mean the "
-            "campaign is finished: call get_search_tasks again (without a cursor) until "
-            "cache_pending is 0."
+            "campaign is finished: call get_search_tasks again (with your next_cursor if you "
+            "have one, otherwise without) until cache_pending is 0."
         )
     elif not tasks:
         reply["message"] = "No open search tasks."

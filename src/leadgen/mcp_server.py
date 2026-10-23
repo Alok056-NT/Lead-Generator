@@ -1031,7 +1031,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         Run each query unchanged, then call submit_search_results. Report progress after each
         batch and continue with next_cursor until remaining is 0. If the reply has
         cache_pending above 0, some cached searches are still waiting to be loaded: call
-        get_search_tasks again (no cursor) until it is 0, even when tasks is empty. Read
+        get_search_tasks again (with next_cursor if you have one, otherwise without) until it is 0,
+        even when tasks is empty; each call loads one more chunk. Read
         get_workflow_guide section ai_search first. Check you really have a web search tool in this
         conversation; if not, tell the user how to switch it on or to add a search key.""",
         WRITE,

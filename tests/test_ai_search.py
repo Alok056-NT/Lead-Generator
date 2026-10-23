@@ -191,6 +191,90 @@ def test_cache_fill_is_chunked_and_pending_pairs_are_not_queued(offer_id, cid, m
     assert third["tasks_created"] == 0 and loaded == cached
 
 
+def _three_group_campaign(offer_id):
+    return camp.create_campaign(
+        name="three groups", offer_id=offer_id, countries=["SG"], sectors=["logistics"],
+        company_size="200-1000", channels=["linkedin"], designations=["ld", "hr", "sales"],
+        options={"search_mode": "ai"},
+    )["id"]  # fmt: skip
+
+
+def _cache_everything(cid, names, answers=None):
+    """Cache every pair of the given companies (as an earlier API campaign would); returns
+    {company: [(label, query), ...]}."""
+    camp_row = camp.get_campaign(cid)
+    plan = {n: people.build_queries(camp_row, {"name": n}) for n in names}
+    api = _CachedApi(answers or {})
+    for pairs in plan.values():
+        for _label, query in pairs:
+            cached_search(api, query, "sg", people.SEARCH_NUM)
+    return plan
+
+
+def _loaded_queries(cid):
+    with db.session() as conn:
+        rows = db.query(
+            conn, "SELECT query FROM search_tasks WHERE campaign_id = ? AND status = 'submitted'",
+            (cid,),
+        )
+    return {r["query"] for r in rows}
+
+
+@pytest.mark.parametrize("stop", ["pair_cap", "time_limit"])
+def test_a_chunk_that_stops_inside_a_company_keeps_its_later_cached_groups(
+    offer_id, monkeypatch, stop
+):
+    cid = _three_group_campaign(offer_id)
+    add_company(cid, CO)
+    # the L&D search also returns an HR manager: a person's group comes from the job title
+    ld_query = people.build_queries(camp.get_campaign(cid), {"name": CO})[0][1]
+    plan = _cache_everything(
+        cid, [CO], {ld_query: [api_hit("Aria Tan", "Head of Learning and Development"),
+                               api_hit("Jonah Reyes", "HR Manager")]},
+    )  # fmt: skip
+    queries = [q for _label, q in plan[CO]]
+    assert len(queries) == 3
+    if stop == "pair_cap":
+        monkeypatch.setattr(people, "MAX_SEARCHES_PER_CALL", 1)
+    else:
+        monkeypatch.setattr(people, "CALL_TIME_LIMIT_S", -1.0)  # out of time after one pair
+    got = ai_search.get_search_tasks(cid)
+    assert got["filled_from_cache"] == 1 and got["cache_pending"] == 2 and got["tasks"] == []
+    assert {p["designation"] for p in person_rows(cid)} >= {"HR leaders"}  # the cross-over exists
+    for _ in range(5):
+        if not ai_search.get_search_tasks(cid)["cache_pending"]:
+            break
+    assert _loaded_queries(cid) == set(queries)  # no cached group of the company was lost
+    last = ai_search.get_search_tasks(cid)
+    assert last["filled_from_cache"] == 0 and last["cache_pending"] == 0 and last["tasks"] == []
+
+
+def test_paging_with_a_cursor_still_loads_cached_pairs_and_reports_them_truthfully(
+    offer_id, monkeypatch
+):
+    monkeypatch.setattr(people, "MAX_SEARCHES_PER_CALL", 1)
+    cid = _three_group_campaign(offer_id)
+    add_company(cid, CO)
+    add_company(cid, "Lakeside Bank")
+    plan = _cache_everything(cid, [CO])  # Lakeside Bank is not cached: three open tasks
+    first = ai_search.get_search_tasks(cid, batch_size=1)
+    assert first["filled_from_cache"] == 1 and first["cache_pending"] == 2
+    assert first["next_cursor"] and len(first["tasks"]) == 1
+    second = ai_search.get_search_tasks(cid, batch_size=1, cursor=first["next_cursor"])
+    assert second["filled_from_cache"] == 1 and second["cache_pending"] == 1
+    assert "cache_pending" in second["message"] and second["next_cursor"]
+    # an AI that only follows the tool text (next_cursor while there is one, otherwise call
+    # again until cache_pending is 0) ends with every cached pair loaded
+    cursor, reply = second["next_cursor"], second
+    for _ in range(10):
+        reply = ai_search.get_search_tasks(cid, batch_size=1, cursor=cursor)
+        cursor = reply["next_cursor"]
+        if cursor is None and not reply["cache_pending"]:
+            break
+    assert reply["cache_pending"] == 0
+    assert _loaded_queries(cid) == {q for _label, q in plan[CO]}
+
+
 def test_email_tasks_need_confirmed_people_a_domain_and_no_known_pattern(offer_id):
     cid = make_campaign(offer_id, "mail", channels=("email",))
     a = add_company(cid, CO, "northwind.example")

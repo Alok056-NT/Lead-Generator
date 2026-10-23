@@ -122,7 +122,7 @@ or start a new one.
    and snippets **verbatim**; never build or fix a URL; submit an empty list when nothing was
    found. Report progress after every batch of 10 and continue with `next_cursor` until
    nothing remains; if the reply says `cache_pending` above 0, call `get_search_tasks` again
-   (an empty task list is not "finished" then). Use `skip_task` only when a task cannot be run.
+   (with `next_cursor` if there is one; an empty task list is not "finished" then). Use `skip_task` only when a task cannot be run.
 2. Before delivering anything, do the **spot check**: `get_spot_check`, ask the user to click
    the links and say "ok" or "wrong" for each person, then `record_spot_check`. Do not open
    the links yourself.
