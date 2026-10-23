@@ -15,7 +15,7 @@ You are building **Lead Generator**, a local, AI-driven lead generation toolkit.
 3. If anything in the card is ambiguous or contradicts PLAN.md, stop and ask. Do not guess.
 4. Before using any third-party API or library API, **verify it from the source**: read the installed package's code (`python -c "import x; print(x.__file__)"`) or the provider's official docs. Never write API calls from memory. Record what you verified (URL or file, date, what it says) in `docs/DECISIONS.md`.
 5. Implement only what the card lists. Anything extra goes in STATUS.md under "Follow-ups".
-6. Write the tests the card lists, plus any needed to reach the coverage target. Run `python -m pytest -q` and `ruff check src tests`. Both must pass.
+6. Write the tests the card lists, plus any needed to reach the coverage target. Run `python -m pytest -q -n auto` and `ruff check src tests`. Both must pass.
 7. Update `docs/STATUS.md`: set the task to `review`, add a 3-6 line summary, list files changed, list follow-ups.
 8. Commit on the current branch with message `Txx: <short title>` and the attribution trailer below. **Do not push.** Pushing happens after review.
 9. Report to the user in plain English: what was built, test results, anything skipped and why.
@@ -43,6 +43,7 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 python -m venv .venv
 .venv\Scripts\activate          (Windows)   |   source .venv/bin/activate (macOS/Linux)
 pip install -e ".[dev]"
-python -m pytest -q
+python -m pytest -q -n auto     (parallel, about 4-5 minutes; use this for the full run)
+python -m pytest -q             (serial, same tests, slower; still supported)
 ruff check src tests
 ```
