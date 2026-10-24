@@ -27,6 +27,7 @@ KNOWN_KEYS: tuple[str, ...] = (
     "IMAP_PORT",
     "IMAP_USER",
     "IMAP_PASSWORD",
+    "ANTHROPIC_API_KEY",
 )
 
 _NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")

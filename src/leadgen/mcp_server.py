@@ -448,7 +448,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         """Changes a project. Only the fields you pass change: name, description,
         cooldown_days (0 to 3650), offer_id (the project's offer; campaigns already made keep
         theirs), email_policy (verified_only or allow_risky; applies to campaigns made from now
-        on, existing campaigns keep their setting) or status (active or archived). Free.""",
+        on, existing campaigns keep their setting), sender_name (the sign-off name used when
+        writing messages; an empty string clears it) or status (active or archived). Free.""",
         WRITE | {"idempotent": True},
     )
     def update_project(
@@ -466,10 +467,16 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             Literal["verified_only", "allow_risky"] | None,
             Field(description="verified_only or allow_risky (for new campaigns)."),
         ] = None,
+        sender_name: Annotated[
+            str | None,
+            Field(description="The name messages are signed with (first name is enough). "
+                  "An empty string clears it."),
+        ] = None,
     ) -> dict[str, Any]:
         given = {
             "name": name, "description": description, "cooldown_days": cooldown_days,
             "offer_id": offer_id, "status": status, "email_policy": email_policy,
+            "sender_name": sender_name,
         }  # fmt: skip
         return projects_svc.update_project(
             project_id, **{k: v for k, v in given.items() if v is not None}

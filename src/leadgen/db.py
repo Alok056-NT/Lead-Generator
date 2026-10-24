@@ -112,6 +112,23 @@ _V4_SQL = """
 ALTER TABLE projects ADD COLUMN email_policy TEXT NOT NULL DEFAULT 'verified_only';
 """
 
+# v5 (V12 Studio): the project's sign-off name and Claude session, and the chat history. New
+# columns have defaults, so a v4 database keeps every row.
+_V5_SQL = """
+ALTER TABLE projects ADD COLUMN sender_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN chat_session_id TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE chat_messages (
+    id         INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,                      -- user / assistant / tool
+    text       TEXT NOT NULL DEFAULT '',
+    meta_json  TEXT NOT NULL DEFAULT '{}',         -- chips, buttons, attachments, tool name and ok
+    at         TEXT NOT NULL
+);
+CREATE INDEX idx_chat_messages_project ON chat_messages(project_id, id);
+"""
+
 
 def _unique_project_name(name: str, used: set[str]) -> str:
     base = " ".join(name.split())[:120].strip() or "Project"
@@ -158,10 +175,10 @@ def _v2_assign_projects(conn: sqlite3.Connection) -> None:
 # transaction, so the SQL must not contain BEGIN/COMMIT; `after(conn)` (optional) runs in the
 # same transaction once the SQL has run, for data changes that plain SQL cannot express.
 # v2 (T23): projects, contact memory, campaigns.project_id. v3 (T24): known_contacts.
-# v4 (T25): projects.email_policy.
+# v4 (T25): projects.email_policy. v5 (V12): sender name, chat session, chat_messages.
 Migration = tuple[int, str] | tuple[int, str, Callable[[sqlite3.Connection], None]]
 MIGRATIONS: list[Migration] = [
-    (2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL), (4, _V4_SQL),
+    (2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL), (4, _V4_SQL), (5, _V5_SQL),
 ]
 SCHEMA_VERSION = max([BASE_VERSION, *(m[0] for m in MIGRATIONS)])
 
@@ -173,6 +190,7 @@ TABLES = frozenset(
         "campaigns",
         "contact_log",
         "known_contacts",
+        "chat_messages",
         "companies",
         "people",
         "search_tasks",

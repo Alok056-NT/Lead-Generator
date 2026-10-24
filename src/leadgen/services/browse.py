@@ -669,6 +669,7 @@ def project_cards() -> list[dict[str, Any]]:
                 "leads": proj["confirmed_people"],
                 "verified_emails": verified.get(proj["id"], 0),
                 "cooldown_days": proj["cooldown_days"],
+                "sender_name": proj["sender_name"],
                 "last_activity": recent,
             }
         )

@@ -174,7 +174,7 @@ def test_migration_v1_to_v2_on_a_copy_keeps_everything(tmp_path):
     copy.parent.mkdir()
     shutil.copy2(original, copy)
 
-    assert db.init_db(copy) == db.SCHEMA_VERSION == 4  # v1 -> v2 -> v3 -> v4
+    assert db.init_db(copy) == db.SCHEMA_VERSION == 5  # v1 -> ... -> v5
 
     assert counts(copy) == before  # nothing deleted or added in the v1 tables
     with db.session(original) as conn:

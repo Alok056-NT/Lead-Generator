@@ -8,9 +8,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from leadgen import db
 from leadgen.core import config
 
 SENDER_FIELDS = ("name", "company", "role", "email", "website")
+AI_MODES = ("claude_plan", "api_key")
+AI_MODE_KEY = "ai_mode"
 BUDGET_FIELDS = ("search", "hunter", "verify")
 MAX_LINE = 200
 MAX_ADDRESS = 500
@@ -34,6 +37,24 @@ class PreferencesError(Exception):
             "ok": False,
             "error": {"code": self.code, "message": self.message, "hint": self.hint},
         }
+
+
+def get_ai_mode() -> str:
+    """The stored AI mode: "claude_plan", "api_key", or "" when not chosen yet."""
+    with db.session() as conn:
+        rows = db.query(conn, "SELECT value FROM settings WHERE key = ?", (AI_MODE_KEY,))
+    value = str(rows[0]["value"]) if rows else ""
+    return value if value in AI_MODES else ""
+
+
+def set_ai_mode(mode: str) -> str:
+    """Store the choice (upsert on `key`); anything else raises PreferencesError("invalid_value",
+    "Choose Claude plan or API key.")."""
+    if mode not in AI_MODES:
+        raise PreferencesError("invalid_value", "Choose Claude plan or API key.")
+    with db.session() as conn:
+        db.upsert(conn, "settings", ["key"], key=AI_MODE_KEY, value=mode)
+    return mode
 
 
 def get_preferences() -> dict[str, Any]:

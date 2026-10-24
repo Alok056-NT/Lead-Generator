@@ -23,7 +23,7 @@ from leadgen import db
 from leadgen.core.text import normalize_whitespace, truncate
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import confirm as rules
-from leadgen.services import contacts_import
+from leadgen.services import contacts_import, projects
 from leadgen.services import offer as offer_mod
 
 PAGE_SIZE_MAX = 50
@@ -330,6 +330,13 @@ def _offer_payload(profile: Mapping[str, Any]) -> dict[str, Any]:
     return {k: profile.get(k) for k in keys}
 
 
+def _project_sender_name(camp: Mapping[str, Any]) -> str:
+    """The project's sign-off name ("" when unset or the campaign has no project)."""
+    if camp.get("project_id") is None:
+        return ""
+    return str(projects.get_project(camp["project_id"]).get("sender_name") or "")
+
+
 def _person_payload(
     row: Mapping[str, Any], camp: Mapping[str, Any], known: Mapping[str, str] | None = None
 ) -> dict[str, Any]:
@@ -386,6 +393,10 @@ def get_drafting_batch(
     """
     camp = _campaign(campaign_id)
     profile = _offer_profile(camp)
+    sender = _project_sender_name(camp)
+    offer = _offer_payload(profile)
+    if sender:
+        offer["sender"] = {**(offer.get("sender") or {}), "name": sender}
     channel = _check_channel(camp, channel)
     size = min(max(1, _int(batch_size, "batch_size")), PAGE_SIZE_MAX)
     after = _cursor(cursor)
@@ -420,7 +431,8 @@ def get_drafting_batch(
             "target_designations": [g.get("label") for g in camp["designations"]],
         },
         "channel_spec": CHANNEL_SPECS[channel].as_dict(),
-        "offer": _offer_payload(profile),
+        "offer": offer,
+        "sender_name": sender or str((offer.get("sender") or {}).get("name") or ""),
         "people": [_person_payload(r, camp, known.get(r["id"])) for r in rows],
         "count": len(rows),
         "remaining": remaining,

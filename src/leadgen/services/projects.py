@@ -13,6 +13,7 @@ Callers must run `db.init_db()` first. Errors are raised as `ProjectError`.
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -20,7 +21,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from leadgen import db
-from leadgen.core.text import normalize_whitespace
+from leadgen.core import paths
+from leadgen.core.text import normalize_whitespace, slugify
 from leadgen.services import confirm as rules
 
 _log = logging.getLogger("leadgen.projects")
@@ -33,7 +35,11 @@ MAX_COOLDOWN_DAYS = 3650
 MAX_NAME = 120
 EMAIL_POLICIES = ("verified_only", "allow_risky")
 DEFAULT_EMAIL_POLICY = "verified_only"
-_FIELDS = ("name", "description", "cooldown_days", "offer_id", "status", "email_policy")
+_FIELDS = (
+    "name", "description", "cooldown_days", "offer_id", "status", "email_policy",
+    "sender_name",
+)
+MAX_SENDER = 120
 
 
 class ProjectError(Exception):
@@ -104,6 +110,18 @@ def _description(value: Any) -> str:
     return value.strip()
 
 
+def _sender_name(value: Any) -> str:
+    """The sign-off name: text, whitespace collapsed, at most 120 characters, may be empty."""
+    if not isinstance(value, str):
+        raise ProjectError("invalid_value", "The sign-off name must be text.")
+    name = normalize_whitespace(value)
+    if len(name) > MAX_SENDER:
+        raise ProjectError(
+            "invalid_value", f"The sign-off name is longer than {MAX_SENDER} characters."
+        )
+    return name
+
+
 def _check_offer(conn: sqlite3.Connection, offer_id: Any) -> int:
     if isinstance(offer_id, bool) or not isinstance(offer_id, int):
         raise ProjectError("invalid_offer", "offer_id must be the number of an existing offer.")
@@ -142,6 +160,7 @@ def _shape(row: Mapping[str, Any], offer_name: str = "") -> dict[str, Any]:
         "offer_name": offer_name,
         "cooldown_days": row["cooldown_days"],
         "email_policy": row["email_policy"],
+        "sender_name": row["sender_name"],
         "status": row["status"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -316,8 +335,8 @@ def create_project(
 
 
 def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
-    """Change `name`, `description`, `cooldown_days`, `offer_id`, `email_policy` or `status`
-    and return the project.
+    """Change `name`, `description`, `cooldown_days`, `offer_id`, `email_policy`, `sender_name`
+    or `status` and return the project.
 
     Existing campaigns keep the offer they were made with when `offer_id` changes, and keep their
     stored `allow_risky_emails` when `email_policy` changes (it applies to new campaigns).
@@ -343,6 +362,8 @@ def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
             values["offer_id"] = _check_offer(conn, changes["offer_id"])
         if "email_policy" in changes:
             values["email_policy"] = _email_policy(changes["email_policy"])
+        if "sender_name" in changes:
+            values["sender_name"] = _sender_name(changes["sender_name"])
         if "status" in changes:
             if changes["status"] not in STATUSES:
                 raise ProjectError(
@@ -412,6 +433,99 @@ def ensure_project_for_offer(offer_id: int) -> int:
             n += 1
             name = f"{base} ({n})"
         return db.insert(conn, "projects", name=name, offer_id=offer_id)
+
+
+def get_chat_session(project_id: int) -> str:
+    """The stored Claude session id of the project's chat, or "" (raises ProjectError not_found)."""
+    with db.session() as conn:
+        return str(_row(conn, project_id)["chat_session_id"] or "")
+
+
+def set_chat_session(project_id: int, session_id: str) -> None:
+    """Store the session id ("" clears it). Does not bump `updated_at`."""
+    with db.session() as conn:
+        row = _row(conn, project_id)
+        conn.execute(
+            "UPDATE projects SET chat_session_id = ? WHERE id = ?",
+            (str(session_id or ""), row["id"]),
+        )
+
+
+def delete_project(project_id: int, confirm_name: str) -> dict[str, Any]:
+    """Permanently remove a project and everything under it: its campaigns (companies, people,
+    emails, messages, sends), contact memory, known contacts, chat history, the offers nothing
+    else uses, and the export and upload folders. The do-not-contact list is kept. `confirm_name`
+    must match the project's name (any letter case). Raises `ProjectError` (`not_found`,
+    `name_mismatch`, `sending_in_progress`)."""
+    with db.session() as conn:
+        row = _row(conn, project_id)
+        if normalize_whitespace(str(confirm_name or "")).casefold() != normalize_whitespace(
+            row["name"]
+        ).casefold():
+            raise ProjectError(
+                "name_mismatch", "The name you typed does not match this project.",
+                "Type the project name exactly as it is shown.",
+            )  # fmt: skip
+        campaigns = db.query(
+            conn, "SELECT id, name, offer_id FROM campaigns WHERE project_id = ?", (row["id"],)
+        )
+        cids = [c["id"] for c in campaigns]
+        marks = ", ".join("?" for _ in cids)
+        counts = {"campaigns": len(cids), "people": 0, "messages": 0}
+        if cids:
+            queued = conn.execute(
+                "SELECT COUNT(*) FROM sends s JOIN messages m ON m.id = s.message_id "
+                "JOIN people p ON p.id = m.person_id "
+                f"WHERE s.status = 'queued' AND p.campaign_id IN ({marks})",
+                cids,
+            ).fetchone()[0]
+            if queued:
+                raise ProjectError(
+                    "sending_in_progress",
+                    "Some emails of this project are still waiting to be sent.",
+                    "Pause sending or let them finish, then delete the project.",
+                )
+            counts["people"] = conn.execute(
+                f"SELECT COUNT(*) FROM people WHERE campaign_id IN ({marks})", cids
+            ).fetchone()[0]
+            counts["messages"] = conn.execute(
+                "SELECT COUNT(*) FROM messages m JOIN people p ON p.id = m.person_id "
+                f"WHERE p.campaign_id IN ({marks})",
+                cids,
+            ).fetchone()[0]
+        offers = {o for o in (row["offer_id"], *(c["offer_id"] for c in campaigns)) if o}
+        conn.execute("DELETE FROM contact_log WHERE project_id = ?", (row["id"],))
+        if cids:
+            conn.execute(  # no foreign key covers the QA issues
+                "DELETE FROM qa_issues WHERE (entity_type = 'person' AND entity_id IN "
+                f"(SELECT id FROM people WHERE campaign_id IN ({marks}))) "
+                "OR (entity_type = 'message' AND entity_id IN (SELECT m.id FROM messages m "
+                f"JOIN people p ON p.id = m.person_id WHERE p.campaign_id IN ({marks})))",
+                [*cids, *cids],
+            )
+            conn.execute(
+                "DELETE FROM settings WHERE key IN (SELECT 'ai_search_task:' || id "
+                f"FROM search_tasks WHERE campaign_id IN ({marks}))",
+                cids,
+            )
+            for cid in cids:
+                for prefix in ("budget_used", "lemlist_push", "compliance_ack"):
+                    conn.execute("DELETE FROM settings WHERE key LIKE ?", (f"{prefix}:{cid}:%",))
+            conn.execute("DELETE FROM campaigns WHERE project_id = ?", (row["id"],))
+        conn.execute("DELETE FROM projects WHERE id = ?", (row["id"],))
+        for offer_id in offers:
+            gone = conn.execute(
+                "DELETE FROM offers WHERE id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM campaigns WHERE offer_id = ?) AND NOT EXISTS "
+                "(SELECT 1 FROM projects WHERE offer_id = ?)",
+                (offer_id, offer_id, offer_id),
+            ).rowcount
+            if gone:
+                conn.execute("DELETE FROM settings WHERE key = ?", (f"offer_crawl:{offer_id}",))
+    for campaign in campaigns:  # after the commit; a problem here never undoes the delete
+        shutil.rmtree(paths.home() / "exports" / slugify(campaign["name"]), ignore_errors=True)
+    shutil.rmtree(paths.home() / "uploads" / str(row["id"]), ignore_errors=True)
+    return {"deleted": True, "project_id": row["id"], **counts}
 
 
 # --- keys -------------------------------------------------------------------------------------
