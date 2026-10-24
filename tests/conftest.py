@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from leadgen.core.logging import shutdown_logging
@@ -77,6 +80,36 @@ def ready_db():
     from leadgen import db
 
     db.init_db()
+
+
+@pytest.fixture
+def fake_claude(tmp_path, monkeypatch):
+    """Point Lead Generator at the fake claude script; `.calls()` reads what it was asked."""
+    from leadgen.services import ai_setup
+
+    state = tmp_path / "fake-claude-state"
+    state.mkdir()
+    log = tmp_path / "fake-claude.log"
+    monkeypatch.setenv("LEADGEN_CLAUDE_BIN", str(Path(__file__).parent / "fake_claude.py"))
+    monkeypatch.setenv("FAKE_CLAUDE_STATE", str(state))
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    ai_setup.clear_cache()
+
+    class Fake:
+        def scenario(self, name):
+            monkeypatch.setenv("FAKE_CLAUDE_SCENARIO", name)
+
+        def auth(self, name):  # "in" or "out"
+            monkeypatch.setenv("FAKE_CLAUDE_AUTH", name)
+            ai_setup.clear_cache()
+
+        def calls(self):
+            if not log.exists():
+                return []
+            return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+    yield Fake()
+    ai_setup.clear_cache()
 
 
 # The two longest tests (full campaign runs, 30-90 s alone) go first so that, with `-n auto`, they

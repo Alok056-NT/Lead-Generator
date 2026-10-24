@@ -28,6 +28,7 @@ from leadgen import __version__, db
 from leadgen.core import config, countries
 from leadgen.providers.base import ProviderError
 from leadgen.services import (
+    ai_setup,
     analytics,
     browse,
     contacts_import,
@@ -164,6 +165,14 @@ class SettingsBody(_Body):
     locale: str | None = None
     budgets: dict[str, int] | None = None
     strict_review: bool | None = None
+
+
+class AiModeBody(_Body):
+    mode: Literal["claude_plan", "api_key"]
+
+
+class AiKeyBody(_Body):
+    key: str = Field(max_length=500)
 
 
 # --- replies ------------------------------------------------------------------------------------
@@ -701,6 +710,29 @@ def _register_routes(app: FastAPI) -> None:
     @app.post("/api/settings")
     def save_settings(body: SettingsBody) -> JSONResponse:
         return _reply(preferences.update_preferences(body.model_dump(exclude_none=True)))
+
+    # ---- your AI (Claude Code) ----------------------------------------------------------------
+
+    @app.get("/api/ai")
+    def ai_status(refresh: bool = False) -> JSONResponse:
+        return _reply(ai_setup.get_status(refresh))
+
+    @app.post("/api/ai/mode")
+    def ai_mode(body: AiModeBody) -> JSONResponse:
+        preferences.set_ai_mode(body.mode)
+        return _reply(ai_setup.get_status())
+
+    @app.post("/api/ai/login")
+    def ai_login() -> JSONResponse:
+        return _reply(ai_setup.start_login())
+
+    @app.post("/api/ai/api-key")
+    def ai_api_key(body: AiKeyBody) -> JSONResponse:
+        return _reply(ai_setup.save_api_key(body.key))
+
+    @app.post("/api/ai/test")
+    def ai_test() -> JSONResponse:
+        return _reply(ai_setup.check_connection())
 
 
 def serve(port: int | None = None) -> int:
