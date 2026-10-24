@@ -641,6 +641,7 @@ def test_imaplib_sends_examine_for_a_read_only_select(monkeypatch):
     sent = []
     conn = imaplib.IMAP4.__new__(imaplib.IMAP4)
     conn.untagged_responses = {}
+    conn._encoding = "ascii"  # set by __init__ in newer Python (3.13.16+), which we skip
     monkeypatch.setattr(
         imaplib.IMAP4,
         "_simple_command",

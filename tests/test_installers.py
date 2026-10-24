@@ -51,7 +51,10 @@ def test_unix_installer_details():
     assert body.isascii()
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not installed")
+# On Windows, `bash` may be the WSL launcher (no Linux installed), not a real bash.
+@pytest.mark.skipif(
+    shutil.which("bash") is None or sys.platform == "win32", reason="needs a real bash"
+)
 def test_unix_installer_has_valid_syntax():
     done = subprocess.run(["bash", "-n", str(SH)], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
