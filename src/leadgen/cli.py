@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import sqlite3
 import sys
 import tempfile
@@ -191,6 +192,35 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         address = dashboard_ctl.url_for(settings.dashboard.host, port)
         threading.Timer(1.5, webbrowser.open, args=(address,)).start()
     return app.serve(args.port)
+
+
+def _alert(text: str) -> None:
+    """Say something even without a console (a desktop shortcut runs pythonw)."""
+    if sys.stderr is not None and sys.stderr.isatty():
+        print(text, file=sys.stderr)
+        return
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(0, text, "Lead Generator", 0x10)
+        except (OSError, AttributeError):
+            pass
+
+
+def cmd_app(_args: argparse.Namespace) -> int:
+    """Start the dashboard if it is not running and open it in the browser (the desktop button)."""
+    import webbrowser
+
+    from leadgen.services import dashboard_ctl
+
+    result = dashboard_ctl.ensure_running()
+    if not result["ok"]:
+        error = result["error"]
+        _alert(f"{error['message']} {error['hint']}")
+        return 1
+    webbrowser.open(result["url"])
+    return 0
 
 
 def cmd_compliance(args: argparse.Namespace) -> int:
@@ -475,6 +505,9 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--port", type=int, default=None, help="port (default from settings, 8765)")
     dash.add_argument("--open", action="store_true", help="open it in the browser")
     dash.set_defaults(func=cmd_dashboard)
+    sub.add_parser("app", help="open Lead Generator (starts it if needed)").set_defaults(
+        func=cmd_app
+    )
     comp = sub.add_parser("compliance", help="show the email rules per country")
     comp.add_argument("--markdown", action="store_true", help="print the full page as Markdown")
     comp.add_argument("--output", default=None, help="with --markdown: write the page to this file")

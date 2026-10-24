@@ -73,8 +73,20 @@ def clear_pid() -> None:
         pass
 
 
+def _console_python(executable: str | None = None, windows: bool | None = None) -> str:
+    """The Python that runs the background dashboard: a desktop shortcut starts `pythonw.exe` (no
+    console, no stdout), but the server wants the console build."""
+    exe = Path(executable or sys.executable)
+    nt = (os.name == "nt") if windows is None else windows
+    if nt and exe.name.lower() == "pythonw.exe":
+        console = exe.with_name("python.exe")
+        if console.exists():
+            return str(console)
+    return str(exe)
+
+
 def _spawn(port: int) -> subprocess.Popen[bytes]:
-    cmd = [sys.executable, "-m", "leadgen", "dashboard", "--port", str(port)]
+    cmd = [_console_python(), "-m", "leadgen", "dashboard", "--port", str(port)]
     common: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,

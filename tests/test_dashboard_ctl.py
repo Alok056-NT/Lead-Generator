@@ -236,3 +236,16 @@ def test_cli_dashboard_open_flag_opens_the_browser(monkeypatch):
     monkeypatch.setattr(dash, "serve", lambda port=None: 0)
     assert cli.main(["dashboard", "--open", "--port", "8812"]) == 0
     assert timers[0][1] is webbrowser.open and timers[0][2] == ("http://127.0.0.1:8812/",)
+
+
+def test_console_python_prefers_the_console_build_on_windows(tmp_path):
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    gui, console = scripts / "pythonw.exe", scripts / "python.exe"
+    gui.write_bytes(b"")
+    console.write_bytes(b"")
+    assert ctl._console_python(str(gui), windows=True) == str(console)
+    assert ctl._console_python(str(gui), windows=False) == str(gui)
+    assert ctl._console_python(str(console), windows=True) == str(console)
+    console.unlink()
+    assert ctl._console_python(str(gui), windows=True) == str(gui)

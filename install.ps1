@@ -112,6 +112,37 @@ Say 'Checking the installation ...'
 & $leadgen doctor
 $doctorOk = ($LASTEXITCODE -eq 0)
 
+# 4b. A "Lead Generator" button on the Desktop and in the Start menu (a click opens the app)
+function New-LeadGenShortcut($path) {
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $link = $shell.CreateShortcut($path)
+        $link.TargetPath = Join-Path $VenvDir 'Scripts\pythonw.exe'
+        $link.Arguments = '-m leadgen app'
+        $link.WorkingDirectory = $env:USERPROFILE
+        $link.Description = 'Lead Generator'
+        $link.IconLocation = (Join-Path $VenvDir 'Scripts\pythonw.exe') + ',0'
+        $link.Save()
+        return $true
+    } catch {
+        return $false
+    }
+}
+$madeButton = $false
+if (Test-Path (Join-Path $VenvDir 'Scripts\pythonw.exe')) {
+    $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Lead Generator.lnk'
+    $menuLink = Join-Path ([Environment]::GetFolderPath('Programs')) 'Lead Generator.lnk'
+    $first = New-LeadGenShortcut $desktopLink
+    $second = New-LeadGenShortcut $menuLink
+    $madeButton = ($first -or $second)
+}
+Say ''
+if ($madeButton) {
+    Say 'Created the Lead Generator button on your Desktop and in the Start menu.'
+} else {
+    Say 'I could not create the Lead Generator button. You can still open the app with: leadgen app'
+}
+
 # 5. Offer to connect Claude Desktop
 if (-not $env:LEADGEN_NO_CONNECT) {
     Say ''
@@ -135,15 +166,16 @@ if ($doctorOk) { Say 'Lead Generator is installed.' } else { Say 'Lead Generator
 Say '=============================================================='
 Say ''
 Say 'What to do next:'
-Say '  1. If Claude Desktop is open, quit it completely (right-click its icon in the'
+Say '  1. Click the Lead Generator button on your Desktop (or find it in the Start menu).'
+Say '  2. If Claude Desktop is open, quit it completely (right-click its icon in the'
 Say '     system tray, then Quit) and open it again.'
-Say '  2. In a new chat, ask:  What is my Lead Generator status?'
-Say '  3. To add your free API keys on a simple web page, run:'
+Say '  3. In a new chat, ask:  What is my Lead Generator status?'
+Say '  4. To add your free API keys on a simple web page, run:'
 Say ('       "' + $leadgen + '" dashboard --open')
 Say '     (the page opens at http://127.0.0.1:8765 - or ask Claude to "open the dashboard")'
-Say '  4. To use ChatGPT instead, run:'
+Say '  5. To use ChatGPT instead, run:'
 Say ('       "' + $leadgen + '" connect chatgpt')
-Say '  5. To use Claude Code, run:'
+Say '  6. To use Claude Code, run:'
 Say ('       "' + $leadgen + '" connect claude-code')
 Say ''
 Say 'Run this installer again at any time to upgrade.'

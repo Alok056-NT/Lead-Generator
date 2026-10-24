@@ -70,3 +70,18 @@ def test_windows_installer_parses():
         ["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True
     )
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_windows_installer_makes_the_app_button():
+    body = text(PS1)
+    for needle in (
+        "WScript.Shell", "pythonw.exe", "-m leadgen app", "GetFolderPath('Desktop')",
+        "GetFolderPath('Programs')", "Lead Generator.lnk",
+    ):  # fmt: skip
+        assert needle in body
+
+
+def test_unix_installer_makes_the_app_button():
+    body = text(SH)
+    for needle in ("Lead Generator.command", "chmod +x", '" app'):
+        assert needle in body

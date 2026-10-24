@@ -100,6 +100,15 @@ say ""
 say "Checking the installation ..."
 if "$LEADGEN" doctor; then DOCTOR_OK=1; else DOCTOR_OK=0; fi
 
+# 4b. A "Lead Generator" button on the Desktop (macOS)
+if [ "$OS" = "Darwin" ] && [ -d "$HOME/Desktop" ]; then
+    BUTTON="$HOME/Desktop/Lead Generator.command"
+    printf '#!/bin/bash\n"%s" app\n' "$LEADGEN" > "$BUTTON"
+    chmod +x "$BUTTON"
+    say ""
+    say "Created the Lead Generator button on your Desktop."
+fi
+
 # 5. Offer to connect Claude Desktop (macOS only: its settings location on Linux is not documented)
 if [ "$OS" = "Darwin" ] && [ -z "${LEADGEN_NO_CONNECT:-}" ]; then
     say ""
@@ -132,6 +141,7 @@ fi
 say "=============================================================="
 say ""
 say "What to do next:"
+say "  - To open the app: double-click Lead Generator on your Desktop (Mac), or run: \"$LEADGEN\" app"
 if [ "$OS" = "Darwin" ]; then
     say "  1. If Claude Desktop is open, quit it completely (Claude menu, then Quit) and open it again."
     say "  2. In a new chat, ask:  What is my Lead Generator status?"

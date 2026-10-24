@@ -87,3 +87,43 @@ def test_doctor_reports_old_sqlite(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "Database      : PROBLEM - SQLite" in out
     assert "too old; 3.35 or newer is needed" in out
+
+
+def test_app_button_starts_the_dashboard_and_opens_it(monkeypatch):
+    import webbrowser
+
+    from leadgen.services import dashboard_ctl
+
+    assert cli.build_parser().parse_args(["app"]).func is cli.cmd_app
+    url = "http://127.0.0.1:8765/"
+    monkeypatch.setattr(
+        dashboard_ctl, "ensure_running", lambda: {"ok": True, "url": url, "started": False}
+    )
+    opened = []
+    monkeypatch.setattr(webbrowser, "open", lambda address: opened.append(address) or True)
+    assert main(["app"]) == 0
+    assert opened == [url]
+
+
+def test_app_button_says_what_went_wrong(monkeypatch):
+    from leadgen.services import dashboard_ctl
+
+    error = {"ok": False, "error": {"message": "Port busy.", "hint": "Change it."}}
+    monkeypatch.setattr(dashboard_ctl, "ensure_running", lambda: error)
+    said = []
+    monkeypatch.setattr(cli, "_alert", said.append)
+    assert main(["app"]) == 1
+    assert said == ["Port busy. Change it."]
+
+
+def test_alert_prints_to_the_console_when_there_is_one(monkeypatch):
+    import io
+
+    class Console(io.StringIO):
+        def isatty(self):
+            return True
+
+    console = Console()
+    monkeypatch.setattr(cli.sys, "stderr", console)
+    cli._alert("Port busy.")
+    assert console.getvalue() == "Port busy.\n"
