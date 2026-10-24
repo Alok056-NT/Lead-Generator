@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import sys
 
@@ -21,7 +22,7 @@ from qa_world import PROFILE
 from qa_world import make_campaign as make_email_campaign
 from starlette.testclient import TestClient
 
-from leadgen import cli, mcp_server
+from leadgen import cli, db, mcp_server
 from leadgen.core import config, secrets
 from leadgen.providers import registry
 from leadgen.providers.base import ProviderError
@@ -196,6 +197,41 @@ def test_get_status_on_a_new_workspace(mcp):
     assert serper["configured"] is True and serper["masked_key"].endswith("6789")
     assert "sk-serper-secret-0123456789" not in json.dumps(reply)
     assert reply["workspace"] and reply["version"]
+
+
+def _named_tools(text):
+    """Tool names written like calls (`name(` ) in a hint or message."""
+    return set(re.findall(r"\b([a-z]+(?:_[a-z]+)+)\(", text))
+
+
+def test_the_tools_named_in_next_steps_and_hints_exist(mcp):
+    tools = set(tools_by_name(mcp))
+    assert mcp("get_status")["next_step"]["tool"] in tools  # a new workspace
+    project = mcp("create_project", name="Training courses")
+    step = mcp("get_status")["next_step"]
+    assert step["tool"] in tools
+    named = _named_tools(step["message"])
+    assert named == {"update_project"} and named <= tools
+    assert "set_project_offer" not in step["message"]
+    # the hints of the offer errors name real tools too
+    refused = mcp("create_campaign", name="A", project_id=project["id"], countries=["SG"],
+                  sectors=["logistics"], company_size="200-1000", channels=["linkedin"],
+                  designations=["ld"])  # fmt: skip
+    assert error_code(refused) == "project_has_no_offer"
+    message = refused["error"]["message"] + " " + refused["error"]["hint"]
+    assert "set_project_offer" not in message
+    assert _named_tools(message) == {"update_project"}
+    with db.session() as conn:
+        a = db.insert(conn, "offers", name="A", source_type="text")
+        b = db.insert(conn, "offers", name="B", source_type="text")
+    mcp("update_project", project_id=project["id"], offer_id=a)
+    clash = mcp("create_campaign", name="A", project_id=project["id"], offer_id=b,
+                countries=["SG"], sectors=["logistics"], company_size="200-1000",
+                channels=["linkedin"], designations=["ld"])  # fmt: skip
+    assert error_code(clash) == "offer_mismatch"
+    message = clash["error"]["hint"]
+    assert "set_project_offer" not in message
+    assert _named_tools(message) == {"update_project"} <= tools
 
 
 def test_next_step_follows_the_work(mcp):

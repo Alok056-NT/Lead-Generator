@@ -428,8 +428,8 @@ def _project_offer(conn, project_id: Any, offer_id: Any) -> tuple[int, int]:
             raise CampaignError(
                 "project_has_no_offer",
                 f"Project '{project['name']}' has no offer yet.",
-                "Read the offer (ingest_offer_source), then set_project_offer, then create the "
-                "campaign.",
+                "Read the offer (ingest_offer_source), then update_project(project_id, "
+                "offer_id=...), then create the campaign.",
             )
         return project["id"], project["offer_id"]
     offer_id = _check_offer(conn, offer_id)
@@ -439,7 +439,8 @@ def _project_offer(conn, project_id: Any, offer_id: Any) -> tuple[int, int]:
         raise CampaignError(
             "offer_mismatch",
             f"Project '{project['name']}' uses offer {project['offer_id']}, not {offer_id}.",
-            "Leave offer_id out to use the project's offer, or change it with set_project_offer.",
+            "Leave offer_id out to use the project's offer, or change it with "
+            "update_project(project_id, offer_id=...).",
         )
     return project["id"], offer_id
 

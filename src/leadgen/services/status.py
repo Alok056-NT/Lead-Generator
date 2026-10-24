@@ -259,7 +259,8 @@ def _project_step(
         return _step(
             "offer", "ingest_offer_source",
             f"Project '{project['name']}' has no offer yet. Ask for a website address (one page "
-            "or the whole site), pasted text or a document, read it, then set_project_offer.",
+            "or the whole site), pasted text or a document, read it, then "
+            "update_project(project_id, offer_id=...).",
             project_id=pid,
         )  # fmt: skip
     if not profile_by_offer.get(project["offer_id"], False):

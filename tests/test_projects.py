@@ -1053,6 +1053,48 @@ def test_a_manual_promotion_turns_the_blocks_into_warnings(project):
     assert issue.severity == "warn" and "accepted by hand: confirmed: I checked" in issue.detail
 
 
+def test_a_later_hand_promoted_duplicate_does_not_block_the_earlier_person(project):
+    pid = project["id"]
+    first = make_campaign(pid, "First")
+    add_company(first, "Alpha Co")
+    find(first, MIRA)
+    mira = rows(first, "confirmed")[0]["id"]
+    second = make_campaign(pid, "Second")
+    add_company(second, "Alpha Co")
+    find(second, MIRA)  # L25: goes to review
+    dup = rows(second)[0]["id"]
+    assert people.set_person_status(second, [dup], "confirmed", "checked by hand")["updated"] == 1
+    assert [r["campaign_id"] for r in log_rows(pid) if r["channel"] == "found"] == [first, second]
+    issues = check(first)[mira]
+    assert "L24" not in issues and "L25" not in issues  # the later copy's entry is ignored
+    out = people.recheck_people(first)
+    assert out["to_review"] == [] and names(first, "confirmed") == ["Mira Lee"]
+    assert "L24" not in check(first)[mira]
+    # the later (hand-accepted) copy still shows the warning
+    assert check(second)[dup]["L25"].severity == "warn"
+
+
+def test_a_migrated_duplicate_blocks_only_the_later_copy_with_l25(project):
+    pid = project["id"]
+    a = make_campaign(pid, "First")
+    b = make_campaign(pid, "Second")
+    co_a, co_b = add_company(a, "Alpha Co"), add_company(b, "Alpha Co")
+    early = confirmed_person(a, co_a, "Mira", "Lee")
+    late = confirmed_person(b, co_b, "Mira", "Lee")
+    with db.session() as conn:
+        conn.execute("DELETE FROM contact_log")
+        projects.backfill_v1_contacts(conn)  # what the v2 migration logs for v1 data
+    assert [r["person_id"] for r in log_rows(pid)] == [early, late]
+    assert set(check(a)[early]) & {"L24", "L25"} == set()
+    assert set(check(b)[late]) & {"L24", "L25"} == {"L25"}
+    assert people.recheck_people(a)["to_review"] == []
+    # exports, sends and imports of a later person still count
+    projects.log_contacts(
+        pid, [{"first_name": "Mira", "last_name": "Lee", "company": "Alpha Co"}], "imported"
+    )
+    assert "L24" in check(a)[early]
+
+
 def test_campaigns_without_a_project_get_no_project_checks():
     from qa_world import campaign_dict, company_row, person_row
 

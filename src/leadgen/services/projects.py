@@ -255,7 +255,7 @@ def create_project(
     """Create an active project and return it (see `get_project`).
 
     `cooldown_days` (0 to 3650, default 90) is how long a person who was found or contacted is
-    not offered again; 0 turns the memory off. `offer_id` may be set later (`set_project_offer`).
+    not offered again; 0 turns the memory off. `offer_id` may be set later (`update_project`).
     Raises `ProjectError`.
     """
     values: dict[str, Any] = {
@@ -531,11 +531,17 @@ class ContactMemory:
     by_key: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
 
     def lookup(
-        self, keys: Mapping[str, str], exclude_campaign_id: int | None = None
+        self,
+        keys: Mapping[str, str],
+        exclude_campaign_id: int | None = None,
+        below_person_id: int | None = None,
     ) -> dict[str, Any] | None:
         """The latest logged contact matching the LinkedIn key, else the email, else the name
         and company, or None (also None when the cooldown is 0). Entries of
-        `exclude_campaign_id` are ignored: a campaign does not block its own people."""
+        `exclude_campaign_id` are ignored: a campaign does not block its own people. With
+        `below_person_id`, `found` entries of a later person (a higher person id) are ignored
+        too, so the earlier of two copies of one person is not blocked by the later one;
+        exports, sends and imports still count."""
         if self.cooldown_days <= 0:
             return None
         for kind in ("key_linkedin", "key_email", "key_name_company"):
@@ -544,7 +550,13 @@ class ContactMemory:
                 continue
             rows = [
                 r for r in self.by_key.get((kind, value), [])
-                if exclude_campaign_id is None or r["campaign_id"] != exclude_campaign_id
+                if (exclude_campaign_id is None or r["campaign_id"] != exclude_campaign_id)
+                and not (
+                    below_person_id is not None
+                    and r["channel"] == "found"
+                    and r["person_id"] is not None
+                    and r["person_id"] > below_person_id
+                )
             ]  # fmt: skip
             if rows:
                 return _hit(max(rows, key=lambda r: (r["at"], r["id"])), self.cooldown_days)
@@ -738,8 +750,9 @@ class ContactScreen:
         """`(code, plain-English text)` pairs: `L25` when a person with these keys is `confirmed`
         or `reserve` in another active campaign of the project (only people created before
         `below_person_id` when given), `L24` when the project found or contacted them inside
-        its cooldown. A `found` entry of the very campaign that already gave L25 is not
-        repeated as L24."""
+        its cooldown (`found` entries of later people are ignored when `below_person_id` is
+        given). A `found` entry of the very campaign that already gave L25 is not repeated
+        as L24."""
         if self.project_id is None:
             return []
         if self._active is None or self._memory is None:
@@ -755,7 +768,7 @@ class ContactScreen:
                     f"(person {other['person_id']}, {other['status']})",
                 )
             )
-        hit = self._memory.lookup(keys, self.campaign_id)
+        hit = self._memory.lookup(keys, self.campaign_id, below_person_id)
         if hit is not None and not (
             other is not None
             and hit["channel"] == "found"
