@@ -332,11 +332,16 @@ function go(path, params) {
 
 const TOP_NAV = [
   ['home', 'Projects'],
-  ['campaigns', 'Campaigns'],
-  ['analytics', 'Results'],
+  ['connect', 'Your AI'],
   ['keys', 'Keys'],
   ['settings', 'Settings'],
+  ['advanced', 'Advanced'],
 ];
+// Pages that belong to a top-level link without being it, so that link stays highlighted.
+const NAV_GROUP = {
+  p: 'home', 'new-project': 'home',
+  c: 'advanced', campaigns: 'advanced', analytics: 'advanced', mailbox: 'advanced', classic: 'advanced',
+};
 const CAMPAIGN_NAV = [
   ['', 'Overview'],
   ['companies', '1 Companies'],
@@ -393,21 +398,26 @@ async function route() {
     const reply = await api('/api/campaigns/' + id);
     if (token !== routeToken) return;
     if (!reply.ok) {
-      renderNav('campaigns', null, '');
+      renderNav('advanced', null, '');
       setMain(notice('bad', errorText(reply)), h('a', { href: '#/campaigns', text: 'Back to your campaigns' }));
       return;
     }
     campaign = reply.campaign;
     campaign.overview = reply;
     campaign.project = reply.project;
-    renderNav('campaigns', campaign, sub);
+    renderNav('advanced', campaign, sub);
   } else {
-    renderNav(top === 'p' || top === 'new-project' ? 'home' : top, null, '');
+    renderNav(NAV_GROUP[top] || top, null, '');
   }
+  if (window.Studio && Studio.pill) Studio.pill();
+  const studio = window.Studio || {};
   const pages = {
-    home: pageHome, keys: pageKeys, campaigns: pageCampaigns, analytics: pageAnalytics, settings: pageSettings,
+    home: studio.pageHome || pageHome, connect: studio.pageConnect || pageHome,
+    advanced: studio.pageAdvanced || pageHome, classic: pageHome,
+    keys: pageKeys, campaigns: pageCampaigns, analytics: pageAnalytics, settings: pageSettings,
     'new-project': pageNewProject, mailbox: pageMailbox,
-    p: parts[2] === 'new-campaign' ? pageNewCampaign : parts[2] === 'contacts' ? pageContacts : pageProject,
+    p: parts[2] === 'new-campaign' ? pageNewCampaign : parts[2] === 'contacts' ? pageContacts
+      : parts[2] === 'details' ? pageProject : (studio.pageProject || pageProject),
   };
   const subPages = {
     '': pageOverview, companies: pageCompanies, leads: pageLeads, messages: pageMessages,
