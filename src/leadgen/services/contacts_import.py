@@ -987,6 +987,19 @@ def known_for_people(
     return out
 
 
+def known_summary(project_id: int) -> dict[str, Any]:
+    """How many known contacts the project stores: `{"total", "by_relationship"}`."""
+    with db.session() as conn:
+        rows = db.query(
+            conn,
+            "SELECT relationship, COUNT(*) AS n FROM known_contacts WHERE project_id = ? "
+            "GROUP BY relationship",
+            (project_id,),
+        )
+    by = {r["relationship"]: r["n"] for r in rows}
+    return {"total": sum(by.values()), "by_relationship": by}
+
+
 def warm_counts(
     project_id: int | None, companies: Sequence[Mapping[str, Any]]
 ) -> dict[int, int]:

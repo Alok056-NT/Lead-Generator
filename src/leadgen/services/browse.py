@@ -17,7 +17,14 @@ from leadgen import db
 from leadgen.core import paths
 from leadgen.core.text import slugify
 from leadgen.services import campaign as campaign_mod
-from leadgen.services import contacts_import, qa_leads, qa_messages, spot_check
+from leadgen.services import (
+    contacts_import,
+    projects,
+    qa_leads,
+    qa_messages,
+    spot_check,
+)
+from leadgen.services import offer as offer_mod
 from leadgen.services.people import person_shape
 
 PAGE_SIZE_MAX = 50
@@ -141,6 +148,7 @@ def list_leads(
     qa: str | None = None,
     ai_verdict: str | None = None,
     search: str | None = None,
+    known_only: bool = False,
     page: int = 1,
     page_size: int = 25,
 ) -> dict[str, Any]:
@@ -149,8 +157,9 @@ def list_leads(
     `qa` is `block` / `warn` / `clean` (worst stored QA issue of the person or their messages),
     `email_status` the status of the person's best address (or `none`), `ai_verdict` the summary of
     their messages' AI review (`pass`, `fix`, `reject`, `pending`, `no_messages`) and `search`
-    matches name, title, company and LinkedIn link. Returns `leads`, `page`, `page_size`, `total`,
-    `has_more`. Raises `BrowseError` / `CampaignError` (not found).
+    matches name, title, company and LinkedIn link; `known_only` keeps only the people who are
+    imported known contacts of the campaign's project. Returns `leads`, `page`, `page_size`,
+    `total`, `has_more`. Raises `BrowseError` / `CampaignError` (not found).
     """
     camp = campaign_mod.get_campaign(campaign_id)
     page_no, size = _page(page, page_size)
@@ -198,13 +207,40 @@ def list_leads(
         params.extend([term] * 4)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     inner = f"SELECT * FROM ({_LEAD_SELECT}){clause}"
+    if known_only:
+        return _known_leads(camp, inner, params, page_no, size)
     with db.session() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM ({inner})", params).fetchone()[0]
         rows = db.query(
             conn, f"{inner} ORDER BY id LIMIT ? OFFSET ?", [*params, size, (page_no - 1) * size]
         )
-    leads = [_lead_shape(r) for r in rows]
+    return _leads_reply(camp, rows, total, page_no, size)
+
+
+def _known_leads(
+    camp: dict[str, Any], inner: str, params: list[Any], page_no: int, size: int
+) -> dict[str, Any]:
+    """The `known_only` page: the matching people are checked against the stored known contacts
+    first (the project has few thousand people at most), then paged."""
+    with db.session() as conn:
+        rows = db.query(conn, f"{inner} ORDER BY id", params)
     known = contacts_import.known_for_people(camp.get("project_id"), [r["id"] for r in rows])
+    rows = [r for r in rows if r["id"] in known]
+    start = (page_no - 1) * size
+    return _leads_reply(camp, rows[start : start + size], len(rows), page_no, size, known)
+
+
+def _leads_reply(
+    camp: dict[str, Any],
+    rows: list[dict[str, Any]],
+    total: int,
+    page_no: int,
+    size: int,
+    known: dict[int, dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    leads = [_lead_shape(r) for r in rows]
+    if known is None:
+        known = contacts_import.known_for_people(camp.get("project_id"), [r["id"] for r in rows])
     for lead in leads:
         if lead["id"] in known:  # imported contact (T24)
             lead["known_contact"] = known[lead["id"]]
@@ -531,10 +567,155 @@ def campaign_overview(campaign_id: int) -> dict[str, Any]:
     return {
         "ok": True,
         "campaign": camp,
+        "project": _project_ref(camp.get("project_id")),
+        "reserve_sources": reserve_sources(campaign_id),
         "search_tasks": search_task_counts(campaign_id),
         "spot_check": {
             "ai_leads": len(ai_people),
             "state": spot_check.spot_state(ai_people, camp["options"]),
             "answers": answers,
         },
+    }
+
+
+# --- projects (Sprint v1.1) -------------------------------------------------------------------
+
+
+def _project_ref(project_id: int | None) -> dict[str, Any] | None:
+    """`{"id", "name"}` of a project, or None."""
+    if project_id is None:
+        return None
+    with db.session() as conn:
+        row = db.get(conn, "projects", int(project_id))
+    return {"id": row["id"], "name": row["name"]} if row else None
+
+
+def reserve_sources(campaign_id: int) -> list[dict[str, Any]]:
+    """The other campaigns of the same project that hold people saved for a later campaign:
+    `[{"id", "name", "reserve"}]` (the campaign's own reserve is in its people counts)."""
+    camp = campaign_mod.get_campaign(campaign_id)
+    if camp.get("project_id") is None:
+        return []
+    with db.session() as conn:
+        rows = db.query(
+            conn,
+            "SELECT c.id AS id, c.name AS name, COUNT(*) AS reserve FROM campaigns c "
+            "JOIN people p ON p.campaign_id = c.id AND p.status = 'reserve' "
+            "WHERE c.project_id = ? AND c.id <> ? AND c.status <> 'archived' "
+            "GROUP BY c.id ORDER BY c.id",
+            (camp["project_id"], campaign_id),
+        )
+    return rows
+
+
+def _one_liner(profile: Any) -> str:
+    return str(profile.get("one_liner") or "") if isinstance(profile, dict) else ""
+
+
+def _latest(*groups: dict[int, str]) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for group in groups:
+        for key, value in group.items():
+            if value and value > out.get(key, ""):
+                out[key] = value
+    return out
+
+
+def project_cards() -> list[dict[str, Any]]:
+    """One card per open project for the dashboard home: name, what it is about (`about`, the
+    saved one-line summary, or `""` when the project is not set up yet), `campaigns`, `leads`
+    (ready people), `verified_emails` (ready people with a verified address) and `last_activity`."""
+    with db.session() as conn:
+        offers = {
+            r["id"]: r for r in db.query(conn, "SELECT id, profile_json, source_type FROM offers")
+        }
+        verified = {
+            r["project_id"]: r["n"]
+            for r in db.query(
+                conn,
+                "SELECT c.project_id AS project_id, COUNT(DISTINCT p.id) AS n FROM people p "
+                "JOIN campaigns c ON c.id = p.campaign_id JOIN emails e ON e.person_id = p.id "
+                "WHERE p.status = 'confirmed' AND e.status = 'verified' GROUP BY c.project_id",
+            )
+        }
+        camp_at = {
+            r["project_id"]: r["at"]
+            for r in db.query(
+                conn,
+                "SELECT project_id, MAX(updated_at) AS at FROM campaigns GROUP BY project_id",
+            )
+        }
+        people_at = {
+            r["project_id"]: r["at"]
+            for r in db.query(
+                conn,
+                "SELECT c.project_id AS project_id, MAX(p.updated_at) AS at FROM people p "
+                "JOIN campaigns c ON c.id = p.campaign_id GROUP BY c.project_id",
+            )
+        }
+    cards = []
+    for proj in projects.list_projects(include_archived=False):
+        offer = offers.get(proj["offer_id"]) if proj["offer_id"] else None
+        recent = _latest(
+            {proj["id"]: proj["updated_at"]}, camp_at, people_at
+        ).get(proj["id"], "")
+        cards.append(
+            {
+                "id": proj["id"],
+                "name": proj["name"],
+                "has_source": offer is not None,
+                "about": _one_liner(offer["profile_json"]) if offer else "",
+                "campaigns": proj["campaigns"],
+                "leads": proj["confirmed_people"],
+                "verified_emails": verified.get(proj["id"], 0),
+                "cooldown_days": proj["cooldown_days"],
+                "last_activity": recent,
+            }
+        )
+    return cards
+
+
+def project_page(project_id: int) -> dict[str, Any]:
+    """Everything the dashboard project page shows: the project, what it promotes (`source`:
+    kind, address or file name, size, saved one-liner), its campaigns with counts, the contact
+    memory (`memory`) and the imported known contacts (`known`). Raises `ProjectError`."""
+    proj = projects.get_project(project_id)
+    source = None
+    if proj["offer_id"] is not None:
+        offer = offer_mod.get_offer(proj["offer_id"])
+        ref = str(offer["source_ref"] or "")
+        kind = offer["source_type"]
+        source = {
+            "offer_id": offer["id"],
+            "kind": kind,
+            "label": ref if kind == "url" else Path(ref).name if kind == "file" else "",
+            "characters": offer["total_chars"],
+            "has_profile": offer["has_profile"],
+            "about": _one_liner(offer["profile"]),
+        }
+    campaigns = []
+    for short in campaign_mod.list_campaigns(include_archived=False, project_id=proj["id"]):
+        full = campaign_mod.get_campaign(short["id"])
+        campaigns.append(
+            {
+                "id": full["id"],
+                "name": full["name"],
+                "status": full["status"],
+                "countries": full["countries"],
+                "channels": full["channels"],
+                "counts": full["counts"],
+                "email_summary": full["email_summary"],
+                "options": {
+                    k: full["options"].get(k)
+                    for k in ("max_people", "max_companies", "max_per_company")
+                },
+            }
+        )
+    return {
+        "ok": True,
+        "project": proj,
+        "source": source,
+        "campaigns": campaigns,
+        "memory": projects.contact_memory(proj["id"]),
+        "known": contacts_import.known_summary(proj["id"]),
     }

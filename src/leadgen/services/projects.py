@@ -185,6 +185,31 @@ def _contacted_in_cooldown(conn: sqlite3.Connection, project_id: int, days: int)
     return int(row[0] or 0)
 
 
+def _free_date(stamp: Any, days: int) -> str:
+    """The date a person logged at `stamp` can be offered again, or `""`."""
+    moment = _parse(stamp) if stamp else None
+    return (moment + timedelta(days=days)).date().isoformat() if moment else ""
+
+
+def contact_memory(project_id: int) -> dict[str, Any]:
+    """The project's contact memory in plain numbers: `cooldown_days`, `blocked` (people held
+    back right now), `first_free` and `last_free` (the dates the first and the last of them can be
+    offered again, `YYYY-MM-DD`, or `""` when nobody is held back). Raises `ProjectError`."""
+    with db.session() as conn:
+        row = _row(conn, project_id)
+        days = int(row["cooldown_days"])
+        blocked, first, last = 0, "", ""
+        if days > 0:
+            cutoff = _stamp(_utcnow() - timedelta(days=days))
+            blocked = _contacted_in_cooldown(conn, row["id"], days)
+            span = conn.execute(
+                "SELECT MIN(at), MAX(at) FROM contact_log WHERE project_id = ? AND at >= ?",
+                (row["id"], cutoff),
+            ).fetchone()
+            first, last = (_free_date(span[0], days), _free_date(span[1], days))
+    return {"cooldown_days": days, "blocked": blocked, "first_free": first, "last_free": last}
+
+
 def get_project(project_id: int) -> dict[str, Any]:
     """One project with `counts`: campaigns by status (and `total`), people by status over all
     its campaigns, and `contacted_in_cooldown` (people the project will not offer again yet).

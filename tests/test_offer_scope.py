@@ -319,14 +319,39 @@ def test_the_tool_and_guide_say_to_call_again_while_done_is_false():
 
 
 @respx.mock
-def test_the_dashboard_follows_the_cursor_itself(client, clock, project):
+def test_the_dashboard_page_follows_the_cursor_one_step_at_a_time(client, clock, project):
     mock_site(70)
+    url = f"/api/projects/{project}/source"
     body = {"url": BASE + "/", "scope": "site", "max_pages": 50}
-    reply = client.post(f"/api/projects/{project}/source", headers=CSRF, json=body).json()
-    assert reply["ok"] and reply["done"] is True
-    assert reply["summary"].startswith("Read 50 pages") and reply["project_id"] == project
-    assert "replaced_offer_id" in reply and "text" not in reply and "cursor" not in reply
+    reply = client.post(url, headers=CSRF, json=body).json()
+    assert reply["ok"] and reply["done"] is False and reply["pages_read"] > 0  # one step only
+    assert reply["project_id"] == project and "text" not in reply and "next_cursor" not in reply
     assert projects.get_project(project)["offer_id"] == reply["offer_id"]
+    steps = 1
+    while reply["done"] is False:
+        step = {"offer_id": reply["offer_id"], "cursor": reply["cursor"]}
+        reply = client.post(url, headers=CSRF, json=step).json()
+        assert reply["ok"]
+        steps += 1
+    assert steps > 1 and reply["summary"].startswith("Read 50 pages")
+    assert "text" not in reply and "cursor" not in reply
+    assert projects.get_project(project)["offer_id"] == reply["offer_id"]
+
+
+@respx.mock
+def test_the_dashboard_refuses_to_continue_another_projects_read(client, project):
+    other = projects.create_project("Other project")["id"]
+    mock_site(3)
+    first = client.post(
+        f"/api/projects/{project}/source", headers=CSRF, json={"url": BASE + "/", "scope": "page"}
+    ).json()
+    body = {"offer_id": first["offer_id"], "cursor": "site:1"}
+    reply = client.post(f"/api/projects/{other}/source", headers=CSRF, json=body)
+    assert reply.status_code == 404 and reply.json()["error"]["code"] == "not_found"
+    reply = client.post(
+        f"/api/projects/{project}/source", headers=CSRF, json={"offer_id": first["offer_id"]}
+    )
+    assert reply.status_code == 422  # a step needs its cursor
 
 
 # --- one source per project --------------------------------------------------------------------

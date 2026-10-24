@@ -1031,6 +1031,34 @@ def move_reserve(
     }
 
 
+def create_campaign_taking_reserve(
+    take_reserve_from: int | None, **campaign_args: Any
+) -> dict[str, Any]:
+    """Create a campaign (`campaign.create_campaign` arguments) and, when `take_reserve_from` is a
+    campaign of the same project, move that campaign's reserve people into it at once (see
+    `move_reserve`; the new campaign's own limits apply).
+
+    Returns `{"ok": True, "campaign": ..., "reserve": <move_reserve reply or None>}`. The other
+    campaign is checked before anything is created. Raises `PeopleError` / `CampaignError`.
+    """
+    if take_reserve_from is not None:
+        other = _campaign(take_reserve_from)
+        if other.get("project_id") is None or other["project_id"] != campaign_args.get(
+            "project_id"
+        ):
+            raise PeopleError(
+                "different_project",
+                "Reserve people can only move between campaigns of the same project.",
+                "Pick a campaign from the same project.",
+            )
+    created = campaign_mod.create_campaign(**campaign_args)
+    moved = None
+    if take_reserve_from is not None:
+        moved = move_reserve(take_reserve_from, created["id"])
+        created = campaign_mod.get_campaign(created["id"])
+    return {"ok": True, "campaign": created, "reserve": moved}
+
+
 def _is_manual(reasons: Iterable[str]) -> bool:
     return any(r.startswith(MANUAL_PREFIX) for r in reasons)
 

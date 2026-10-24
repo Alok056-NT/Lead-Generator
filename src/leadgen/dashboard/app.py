@@ -11,30 +11,37 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import tempfile
 import traceback
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from leadgen import __version__, db
-from leadgen.core import config
+from leadgen.core import config, countries
 from leadgen.providers.base import ProviderError
 from leadgen.services import (
     analytics,
     browse,
+    contacts_import,
     dashboard_ctl,
+    designations,
     export,
     mailbox,
+    offer_files,
     people,
     preferences,
+    projects,
     review,
     sending,
+    seniority,
     suppression,
 )
 from leadgen.services import campaign as campaign_svc
@@ -55,6 +62,9 @@ CSP = (
     "frame-ancestors 'none'"
 )
 STATUS_BY_CODE = {"not_found": 404, "csrf": 403, "bad_host": 400, "internal_error": 500}
+UPLOAD_LIMIT = 21 * 1024 * 1024  # a little over the 20 MB the readers accept
+_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                   *(f"LPT{i}" for i in range(1, 10))}  # fmt: skip
 
 
 # --- request bodies (unknown fields are refused; the body is never echoed back) ------------------
@@ -80,13 +90,52 @@ class ExportBody(_Body):
 
 
 class SourceBody(_Body):
-    """The project's product or service: a website (one page or the whole site) or pasted text."""
+    """The project's product or service: a website (one page or the whole site) or pasted text.
+
+    A website read is done in steps: the first call has `url`; while the reply says `done: false`
+    the page calls again with the same `offer_id` and the `cursor` of the reply."""
 
     url: str | None = Field(default=None, max_length=2000)
     text: str | None = Field(default=None, max_length=300_000)
     name: str | None = Field(default=None, max_length=200)
     scope: Literal["page", "site"] = "site"
     max_pages: int = Field(default=15, ge=1, le=50)
+    offer_id: int | None = Field(default=None, ge=1)
+    cursor: str | None = Field(default=None, max_length=40)
+
+
+class ProjectBody(_Body):
+    name: str = Field(max_length=200)
+    description: str = Field(default="", max_length=1000)
+    cooldown_days: int = Field(default=projects.DEFAULT_COOLDOWN_DAYS, ge=0, le=3650)
+    email_policy: Literal["verified_only", "allow_risky"] = "verified_only"
+
+
+class ProjectChangeBody(_Body):
+    name: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+    cooldown_days: int | None = Field(default=None, ge=0, le=3650)
+    email_policy: Literal["verified_only", "allow_risky"] | None = None
+
+
+class CampaignBody(_Body):
+    name: str = Field(max_length=200)
+    project_id: int = Field(ge=1)
+    countries: list[str] = Field(max_length=40)
+    sectors: list[str] = Field(default=[], max_length=40)
+    channels: list[Literal["email", "linkedin"]] = Field(max_length=2)
+    designations: list[str] = Field(max_length=8)
+    seniority_min: str = Field(default="manager", max_length=20)
+    max_people: int | None = Field(default=None, ge=1, le=10_000)
+    max_companies: int | None = Field(default=None, ge=1, le=10_000)
+    max_per_company: int | None = Field(default=None, ge=1, le=10_000)
+    take_reserve_from: int | None = Field(default=None, ge=1)
+
+
+class MoveReserveBody(_Body):
+    from_campaign_id: int = Field(ge=1)
+    max_people: int | None = Field(default=None, ge=1, le=10_000)
+    max_per_company: int | None = Field(default=None, ge=1, le=10_000)
 
 
 class SuppressionBody(_Body):
@@ -175,6 +224,55 @@ def _csrf_problem(request: Request) -> str:
     return ""
 
 
+class _UploadRefused(Exception):
+    """An uploaded file that cannot be used; `reply` is the error to send back."""
+
+    def __init__(self, reply: JSONResponse) -> None:
+        super().__init__("upload refused")
+        self.reply = reply
+
+
+def _save_upload(
+    request: Request, upload: UploadFile, folder: Path, allowed: tuple[str, ...]
+) -> Path:
+    """Copy an uploaded file into `folder` under its own (cleaned) name and return the path.
+
+    Only the base name is used, so a client cannot choose a folder. The size is limited.
+    """
+    too_big = _error(
+        "file_too_big", "That file is too large (the limit is 20 MB).",
+        "Save a smaller copy, or paste the text instead.", status=413,
+    )  # fmt: skip
+    try:
+        declared = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        declared = 0
+    if declared > UPLOAD_LIMIT + 65_536:
+        raise _UploadRefused(too_big)
+    name = Path((upload.filename or "").replace("\\", "/")).name
+    clean = re.sub(r"[^A-Za-z0-9._ -]", "_", name).strip(" .")[:120]
+    suffix = Path(clean).suffix.lower()
+    if not clean or suffix not in allowed:
+        raise _UploadRefused(
+            _error(
+                "unsupported_type",
+                "That kind of file cannot be used here. Use " + ", ".join(allowed) + ".",
+                status=400,
+            )
+        )
+    if Path(clean).stem.upper() in _RESERVED_NAMES:
+        clean = "file-" + clean
+    target = folder / clean
+    written = 0
+    with target.open("wb") as out:
+        while chunk := upload.file.read(1024 * 1024):
+            written += len(chunk)
+            if written > UPLOAD_LIMIT:
+                raise _UploadRefused(too_big)
+            out.write(chunk)
+    return target
+
+
 # --- the app ------------------------------------------------------------------------------------
 
 
@@ -233,6 +331,20 @@ def create_app() -> FastAPI:
     return app
 
 
+def _source_reply(result: dict[str, Any]) -> dict[str, Any]:
+    """One step of reading a project's source, shaped for the page: no page text, a count of the
+    pages read so far and the `done` / `cursor` pair while a website read is going on."""
+    if not result.get("ok"):
+        return result
+    keep = ("ok", "offer_id", "done", "cursor", "summary", "message", "project_id",
+            "replaced_offer_id", "old_offer_deleted")  # fmt: skip
+    out = {k: result[k] for k in keep if k in result}
+    out.setdefault("done", True)
+    if "pages" in result:
+        out["pages_read"] = len(result["pages"])
+    return out
+
+
 def _register_routes(app: FastAPI) -> None:
     @app.get("/api/ping")
     def ping() -> JSONResponse:
@@ -260,6 +372,32 @@ def _register_routes(app: FastAPI) -> None:
     def test_key(provider: str) -> JSONResponse:
         return _reply(status_svc.probe_key(provider))
 
+    # ---- projects -----------------------------------------------------------------------------
+
+    @app.get("/api/projects")
+    def list_projects() -> JSONResponse:
+        return _json({"ok": True, "projects": browse.project_cards()})
+
+    @app.post("/api/projects")
+    def create_project(body: ProjectBody) -> JSONResponse:
+        return _reply(
+            {"ok": True, "project": projects.create_project(
+                body.name, body.description, body.cooldown_days, None, body.email_policy
+            )}
+        )  # fmt: skip
+
+    @app.get("/api/projects/{project_id}")
+    def get_project(project_id: int) -> JSONResponse:
+        return _reply(browse.project_page(project_id))
+
+    @app.patch("/api/projects/{project_id}")
+    def change_project(project_id: int, body: ProjectChangeBody) -> JSONResponse:
+        return _reply(
+            {"ok": True, "project": projects.update_project(
+                project_id, **body.model_dump(exclude_none=True)
+            )}
+        )  # fmt: skip
+
     # ---- project source -----------------------------------------------------------------------
 
     @app.get("/api/offer-source-help")
@@ -269,29 +407,119 @@ def _register_routes(app: FastAPI) -> None:
     @app.post("/api/projects/{project_id}/source")
     def attach_source(project_id: int, body: SourceBody) -> JSONResponse:
         """Attach a website (scope page or site) or pasted text as the project's one source; it
-        replaces the old one. Files are attached by the project page (T26)."""
-        result = offer_svc.ingest_source_all(
-            url=body.url, text=body.text, name=body.name, scope=body.scope,
-            max_pages=body.max_pages, project_id=project_id,
-        )  # fmt: skip
-        result.pop("text", None)  # the dashboard shows the summary, not the page text
-        result.pop("next_cursor", None)
+        replaces the old one. One call reads at most about 50 seconds of a website: while the
+        reply has `done: false` the page calls again with `offer_id` and `cursor`, so it can show
+        progress. Files are attached by `/source-file`."""
+        if body.offer_id is not None:
+            if not body.cursor:
+                return _error("invalid_value", "These fields are not valid: cursor.", status=422)
+            if projects.get_project(project_id)["offer_id"] != body.offer_id:
+                return _error("not_found", "That website read does not belong to this project.")
+            result = offer_svc.ingest_source(offer_id=body.offer_id, cursor=body.cursor)
+        else:
+            result = offer_svc.ingest_source(
+                url=body.url, text=body.text, name=body.name, scope=body.scope,
+                max_pages=body.max_pages, project_id=project_id,
+            )  # fmt: skip
+        return _reply(_source_reply(result))
+
+    @app.post("/api/projects/{project_id}/source-file")
+    def attach_source_file(
+        request: Request, project_id: int, file: UploadFile = File(...)  # noqa: B008
+    ) -> JSONResponse:
+        """Attach an uploaded PDF, Word or text file as the project's one source."""
+        with tempfile.TemporaryDirectory(prefix="leadgen-upload-") as folder:
+            try:
+                saved = _save_upload(
+                    request, file, Path(folder), tuple(offer_files.SUPPORTED_SUFFIXES)
+                )
+            except _UploadRefused as refused:
+                return refused.reply
+            result = offer_svc.ingest_source(file_path=str(saved), project_id=project_id)
+        return _reply(_source_reply(result))
+
+    # ---- contacts the owner already has -------------------------------------------------------
+
+    @app.get("/api/contacts-template/{kind}")
+    def contacts_template(kind: Literal["csv", "xlsx"]) -> Response:
+        path = contacts_import.export_template(contacts_import.template_dir(), kind)
+        return FileResponse(path, filename=path.name)
+
+    @app.post("/api/projects/{project_id}/contacts")
+    def import_contacts(
+        request: Request,
+        project_id: int,
+        file: UploadFile = File(...),  # noqa: B008
+        mode: Literal["exclude", "signal", "both"] = Form("exclude"),  # noqa: B008
+        dry_run: bool = Form(True),  # noqa: B008
+    ) -> JSONResponse:
+        """Read an uploaded contacts file. With `dry_run` nothing is written (a preview with the
+        exact counts); the page sends the same file again with `dry_run` off to apply it."""
+        with tempfile.TemporaryDirectory(prefix="leadgen-upload-") as folder:
+            try:
+                saved = _save_upload(request, file, Path(folder), (".csv", ".xlsx"))
+            except _UploadRefused as refused:
+                return refused.reply
+            result = contacts_import.import_contacts(project_id, saved, mode, dry_run)
+        result.pop("next_step", None)  # that line is written for the AI, not for this page
         return _reply(result)
 
     # ---- campaigns, companies -----------------------------------------------------------------
 
     @app.get("/api/campaigns")
-    def list_campaigns(include_archived: bool = False) -> JSONResponse:
+    def list_campaigns(
+        include_archived: bool = False, project_id: int | None = None
+    ) -> JSONResponse:
+        names = {p["id"]: p["name"] for p in projects.list_projects()}
         rows = []
-        for short in campaign_svc.list_campaigns(include_archived):
+        for short in campaign_svc.list_campaigns(include_archived, project_id):
             full = campaign_svc.get_campaign(short["id"])
             rows.append(
                 {
                     **short, "counts": full["counts"], "sectors": full["sectors"],
                     "email_summary": full["email_summary"],
+                    "project": names.get(short["project_id"], ""),
                 }
             )
         return _json({"ok": True, "campaigns": rows})
+
+    @app.get("/api/campaign-options")
+    def campaign_options() -> JSONResponse:
+        """The choices of the New campaign form."""
+        return _json(
+            {
+                "ok": True,
+                "countries": [{"code": c.iso2, "name": c.name} for c in countries.all_countries()],
+                "roles": [
+                    {"key": t["key"], "label": t["label"]} for t in designations.list_templates()
+                ],
+                "seniority": list(seniority.LEVELS),
+            }
+        )
+
+    @app.post("/api/campaigns")
+    def create_campaign(body: CampaignBody) -> JSONResponse:
+        limits = {
+            "max_people": body.max_people, "max_companies": body.max_companies,
+            "max_per_company": body.max_per_company,
+        }  # fmt: skip
+        return _reply(
+            people.create_campaign_taking_reserve(
+                body.take_reserve_from,
+                name=body.name, project_id=body.project_id, countries=body.countries,
+                sectors=body.sectors, channels=body.channels, designations=body.designations,
+                seniority_min=body.seniority_min,
+                options={k: v for k, v in limits.items() if v is not None},
+            )
+        )  # fmt: skip
+
+    @app.post("/api/campaigns/{campaign_id}/move-reserve")
+    def move_reserve(campaign_id: int, body: MoveReserveBody) -> JSONResponse:
+        return _reply(
+            people.move_reserve(
+                body.from_campaign_id, campaign_id, body.max_per_company, body.max_people
+            )
+        )
 
     @app.get("/api/campaigns/{campaign_id}")
     def get_campaign(campaign_id: int) -> JSONResponse:
@@ -321,6 +549,7 @@ def _register_routes(app: FastAPI) -> None:
         qa: str | None = None,
         ai_verdict: str | None = None,
         search: str | None = None,
+        known: bool = False,
         page: int = 1,
         page_size: int = 25,
     ) -> JSONResponse:
@@ -328,7 +557,7 @@ def _register_routes(app: FastAPI) -> None:
             browse.list_leads(
                 campaign_id, status=status, designation=designation, company_id=company_id,
                 email_status=email_status, qa=qa, ai_verdict=ai_verdict, search=search,
-                page=page, page_size=page_size,
+                known_only=known, page=page, page_size=page_size,
             )
         )  # fmt: skip
 
