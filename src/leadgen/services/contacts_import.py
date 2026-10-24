@@ -766,7 +766,6 @@ def _apply(
     source: str,
     cooldown_days: int,
 ) -> dict[str, Any]:
-    today = datetime.now(UTC).date().isoformat()
     contacts = preview.contacts
     blocked = [c for c in contacts if c.relationship == "do_not_contact"]
     out: dict[str, Any] = {"do_not_contact": len(blocked)}
@@ -777,7 +776,11 @@ def _apply(
         if name_only:
             out["do_not_contact_name_only"] = name_only
     if mode in ("exclude", "both"):
-        rows = [{**c.as_person(), "at": c.last_contacted or today} for c in contacts]
+        # an undated contact is logged "now" once (a later import of the same file adds nothing)
+        rows = [
+            {**c.as_person(), "at": c.last_contacted} if c.last_contacted else c.as_person()
+            for c in contacts
+        ]
         logged = projects.log_contacts_in(
             conn, project_id, rows, "imported", None, source, None
         )

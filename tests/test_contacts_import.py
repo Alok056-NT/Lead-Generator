@@ -667,6 +667,71 @@ def test_reimporting_the_same_file_creates_no_duplicates(tmp_path, pid):
     assert table_counts() == after_first
 
 
+def test_a_newer_last_contacted_on_reimport_holds_the_person_back(tmp_path, pid):
+    aria = dict(first_name="Aria", last_name="Tan", email="aria@northwind.example", company=COMPANY)
+    older = write_csv(tmp_path / "v1.csv", [row(**aria, last_contacted=days_ago(400).isoformat())])
+    newer = write_csv(tmp_path / "v2.csv", [row(**aria, last_contacted=days_ago(3).isoformat())])
+    person = {k: aria[k] for k in ("first_name", "last_name", "email", "company")}
+    assert import_contacts(pid, older, "exclude", dry_run=False)["excluded"] == 1
+    assert projects.recently_contacted(pid, person) is None  # 400 days is outside the cooldown
+    second = import_contacts(pid, newer, "exclude", dry_run=False)
+    assert second["excluded"] == 1 and second["already_logged"] == 0
+    hit = projects.recently_contacted(pid, person)
+    assert hit is not None and hit["channel"] == "imported" and hit["at"].startswith(
+        days_ago(3).isoformat()
+    )
+    assert count("contact_log") == 1  # moved forward, not repeated
+    # the identical newer file again, and the older one again, change nothing
+    again = import_contacts(pid, newer, "exclude", dry_run=False)
+    assert again["excluded"] == 0 and again["already_logged"] == 1
+    back = import_contacts(pid, older, "exclude", dry_run=False)
+    assert back["excluded"] == 0 and back["already_logged"] == 1
+    assert projects.recently_contacted(pid, person)["at"] == hit["at"]
+    assert count("contact_log") == 1
+
+
+def test_an_undated_contact_is_not_refreshed_by_a_later_import(pid):
+    person = {"first_name": "Omar", "last_name": "Reyes", "company": COMPANY}
+    with db.session() as conn:
+        projects.log_contacts_in(conn, pid, [person], "imported")
+        conn.execute("UPDATE contact_log SET at = '2026-01-01T00:00:00Z'")
+        result = projects.log_contacts_in(conn, pid, [person], "imported")
+        assert result == {"logged": 0, "skipped": 1}
+        assert conn.execute("SELECT at FROM contact_log").fetchone()[0] == "2026-01-01T00:00:00Z"
+
+
+def test_the_duplicate_check_uses_a_key_index_for_import_rows(pid):
+    keys = {
+        "key_linkedin": "in/aria-tan",
+        "key_email": "aria@northwind.example",
+        "key_name_company": "aria tan|northwind logistics",
+    }
+    cases = [
+        (keys, "idx_contact_log_linkedin"),
+        ({**keys, "key_linkedin": ""}, "idx_contact_log_email"),
+        ({**keys, "key_linkedin": "", "key_email": ""}, "idx_contact_log_name"),
+    ]
+    with db.session() as conn:
+        for entry, index in cases:
+            sql, first = projects._same_log_sql(entry)
+            params = (pid, first, None, "imported", None, entry["key_linkedin"],
+                      entry["key_email"], entry["key_name_company"])  # fmt: skip
+            plan = " ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
+            assert index in plan and "idx_contact_log_person" not in plan
+
+
+def test_a_large_import_logs_every_row_once(tmp_path, pid):
+    rows = [
+        row(first_name=f"Person{i}", last_name="Tan", email=f"p{i}@northwind.example",
+            company=COMPANY, last_contacted=days_ago(5).isoformat())
+        for i in range(600)
+    ]  # fmt: skip
+    path = write_csv(tmp_path / "big.csv", rows)
+    assert import_contacts(pid, path, "exclude", dry_run=False)["excluded"] == 600
+    assert import_contacts(pid, path, "exclude", dry_run=False)["already_logged"] == 600
+    assert count("contact_log") == 600
+
+
 def test_a_changed_file_updates_known_contacts_instead_of_adding(tmp_path, pid):
     path = write_csv(
         tmp_path / "v1.csv",

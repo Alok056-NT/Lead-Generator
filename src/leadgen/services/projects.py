@@ -387,6 +387,29 @@ def _has_key(keys: Mapping[str, str]) -> bool:
 # --- contact memory ---------------------------------------------------------------------------
 
 
+# The key index the duplicate check searches by: the first key the entry has. Named explicitly
+# (`INDEXED BY`) because SQLite otherwise prefers `idx_contact_log_person` (person_id IS NULL
+# for imports), which scans every earlier imported row and makes a large import quadratic.
+_KEY_INDEXES = (
+    ("key_linkedin", "idx_contact_log_linkedin"),
+    ("key_email", "idx_contact_log_email"),
+    ("key_name_company", "idx_contact_log_name"),
+)
+
+
+def _same_log_sql(keys: Mapping[str, str]) -> tuple[str, str]:
+    """`(sql, first key value)` finding the logged row identical to an entry, through the index
+    of the entry's first key."""
+    column, index = next((k, i) for k, i in _KEY_INDEXES if keys.get(k))
+    sql = (
+        f"SELECT id, at FROM contact_log INDEXED BY {index} "
+        f"WHERE project_id = ? AND {column} = ? AND campaign_id IS ? "
+        "AND channel = ? AND person_id IS ? AND key_linkedin = ? AND key_email = ? "
+        "AND key_name_company = ?"
+    )
+    return sql, keys[column]
+
+
 def _insert_log(
     conn: sqlite3.Connection,
     project_id: int,
@@ -395,22 +418,31 @@ def _insert_log(
     campaign_id: int | None,
     source: str,
     at: str,
+    refresh: bool = False,
 ) -> tuple[int, int]:
-    """Insert `(keys, person_id)` entries; identical rows are not repeated. `(logged, skipped)`."""
+    """Insert `(keys, person_id)` entries; identical rows are not repeated. `(logged, skipped)`.
+
+    With `refresh` (an import that carries a real contact date), an identical row whose stored
+    date is older than `at` is moved forward to `at` (and counted as logged), so a newer
+    `last_contacted` is never lost; a same or older date changes nothing."""
     logged = skipped = 0
     for keys, person_id in entries:
         if not _has_key(keys):
             skipped += 1
             continue
-        same = conn.execute(
-            "SELECT 1 FROM contact_log WHERE project_id = ? AND campaign_id IS ? "
-            "AND channel = ? AND person_id IS ? AND key_linkedin = ? AND key_email = ? "
-            "AND key_name_company = ? LIMIT 1",
-            (project_id, campaign_id, channel, person_id, keys["key_linkedin"],
+        sql, first = _same_log_sql(keys)
+        rows = conn.execute(
+            sql,
+            (project_id, first, campaign_id, channel, person_id, keys["key_linkedin"],
              keys["key_email"], keys["key_name_company"]),
-        ).fetchone()  # fmt: skip
-        if same is not None:
-            skipped += 1
+        ).fetchall()  # fmt: skip
+        if rows:
+            newest = max(rows, key=lambda r: (r[1], r[0]))
+            if refresh and newest[1] < at:
+                conn.execute("UPDATE contact_log SET at = ? WHERE id = ?", (at, newest[0]))
+                logged += 1
+            else:
+                skipped += 1
             continue
         db.insert(
             conn, "contact_log", project_id=project_id, campaign_id=campaign_id,
@@ -484,7 +516,7 @@ def log_contacts_in(
         stamp = _at_stamp(row["at"]) if row.get("at") else default
         n_logged, n_skipped = _insert_log(
             conn, project_id, [(make_keys(row), row.get("person_id"))], channel, campaign_id,
-            source, stamp,
+            source, stamp, refresh=bool(row.get("at")) or at is not None,
         )  # fmt: skip
         logged += n_logged
         skipped += n_skipped
