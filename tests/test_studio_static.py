@@ -93,6 +93,14 @@ def test_every_send_asks_first_and_is_confirmed():
     assert js.index("Studio.confirmDialog") < js.index("dry_run: false")
 
 
+def test_send_dialog_words_every_missing_item():
+    # the service lists missing items as ids; each id the dialog may get has a plain sentence
+    js = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    for item in ("mailbox_configured", "sender_identity", "postal_address", "approved_messages"):
+        assert item + ":" in js, item
+    assert "missingLine" in js
+
+
 def test_app_js_routes_the_new_pages():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     for expected in (

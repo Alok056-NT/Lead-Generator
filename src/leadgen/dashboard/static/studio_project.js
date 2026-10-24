@@ -104,6 +104,21 @@
       return button;
     });
 
+    const MISSING = {
+      email_channel: 'This search is not set up for email.',
+      mailbox_configured: 'Your email is not connected yet.',
+      sender_identity: 'Your sender name and company are missing.',
+      postal_address: 'Your postal address is missing (Settings).',
+      approved_messages: 'There are no checked emails ready to send.',
+      not_paused: 'Sending is paused.',
+      bounce_rate: 'Too many recent emails bounced.',
+      daily_cap: 'Your sending limit for today is used up.',
+    };
+    // the service lists missing items as short ids (or, in older replies, {detail, fix})
+    const missingLine = (m) => (typeof m === 'string'
+      ? MISSING[m] || (m.startsWith('compliance') ? 'The sending rules for this country are not met yet (Settings).' : 'Something is missing.')
+      : [m.detail, m.fix].filter(Boolean).join(' '));
+
     async function sendEmail() {
       const id = state.campaignId();
       if (!id) return toast('There is nothing to send yet.', 'warn');
@@ -119,7 +134,7 @@
       }
       if (missing.length) {
         body.push(notice('bad', h('strong', { text: 'Not ready yet:' }),
-          h('ul', null, ...missing.map((m) => h('li', { text: [m.detail, m.fix].filter(Boolean).join(' ') })))));
+          h('ul', null, ...missing.map((m) => h('li', { text: missingLine(m) })))));
       }
       const yes = await Studio.confirmDialog({
         title: 'Send emails?', body, yes: 'Yes, send ' + count, no: 'Not now', disabled: count === 0 || missing.length > 0,
