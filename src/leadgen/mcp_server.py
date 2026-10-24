@@ -808,14 +808,14 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         "List people",
         """Lists a campaign's people a page at a time with title, designation, company,
         LinkedIn link, evidence origin, status and reasons, plus counts by status. Filters:
-        status (confirmed, review, rejected, removed), designation label, company_id,
+        status (confirmed, review, reserve, rejected, removed), designation label, company_id,
         has_email. Show at most 20 rows to the user. Free, changes nothing.""",
         READ,
     )
     def list_people(
         campaign_id: CampaignId,
         status: Annotated[
-            Literal["confirmed", "review", "rejected", "removed"] | None,
+            Literal["confirmed", "review", "reserve", "rejected", "removed"] | None,
             Field(description="Only people with this status."),
         ] = None,
         designation: Annotated[str | None, Field(description="Designation group label.")] = None,

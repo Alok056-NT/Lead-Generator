@@ -6,6 +6,8 @@ This guide follows one made-up campaign from the first install to a finished CSV
 
 Time needed: about 30 minutes for the first run, most of it waiting for searches.
 
+**Two words used throughout.** A **project** is one thing you want to promote (here: Brightpath's safety courses). It holds what you offer and remembers everyone found or contacted, so nobody is offered twice too soon. A **campaign** is your plan inside a project for finding people and writing to them by email, LinkedIn or both. Sending is optional: you can stop at a CSV file.
+
 ## Before you begin
 
 You need:
@@ -42,11 +44,15 @@ Claude should use a tool called `get_status`, and answer with something like:
 
 Claude may ask your permission the first time it uses a tool. Choose allow.
 
-## Step 3: Tell Claude what you sell
+## Step 3: Create a project and tell Claude what you sell
 
-> **You:** Find me leads for https://www.brightpath.example in Singapore.
+You can create the project in the dashboard (run `leadgen dashboard --open`, choose **New project**) or just ask Claude. Either way you give it a name and say where your product or service is described: a website address, a file, or pasted text. For a website you choose **just this page** or **the whole website** (up to 15 pages). To change it later, attach a new source; it replaces the old one.
 
-Claude reads your website. If the site has little text or blocks reading, Claude will ask you to paste the text or give it a document instead.
+> **You:** Find me leads for https://www.brightpath.example in Singapore. Set up a project called Brightpath Safety, and read just that one page.
+
+Claude reads your website and tells you in plain words what it read (for example "Read 1 page from brightpath.example"). If the site has little text or blocks reading, Claude will ask you to paste the text or give it a document instead.
+
+Have old contacts, such as LinkedIn connections or a customer list? Upload them to the project now so those people are held back or marked as known: see [Import your old contacts](CONTACTS_IMPORT.md).
 
 > **Claude:** I've read the Brightpath site. Here is what I plan to say about you, so please correct it.
 >
@@ -81,7 +87,11 @@ This step matters. Everything Claude writes later is limited to the facts you ap
 
 > **You:** Singapore only. Use all three job groups, manager and above. LinkedIn and email.
 
-> **Claude:** I've created the campaign "Brightpath SG logistics". Since you want email, note that email needs free keys for Hunter and Reoon. We'll add them before the email step.
+> **Claude:** How big should the campaign be? You can set how many people in all, how many companies, and the most people per company. People who do not fit stay saved for a later campaign.
+
+> **You:** Two people per company at most.
+
+> **Claude:** I've created the campaign "Brightpath SG logistics" in the Brightpath Safety project. Since you want email, note that email needs free keys for Hunter and Reoon. We'll add them before the email step.
 
 ## Step 5: The company list
 
@@ -136,7 +146,7 @@ After you do:
 
 > **You:** Yes.
 
-> **Claude:** Done. 9 verified, 2 risky, 3 guess. Verified means Reoon confirmed the mailbox exists. Risky addresses are not used unless you allow them. A guess is an address built from the company's pattern that nobody could check. Guess addresses will not be sent by the built-in sender.
+> **Claude:** Done. 9 verified, 2 risky, 3 guess. Verified means Reoon confirmed the mailbox exists. Only verified addresses are exported or sent. Risky addresses (the company's mail server accepts everything, so nobody can tell) are used only if the project allows them. A guess is an address built from the company's pattern that nobody could check; it is never used as the email.
 
 ## Step 9: The messages
 
@@ -168,7 +178,7 @@ Open the CSV in Excel and look at it. Then follow [Delivery](DELIVERY.md) to imp
 
 ## You're done
 
-You can stop here and come back later. Start a new chat and say "continue my Lead Generator campaign". Claude looks at the status and picks up where you stopped.
+You can stop here and come back later. To reach more people with the same product, open the project and make a second campaign (for example another country). People from the first one are not offered again, and people the first campaign had to leave out because of the size limit can be moved into the second one. Start a new chat and say "continue my Lead Generator campaign". Claude looks at the status and picks up where you stopped.
 
 Things worth knowing before the next run:
 

@@ -11,7 +11,7 @@ A note on the numbers: the free allowances below were read from the providers' p
 | I want to... | I need |
 |---|---|
 | Find companies and LinkedIn profiles | Serper (or use [free mode](FREE_MODE.md), which needs no key) |
-| Also find and check work email addresses | Hunter and Reoon (both free) |
+| Also find and check work email addresses (only verified ones are used) | Hunter and Reoon (both free) |
 | Export a CSV file | Nothing more |
 | Push leads into lemlist | A paid lemlist plan and its key |
 | Send emails from my own address | My own mailbox |
@@ -64,13 +64,13 @@ Lead Generator always tells you the cost before it spends credits, and waits for
 - **Free allowance:** 50 credits each month on the free plan, no card. Learning a company's pattern costs 1 credit, a found address costs 1 credit, and checking an address costs 0.5 credit. Credits refresh every month.
 - **How to sign up:** Go to [hunter.io/users/sign_up](https://hunter.io/users/sign_up) and create an account. Your API key is in your account area.
 - **Where to paste the key:** The **API keys** page, or `leadgen keys set hunter`. The key's name inside the file is `HUNTER_API_KEY`.
-- **When credits run out:** Lead Generator skips Hunter. It reads the company's own website for addresses and falls back to a standard pattern such as `first.last`. An address it cannot check stays marked **guess**. The built-in sender never sends a guess unless you allow it for that campaign.
+- **When credits run out:** Lead Generator skips Hunter. It reads the company's own website for addresses and falls back to a standard pattern such as `first.last`. An address it cannot check stays marked **guess**. Only **verified** addresses are exported or sent, so a guess is shown in the separate `unverifiedEmail` column and never used as the email.
 
 ## Reoon (email checker)
 
 - **What it is for:** Checking that an email address exists before you use it. It is the first email checker Lead Generator tries.
 - **Free allowance:** 20 checks a day (about 600 a month), and 100 extra checks when you sign up. The extra 100 do not expire. No card.
-- **Is it needed?** Strongly recommended for the email channel. Without any checker, every address is a **guess**.
+- **Is it needed?** Needed for the email channel. Only **verified** addresses are exported or sent, and without a checker every address is a **guess**, so none would be used.
 - **How to sign up:** Go to [emailverifier.reoon.com/register](https://emailverifier.reoon.com/register/) and create an account. Your API key is in your account area.
 - **Where to paste the key:** The **API keys** page, or `leadgen keys set reoon`. The key's name inside the file is `REOON_API_KEY`.
 - **When credits run out:** Checks stop until the daily allowance refills. Lead Generator then tries ZeroBounce, then Hunter's checker (0.5 Hunter credit each), if you have set them up. An address nobody could check stays marked **guess**.
@@ -100,7 +100,7 @@ Lead Generator always tells you the cost before it spends credits, and waits for
 - **Is it needed?** No.
 - **Gmail and Google Workspace:** You need an **app password**, a special password for one program. Turn on 2-Step Verification on your Google account first. Google may not offer app passwords on some work or school accounts, or if you use Advanced Protection or security keys only. Then you need another mailbox.
 - **Outlook and Microsoft 365:** Your IT admin may have to switch on "SMTP AUTH". Some accounts refuse passwords altogether, and Lead Generator cannot use the newer sign-in method yet.
-- **Where to set it up:** Not on the **API keys** page. In a terminal, run `leadgen mailbox set --preset gmail` (or `--preset outlook`, or no preset for another provider). It asks for your address and password and does not show the password. Then run `leadgen mailbox test` to check the login.
+- **Where to set it up:** Not on the **API keys** page. Use the dashboard page **Connect your mailbox** (step by step for Gmail, see [Connect your mailbox](CONNECT_MAILBOX.md)). Or in a terminal, run `leadgen mailbox set --preset gmail` (or `--preset outlook`, or no preset for another provider). It asks for your address and password and does not show the password. Then run `leadgen mailbox test` to check the login.
 - **When it stops:** If your email provider stops sending, Lead Generator stops too. Read [COMPLIANCE.md](COMPLIANCE.md) and [DELIVERY.md](DELIVERY.md) before you send any email.
 
 ## No credits? Use free mode
@@ -111,6 +111,6 @@ When Serper or your email checkers run out, or you would rather not pay, the AI 
 - It is slower. It suits about 20 to 40 companies in one chat. For bigger jobs, add a search key.
 - Switch on web search in your AI chat first. In Claude, use the **+** menu under the chat box.
 - Lead Generator asks you to spot-check a few LinkedIn links before it lets you export.
-- Emails found this way stay **guess** unless you add a checker key.
+- Emails found this way stay **guess** unless you add a checker key, and a guess is never exported as the email or sent.
 
 Read the full guide: [Free mode](FREE_MODE.md).

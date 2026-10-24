@@ -14,6 +14,7 @@ Find your problem in the list. Each answer starts with the quickest thing to try
 - ["Port 8766 is already in use"](#port-8766-is-already-in-use)
 - [The dashboard does not open](#the-dashboard-does-not-open)
 - [Email problems](#email-problems)
+- [After upgrading, something is missing](#after-upgrading-something-is-missing)
 - [Where to find the log](#where-to-find-the-log)
 
 ## The installer does not start or stops
@@ -181,6 +182,14 @@ It stops when more than 5% of recent emails bounce, or three sends fail in a row
 
 **Someone says they did not want to hear from you.**
 Ask Claude to check your mailbox (it adds unsubscribes to the do-not-contact list), or add them yourself: `leadgen suppression add email name@example.com`.
+
+## After upgrading, something is missing
+
+**An error mentions `openpyxl` or `multipart`, or the contacts upload does not work.**
+Version 1.1 needs two more parts (Excel files and file uploads). Run the install command again (the same one as the first time). If you installed by hand from the source folder, open a terminal in it and run `pip install -e .` again.
+
+**I want a backup before upgrading.**
+Copy your whole LeadGenerator folder (`leadgen paths` shows where). The first time version 1.1 opens an older folder, it adds projects and keeps every campaign, person and message. It deletes nothing.
 
 ## Where to find the log
 

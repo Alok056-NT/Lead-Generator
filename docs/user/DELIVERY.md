@@ -8,6 +8,12 @@ When your leads and messages are checked, you choose how they leave Lead Generat
 
 Tell Claude which one you want. All three only use leads and messages that passed the checks (see [Quality checks](QUALITY_CHECKS.md)). By default, a message also needs the AI's review pass before it can leave.
 
+A campaign is the whole plan for finding and writing to people. **Delivery is the optional last step.** You can stop at a CSV file and use your own tools.
+
+**Only verified email addresses leave Lead Generator.** The `email` column of an export, the lemlist push and the built-in sender all use verified addresses only. Addresses that were found but not verified are written to separate `unverifiedEmail` and `unverifiedEmailStatus` columns so you can see them, and guessed addresses are never used as the email. A project can be set to allow "risky" addresses too (the project page, "Which email addresses may be used"). That setting applies to campaigns you create afterwards.
+
+**Nobody is delivered twice.** Everyone exported, pushed or emailed is remembered by the project. A later campaign in the same project does not offer them again until the cooldown (90 days unless you changed it) has passed.
+
 ## 1. CSV export
 
 Ask Claude: "Export my campaign as a CSV for lemlist" (or "for Instantly", or "as a general CSV").
@@ -65,7 +71,7 @@ This puts the leads straight into a lemlist campaign, without a CSV. It needs a 
 Good to know:
 
 - A lead already in that lemlist campaign is skipped. Pushing again is safe.
-- Leads with no email address are skipped for now, because we could not confirm that lemlist accepts them. They stay in Lead Generator. Add them in lemlist by hand, or find their email first.
+- Only verified email addresses are pushed. Leads with no verified email address are skipped for now, because we could not confirm that lemlist accepts them. They stay in Lead Generator. Add them in lemlist by hand, or find their email first.
 - Leads that are missing a message you chose (for example an email message was not written) are held back, and Claude tells you. You can ask Claude to push them anyway.
 - Lead Generator uses lemlist's rate limit of 20 requests every 2 seconds, so big pushes take a little while.
 
@@ -101,6 +107,8 @@ leadgen mailbox set --preset gmail
 ```
 
 (Use `--preset outlook` for Outlook or Microsoft 365. Without a preset, it asks for the server details.) It asks for your address and password, and hides the password as you type it. Then it tests the login.
+
+The easier way for most people is the dashboard page **Connect your mailbox**, which walks you through Gmail in three steps. See [Connect your mailbox](CONNECT_MAILBOX.md).
 
 - **Gmail and Google Workspace** need an **app password**, not your normal password. Turn on 2-Step Verification on your Google account first, then create the app password in your Google account's security settings. Google does not offer app passwords on some work or school accounts, or with Advanced Protection.
 - **Outlook and Microsoft 365** may need your IT admin to switch on "SMTP AUTH" for your mailbox. Some accounts refuse passwords altogether. Lead Generator cannot use Microsoft's newer sign-in method yet.

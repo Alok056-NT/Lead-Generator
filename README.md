@@ -9,7 +9,7 @@ You tell Claude (or ChatGPT) what you sell and who you want to reach. Lead Gener
 - **Finds real people** at your target companies, with their LinkedIn profile and, if you want email, their work email. It uses free services where it can and asks before it spends any credits.
 - **Writes one personal message per person** for LinkedIn, email or both, using only facts you have confirmed about your offer.
 - **Checks everything.** Every lead is confirmed against evidence, and every message is checked by the tool and then read by the AI before anything goes out.
-- **Delivers how you like:** a CSV file for lemlist or Instantly, a direct push into a lemlist campaign, or emails sent from your own mailbox with reply, bounce and unsubscribe tracking.
+- **Delivers how you like:** a CSV file for lemlist or Instantly, a direct push into a lemlist campaign, or emails sent from your own mailbox with reply, bounce and unsubscribe tracking. Only verified email addresses are used.
 
 It never logs in to LinkedIn and never scrapes LinkedIn. People are found from public search results.
 
@@ -39,15 +39,27 @@ If Windows says scripts are blocked, run `powershell -ExecutionPolicy Bypass -Fi
 - **Claude Desktop or Claude Code:** [Connect Claude](docs/user/CONNECT_CLAUDE.md). This is the easiest way.
 - **ChatGPT:** [Connect ChatGPT](docs/user/CONNECT_CHATGPT.md). It needs a temporary secure link and a ChatGPT plan that allows custom connectors.
 
-## Your first campaign in 6 steps
-1. **Open a new chat** with Claude. Ask: "What is my Lead Generator status?" It should answer using the Lead Generator tools.
-2. **Say what you want.** For example: *"Find me leads for https://www.example.com in Singapore."* Claude reads your page and shows you the facts it will use and the claims it will avoid. Correct them.
-3. **Choose who to reach.** Claude asks which countries, sectors, job roles and channels (LinkedIn, email or both).
-4. **Check the company list.** Claude proposes companies. Remove the ones you do not want and approve the rest.
-5. **Add a key, or use free mode.** Claude asks for a free search key (see the table below) and tells you the cost before it searches. No key? Say "use free mode".
-6. **Review and export.** Claude finds and checks the people, writes the messages, checks them, and exports a CSV file (or pushes to lemlist, or sends email). It tells you where the file is.
+## Projects and campaigns
+- A **project** is one thing you want to promote: a product, a service, a piece of content or a website. It holds what you offer (a web page, a whole site, a file or pasted text). It remembers everyone found or contacted in it, so nobody is offered twice before the cooldown ends (90 days unless you change it).
+- A **campaign** lives inside a project. It is your plan for finding people and writing to them by email, LinkedIn or both. **Sending is optional:** a campaign can end with a file you use in your own tool. Anything that leaves your computer needs your clear yes.
+- You can run several campaigns in one project, for example one per country, and set how big each is (how many people, how many companies, how many people per company).
+- Only **verified** email addresses are exported or sent.
+
+## Your first campaign in 7 steps
+1. **Create a project.** Open the dashboard (`leadgen dashboard --open`) and choose **New project**, or tell Claude: "Set up a project for my product". Give it a name and say where your product or service is described: a website address (just that page, or the whole site), a file, or pasted text.
+2. **Open a new chat** with Claude. Ask: "What is my Lead Generator status?" It should answer using the Lead Generator tools.
+3. **Check what Claude read.** Claude shows the facts it will use and the claims it will avoid. Correct them.
+4. **Plan the campaign.** Claude asks which countries, sectors, job roles and channels (LinkedIn, email or both), and how big the campaign should be.
+5. **Check the company list.** Claude proposes companies. Remove the ones you do not want and approve the rest.
+6. **Add a key, or use free mode.** Claude asks for a free search key (see the table below) and tells you the cost before it searches. No key? Say "use free mode".
+7. **Review and export.** Claude finds and checks the people, writes the messages, checks them, and exports a CSV file (or pushes to lemlist, or sends email). It tells you where the file is.
+
+Already have old contacts (LinkedIn connections, past lists)? Upload them to the project first so they are held back or marked as known: [Import your old contacts](docs/user/CONTACTS_IMPORT.md).
 
 A full worked example with what Claude asks and what you answer is in [Getting started](docs/user/GETTING_STARTED.md).
+
+## Upgrading from 1.0
+Run the install command again. Installed by hand from the source folder? Run `pip install -e .` again (new parts are needed for Excel files and uploads). Your existing campaigns are kept and put into projects automatically. See the [Changelog](CHANGELOG.md).
 
 ## What it costs
 
@@ -79,6 +91,8 @@ Lead Generator always tells you the cost first and waits for your yes.
 - [Connect Claude](docs/user/CONNECT_CLAUDE.md) and [Connect ChatGPT](docs/user/CONNECT_CHATGPT.md)
 - [Providers](docs/user/PROVIDERS.md): keys, free allowances, what happens when credits run out
 - [Free mode](docs/user/FREE_MODE.md): no credits needed
+- [Import your old contacts](docs/user/CONTACTS_IMPORT.md): the template and LinkedIn export
+- [Connect your mailbox](docs/user/CONNECT_MAILBOX.md): only if you want to send email from Lead Generator
 - [Quality checks](docs/user/QUALITY_CHECKS.md): what each L and M code means
 - [Delivery](docs/user/DELIVERY.md): CSV, lemlist, Instantly and sending email
 - [Compliance](docs/user/COMPLIANCE.md): email rules by country

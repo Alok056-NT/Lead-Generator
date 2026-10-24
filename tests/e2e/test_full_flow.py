@@ -17,18 +17,12 @@ Two flows run on the same universe:
 from __future__ import annotations
 
 import functools
-import json
 import random
 from datetime import UTC, timedelta
 from email.utils import format_datetime
 from pathlib import Path
 
-import anyio
-import anyio.from_thread
-import pytest
-import respx
 from mail_world import eml
-from mcp import Client
 from universe import COMPANIES, SEARCH_RESULTS
 from world import (
     SECRETS,
@@ -37,7 +31,6 @@ from world import (
     all_people,
     draft_channel,
     expected_outcomes,
-    install_world,
     new_campaign,
     new_offer,
     read_csv,
@@ -45,7 +38,7 @@ from world import (
     run_chunked,
 )
 
-from leadgen import db, mcp_server
+from leadgen import db
 from leadgen.core import paths
 from leadgen.core.config import Settings, save_settings
 from leadgen.send.smtp_imap import SmtpImapMailbox
@@ -77,38 +70,6 @@ QA_REPORT_COLUMNS = [
 
 CONFIRMED, REVIEW = 77, 40  # what the confirmation rules make of the 117 real-looking results
 FABRICATED = [r for rows in SEARCH_RESULTS.values() for r in rows if r.get("fabricated")]
-
-
-# --- fixtures -------------------------------------------------------------------------------------
-
-
-@pytest.fixture
-def world(monkeypatch):
-    """The keys, DNS, domain checks and the Serper/Hunter/Reoon routes of the universe."""
-    with respx.mock(assert_all_called=False) as router:
-        yield install_world(monkeypatch, router)
-
-
-@pytest.fixture
-def mcp(world):
-    """`call(tool, **args)` runs a tool through the in-memory MCP client and returns its JSON.
-
-    Every reply is kept in `call.transcript` so a test can search all of it for secrets.
-    """
-    server = mcp_server.build_server()
-    with anyio.from_thread.start_blocking_portal() as portal:
-        with portal.wrap_async_context_manager(Client(server)) as client:
-            transcript: list[str] = []
-
-            def call(tool, /, **args):
-                result = portal.call(client.call_tool, tool, args)
-                assert not result.is_error, result.content
-                text = result.content[0].text
-                transcript.append(text)
-                return json.loads(text)
-
-            call.transcript = transcript
-            yield call
 
 
 # --- small readers --------------------------------------------------------------------------------
