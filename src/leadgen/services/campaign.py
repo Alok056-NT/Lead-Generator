@@ -500,6 +500,25 @@ def _project_offer(conn, project_id: Any, offer_id: Any) -> tuple[int, int]:
     return project["id"], offer_id
 
 
+def _policy_risky(conn, project_id: int) -> bool:
+    """Whether the project's `email_policy` lets `risky` addresses through."""
+    project = db.get(conn, "projects", project_id) or {}
+    return project.get("email_policy") == "allow_risky"
+
+
+def _check_policy_locked(value: bool, policy_risky: bool, current: bool | None = None) -> None:
+    """Refuse an `allow_risky_emails` value that differs from the project's email policy (a
+    value equal to what the campaign already stores is only an echo, not a change)."""
+    if value != policy_risky and value != current:
+        raise CampaignError(
+            "email_policy_locked",
+            "A campaign cannot change which emails are allowed; the project's email_policy "
+            f"decides ({'allow_risky' if policy_risky else 'verified_only'} here).",
+            "To change it, use update_project(project_id, email_policy=...); it applies to "
+            "campaigns made afterwards.",
+        )
+
+
 def create_campaign(
     name: str,
     offer_id: int | None = None,
@@ -521,10 +540,11 @@ def create_campaign(
     has none yet; a project without an offer adopts the one given). `countries` accepts codes,
     names or aliases and stores ISO codes. `designations` is a list of 1-8 template keys (see
     `designations.TEMPLATES`) or full group objects. `options` is merged over the defaults and
-    may hold the size limits `max_people`, `max_companies` and `max_per_company`. When it does
-    not say `allow_risky_emails`, the project's `email_policy` sets it (`allow_risky` gives true,
-    `verified_only` false); the value is then stored on the campaign and never follows later
-    changes of the project. `locale` defaults to the offer profile's language, then the settings.
+    may hold the size limits `max_people`, `max_companies` and `max_per_company`. The project's
+    `email_policy` always sets `allow_risky_emails` (`allow_risky` gives true, `verified_only`
+    false); the value is stored on the campaign and never follows later changes of the project.
+    An `allow_risky_emails` option that differs from the policy is refused (`email_policy_locked`).
+    `locale` defaults to the offer profile's language, then the settings.
     Raises `CampaignError` with a stable `code` for each invalid input.
     """
     values = {
@@ -539,13 +559,14 @@ def create_campaign(
         "budget_json": _budget(budget),
     }
     values["options_json"] = _options(options or {})  # validated now, completed below
-    says_risky = "allow_risky_emails" in (options or {})
     with db.session() as conn:
         values["project_id"], offer_id = _project_offer(conn, project_id, offer_id)
         values["offer_id"] = offer_id
-        if not says_risky:  # the project's email policy decides
-            policy = db.get(conn, "projects", values["project_id"])["email_policy"]
-            values["options_json"]["allow_risky_emails"] = policy == "allow_risky"
+        # the project's email policy decides; a campaign cannot loosen it
+        policy_risky = _policy_risky(conn, values["project_id"])
+        if "allow_risky_emails" in (options or {}):
+            _check_policy_locked(values["options_json"]["allow_risky_emails"], policy_risky)
+        values["options_json"]["allow_risky_emails"] = policy_risky
         _check_unique_name(conn, values["name"], None)
         values["locale"] = _locale(locale) if locale else _default_locale(conn, offer_id)
         values["status"] = "draft"
@@ -557,9 +578,11 @@ def update_campaign(campaign_id: int, **changes: Any) -> dict[str, Any]:
     """Change fields of a campaign and return it. Accepts any create field plus `status`.
 
     `options` and `exclusions` are merged into the stored values (only the given keys change).
-    The options (`search_mode`, `invite_note`, `allow_risky_emails`, `allow_guess_emails`,
-    `max_people`, `max_companies`, `max_per_company`) can also be passed directly, e.g.
-    `update_campaign(3, search_mode="ai")`; a limit set to None is removed.
+    The options (`search_mode`, `invite_note`, `allow_guess_emails`, `max_people`,
+    `max_companies`, `max_per_company`) can also be passed directly, e.g.
+    `update_campaign(3, search_mode="ai")`; a limit set to None is removed. `allow_risky_emails`
+    follows the project's `email_policy`: a value that differs from it (and from what the
+    campaign already stores) is refused (`email_policy_locked`).
     Raises `CampaignError`.
     """
     direct = {k: changes.pop(k) for k in list(changes) if k in DEFAULT_OPTIONS}
@@ -602,7 +625,14 @@ def update_campaign(campaign_id: int, **changes: Any) -> dict[str, Any]:
             if given is not None and not isinstance(given, Mapping):
                 raise CampaignError("invalid_value", "options must be an object.")
             merged = {**(given or {}), **direct}
-            values["options_json"] = _options(merged, row["options_json"] or {})
+            stored = row["options_json"] or {}
+            values["options_json"] = _options(merged, stored)
+            if "allow_risky_emails" in merged:
+                _check_policy_locked(
+                    values["options_json"]["allow_risky_emails"],
+                    _policy_risky(conn, row["project_id"]),
+                    bool(stored.get("allow_risky_emails", False)),
+                )
         if "status" in changes:
             if changes["status"] not in STATUSES:
                 raise CampaignError(

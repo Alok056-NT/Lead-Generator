@@ -270,7 +270,7 @@ def _register_routes(app: FastAPI) -> None:
     def attach_source(project_id: int, body: SourceBody) -> JSONResponse:
         """Attach a website (scope page or site) or pasted text as the project's one source; it
         replaces the old one. Files are attached by the project page (T26)."""
-        result = offer_svc.ingest_source(
+        result = offer_svc.ingest_source_all(
             url=body.url, text=body.text, name=body.name, scope=body.scope,
             max_pages=body.max_pages, project_id=project_id,
         )  # fmt: skip

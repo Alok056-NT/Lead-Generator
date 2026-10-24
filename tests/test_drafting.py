@@ -43,10 +43,13 @@ def make_campaign(
         offer_id = db.insert(conn, "offers", name="Bright Harbour", source_type="text")
     if profile:
         offer.save_profile(offer_id, PROFILE)
+    project_id = projects.ensure_project_for_offer(offer_id)
+    if (options or {}).get("allow_risky_emails"):  # risky addresses are the project's policy
+        projects.update_project(project_id, email_policy="allow_risky")
     return camp.create_campaign(
         name=f"SG logistics {next(_n)}",
         offer_id=offer_id,
-        project_id=projects.ensure_project_for_offer(offer_id),
+        project_id=project_id,
         countries=["SG"],
         sectors=list(sectors),
         company_size="200-1000",

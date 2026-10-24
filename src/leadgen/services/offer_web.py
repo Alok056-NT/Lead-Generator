@@ -2,8 +2,9 @@
 
 The crawler is a synchronous port of Harvey's `FallbackCrawler` (see header below). Changes from
 Harvey: robots.txt is honoured, requests are limited to 1 per second, priority pages are
-followed first by *score* (links found on the page), and the whole crawl stops at a time limit
-so a tool call never runs for minutes.
+followed first by *score* (links found on the page), and one call stops at a time limit so a
+tool call never runs for minutes: a big site is read over several calls that carry on from a
+saved `CrawlState` (no page is fetched twice).
 """
 
 # Adapted from Harvey (MIT, Ethan Rogers): reference/harvey/trainer.py (FallbackCrawler)
@@ -34,8 +35,7 @@ DEFAULT_PAGES = 15
 MAX_PAGES = 50  # hard cap for scope "site" (T25)
 REQUESTS_PER_SECOND = 1.0
 MAX_CRAWL_DELAY = 10.0  # we never wait longer than this per request, whatever robots.txt asks
-DEADLINE_SECONDS = 50.0  # up to DEFAULT_PAGES pages: stay well under the ~60 s a call should take
-EXTRA_SECONDS_PER_PAGE = 3.0  # more time for each page beyond DEFAULT_PAGES (50 pages: 155 s)
+DEADLINE_SECONDS = 50.0  # no single call runs longer than this (PLAN section 3: under ~60 s)
 MAX_PAGE_BYTES = 2_000_000
 MAX_PAGE_CHARS = 50_000
 
@@ -102,6 +102,48 @@ class _Frontier:
     heap: list[tuple[float, int, str]] = field(default_factory=list)
     queued: set[str] = field(default_factory=set)
     counter: itertools.count = field(default_factory=itertools.count)
+
+
+@dataclass
+class CrawlState:
+    """Where a paused crawl stands, so the next call carries on without refetching anything.
+
+    `pages` holds `[url, chars]` of every page read so far; `heap` the pages still to read as
+    `[score, order, url]`; `queued` the page keys already seen (read or waiting).
+    """
+
+    start: str
+    max_pages: int
+    hosts: list[str]
+    pages: list[list] = field(default_factory=list)
+    heap: list[list] = field(default_factory=list)
+    queued: list[str] = field(default_factory=list)
+    next_order: int = 0
+    requests_left: int = 0
+    guessed: bool = False
+    skipped_robots: int = 0
+    last_request_at: float = 0.0  # wall-clock time of the last page request (for the 1/s rule)
+
+    def to_json(self) -> dict:
+        """Plain data for storage."""
+        return dict(self.__dict__)
+
+    @classmethod
+    def from_json(cls, data: dict) -> CrawlState:
+        """Rebuild a state saved by `to_json`; raises `WebError("bad_crawl_state")` if damaged."""
+        try:
+            return cls(**data)
+        except TypeError:
+            raise WebError("bad_crawl_state", "The saved crawl cannot be continued.") from None
+
+
+@dataclass
+class CrawlChunk:
+    """One call's result: the pages read in this call, warnings, and `state` (None when done)."""
+
+    pages: list[CrawledPage]
+    warnings: list[str]
+    state: CrawlState | None
 
 
 # --- HTML to text ---------------------------------------------------------------------------
@@ -276,29 +318,42 @@ def _load_robots(client: httpx.Client, base: str) -> urllib.robotparser.RobotFil
 # --- crawler --------------------------------------------------------------------------------
 
 
-def crawl_deadline(max_pages: int) -> float:
-    """Seconds a crawl of `max_pages` pages may take: `DEADLINE_SECONDS` up to 15 pages, then
-    `EXTRA_SECONDS_PER_PAGE` more for each further page (1 request a second is the floor)."""
-    return DEADLINE_SECONDS + max(0, max_pages - DEFAULT_PAGES) * EXTRA_SECONDS_PER_PAGE
+def _clock() -> float:
+    """Seconds for the per-call time limit (replaced by a fake clock in tests)."""
+    return time.monotonic()
 
 
-def crawl(start_url: str, max_pages: int = DEFAULT_PAGES) -> tuple[list[CrawledPage], list[str]]:
-    """Crawl `start_url` and same-domain pages; return `(pages, warnings)`.
+def crawl_chunk(
+    start_url: str,
+    max_pages: int = DEFAULT_PAGES,
+    state: CrawlState | None = None,
+    time_limit: float | None = None,
+) -> CrawlChunk:
+    """Read pages of a site for at most `time_limit` seconds (default `DEADLINE_SECONDS`);
+    carry on from `state` if given.
+
+    The first call (no `state`) reads `start_url` and then same-domain pages. When the time limit
+    is reached with pages left and fewer than `max_pages` read, the result's `state` is not None;
+    passing it back reads more (the state remembers every page already read or waiting, so no page
+    is fetched twice). At most `max_pages` pages with text are read in all (hard cap 50;
+    `max_pages=1` reads exactly the start page), at most 1 request per second, also across calls.
 
     Raises `WebError` if the start page cannot be used (`invalid_url`, `robots_blocked`,
-    `unreachable`, `http_error`, `not_html`, `no_text`). At most `max_pages` pages with text
-    are returned (hard cap 50; `max_pages=1` reads exactly the start page), at most 1 request
-    per second, and the crawl stops after `crawl_deadline(max_pages)` seconds.
+    `unreachable`, `http_error`, `not_html`, `no_text`).
     """
-    max_pages = max(1, min(int(max_pages), MAX_PAGES))
-    deadline = crawl_deadline(max_pages)
-    start = normalize_start_url(start_url)
+    started = _clock()
+    time_limit = DEADLINE_SECONDS if time_limit is None else time_limit
+    max_pages = state.max_pages if state else max(1, min(int(max_pages), MAX_PAGES))
+    start = state.start if state else normalize_start_url(start_url)
     parsed = urlparse(start)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    warnings: list[str] = []
-    started = time.monotonic()
+    read: list[CrawledPage] = []
 
     with _client() as client:
+        if state is not None and state.last_request_at:  # keep 1 request a second across calls
+            gap = 1.0 / REQUESTS_PER_SECOND - (time.time() - state.last_request_at)
+            if gap > 0:
+                time.sleep(min(gap, MAX_CRAWL_DELAY))
         robots = _load_robots(client, base)
         agent = http.USER_AGENT
         if not robots.can_fetch(agent, start):
@@ -308,65 +363,97 @@ def crawl(start_url: str, max_pages: int = DEFAULT_PAGES) -> tuple[list[CrawledP
         if delay:
             interval = min(max(float(delay), interval), MAX_CRAWL_DELAY)
         limiter = RateLimiter(1.0 / interval)
-
-        limiter.acquire()
-        first = _fetch(client, start)
-        if first.status == 0:
-            raise WebError("unreachable", "The website could not be reached.")
-        if first.status >= 400:
-            raise WebError(
-                "http_error", f"The website answered with an error (HTTP {first.status})."
-            )
-        if not first.html:
-            raise WebError("not_html", "That address is not a web page.")
-        allowed_hosts = {_site_key(parsed.netloc), _site_key(urlparse(first.url).netloc)}
-        title, text = html_to_text(first.html)
-        if not text:
-            raise WebError("no_text", "The page has no readable text (it may need JavaScript).")
-
-        pages = [CrawledPage(first.url, text)]
         frontier = _Frontier()
-        frontier.queued.add(_page_key(start))
-        frontier.queued.add(_page_key(first.url))
-        _enqueue_links(frontier, first.html, first.url, allowed_hosts)
 
-        requests_left = max_pages * 2
-        skipped_robots = 0
-        guessed = False
-        while len(pages) < max_pages and requests_left > 0:
-            if time.monotonic() - started > deadline:
-                warnings.append("Stopped early (time limit); some pages were not read.")
-                break
+        if state is None:
+            limiter.acquire()
+            first = _fetch(client, start)
+            if first.status == 0:
+                raise WebError("unreachable", "The website could not be reached.")
+            if first.status >= 400:
+                raise WebError(
+                    "http_error", f"The website answered with an error (HTTP {first.status})."
+                )
+            if not first.html:
+                raise WebError("not_html", "That address is not a web page.")
+            hosts = {_site_key(parsed.netloc), _site_key(urlparse(first.url).netloc)}
+            _title, text = html_to_text(first.html)
+            if not text:
+                raise WebError("no_text", "The page has no readable text (it may need JavaScript).")
+            read.append(CrawledPage(first.url, text))
+            frontier.queued.add(_page_key(start))
+            frontier.queued.add(_page_key(first.url))
+            _enqueue_links(frontier, first.html, first.url, hosts)
+            state = CrawlState(start=start, max_pages=max_pages, hosts=sorted(hosts))
+            state.requests_left = max_pages * 2
+            state.pages.append([first.url, len(text)])
+        else:
+            hosts = set(state.hosts)
+            frontier.heap = [(float(a), int(b), str(c)) for a, b, c in state.heap]
+            heapq.heapify(frontier.heap)
+            frontier.queued = set(state.queued)
+            frontier.counter = itertools.count(state.next_order)
+
+        paused = False
+        while len(state.pages) < max_pages and state.requests_left > 0:
             if not frontier.heap:
-                if guessed:
+                if state.guessed:
                     break
-                guessed = True
+                state.guessed = True
                 for path in PRIORITY_PATHS:
                     _push(frontier, f"{base}{path}")
                 continue
+            if _clock() - started > time_limit:
+                paused = True
+                break
             _score_value, _order, url = heapq.heappop(frontier.heap)
             if not robots.can_fetch(agent, url):
-                skipped_robots += 1
+                state.skipped_robots += 1
                 continue
             limiter.acquire()
-            requests_left -= 1
+            state.requests_left -= 1
             try:
                 result = _fetch(client, url)
             except WebError:
                 continue  # redirected to a local/private address: skip this page
             if result.status != 200 or not result.html:
                 continue
-            if _site_key(urlparse(result.url).netloc) not in allowed_hosts:
+            if _site_key(urlparse(result.url).netloc) not in hosts:
                 continue  # redirected to another site
             _title, page_text = html_to_text(result.html)
             if not page_text:
                 continue
-            pages.append(CrawledPage(result.url, page_text))
-            _enqueue_links(frontier, result.html, result.url, allowed_hosts)
+            read.append(CrawledPage(result.url, page_text))
+            state.pages.append([result.url, len(page_text)])
+            _enqueue_links(frontier, result.html, result.url, hosts)
 
-    if skipped_robots:
-        warnings.append(f"Skipped {skipped_robots} page(s) that robots.txt does not allow.")
-    return pages, warnings
+    state.heap = [list(item) for item in sorted(frontier.heap)]
+    state.queued = sorted(frontier.queued)
+    state.next_order = next(frontier.counter)
+    state.last_request_at = time.time()
+    if paused:
+        return CrawlChunk(read, [], state)
+    warnings = []
+    if state.skipped_robots:
+        warnings.append(f"Skipped {state.skipped_robots} page(s) that robots.txt does not allow.")
+    return CrawlChunk(read, warnings, None)
+
+
+def crawl(start_url: str, max_pages: int = DEFAULT_PAGES) -> tuple[list[CrawledPage], list[str]]:
+    """Read a whole crawl in one go (every chunk in turn); return `(pages, warnings)`.
+
+    Tools must not use this for big sites: it can run for minutes. They call `crawl_chunk` and
+    hand the `state` back on the next call. Raises `WebError` as `crawl_chunk` does.
+    """
+    pages: list[CrawledPage] = []
+    warnings: list[str] = []
+    chunk = crawl_chunk(start_url, max_pages)
+    while True:
+        pages += chunk.pages
+        warnings += chunk.warnings
+        if chunk.state is None:
+            return pages, warnings
+        chunk = crawl_chunk(start_url, max_pages, state=chunk.state)
 
 
 def _push(frontier: _Frontier, url: str) -> None:

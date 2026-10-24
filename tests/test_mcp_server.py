@@ -491,6 +491,19 @@ def test_sync_mailbox_tool_runs_the_sync(mcp, monkeypatch):
     assert mcp("sync_mailbox")["ok"] and seen == {"since_days": 30}
 
 
+def test_campaign_tools_say_risky_emails_follow_the_project_policy(mcp):
+    tools = tools_by_name(mcp)
+    update = " ".join(tools["update_campaign"].description.split())
+    assert "email_policy" in update and "update_project" in update
+    assert "expert switch" in update and "explicitly asks" in update
+    assert "turn on allow_guess_emails or allow_risky_emails" not in update
+    create = " ".join(tools["create_campaign"].description.split())
+    assert "email_policy" in create
+    for name in ("create_campaign", "update_campaign"):  # no per-campaign switch for risky
+        assert "allow_risky_emails" not in tools[name].input_schema["properties"], name
+        assert "allow_guess_emails" in tools[name].input_schema["properties"], name
+
+
 def test_mailbox_tool_descriptions_state_the_rules(mcp):
     tools = tools_by_name(mcp)
     sync = tools["sync_mailbox"].description

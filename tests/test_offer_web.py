@@ -219,9 +219,10 @@ def test_crawl_default_is_15_and_hard_cap_is_50_pages():
     assert len(result) == 50
 
 
-def test_crawl_time_allowance_grows_with_the_page_count():
-    assert offer_web.crawl_deadline(1) == offer_web.crawl_deadline(15) == 50.0
-    assert offer_web.crawl_deadline(50) == 50.0 + 35 * 3.0
+def test_one_call_never_gets_more_time_for_more_pages():
+    assert offer_web.DEADLINE_SECONDS <= 50.0  # PLAN section 3: nothing runs over about 60 s
+    assert not hasattr(offer_web, "crawl_deadline")
+    assert not hasattr(offer_web, "EXTRA_SECONDS_PER_PAGE")
 
 
 @respx.mock
@@ -327,12 +328,26 @@ def test_crawl_default_rate_is_one_request_per_second(monkeypatch):
 
 
 @respx.mock
-def test_crawl_time_limit(monkeypatch):
-    monkeypatch.setattr(offer_web, "DEADLINE_SECONDS", -1.0)
+def test_crawl_chunk_pauses_at_the_time_limit_and_carries_on():
     mock_site({"/": page('<p>Home</p><a href="/about">About</a>'), "/about": page("<p>About</p>")})
-    result, warnings = offer_web.crawl(BASE + "/")
-    assert len(result) == 1
-    assert any("time limit" in w for w in warnings)
+    chunk = offer_web.crawl_chunk(BASE + "/", time_limit=-1.0)
+    assert [p.url for p in chunk.pages] == [BASE + "/"]  # the start page is always read
+    assert chunk.state is not None and chunk.warnings == []
+    assert [url for url, _chars in chunk.state.pages] == [BASE + "/"]
+    rest = offer_web.crawl_chunk(BASE + "/", state=chunk.state)
+    assert [p.url for p in rest.pages] == [BASE + "/about"] and rest.state is None
+
+
+def test_the_saved_crawl_state_survives_a_round_trip_through_json():
+    import json
+
+    state = offer_web.CrawlState(start=BASE + "/", max_pages=5, hosts=["northwind.example.com"])
+    state.heap = [[1.0, 0, BASE + "/about"]]
+    again = offer_web.CrawlState.from_json(json.loads(json.dumps(state.to_json())))
+    assert again == state
+    with pytest.raises(WebError) as info:
+        offer_web.CrawlState.from_json({"nonsense": 1})
+    assert info.value.code == "bad_crawl_state"
 
 
 # --- Google Docs ------------------------------------------------------------------------------

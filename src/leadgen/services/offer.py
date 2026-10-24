@@ -10,6 +10,7 @@ Callers must run `db.init_db()` first.
 
 from __future__ import annotations
 
+import json
 import re
 from importlib import resources
 from pathlib import Path
@@ -265,6 +266,7 @@ def _store(
         "unconfirmed_snippets": snippets,
         "unconfirmed_count": count,
         "warnings": warnings,
+        "done": True,
     }
     if pages is not None:
         result["pages"] = pages
@@ -285,16 +287,80 @@ def pages_summary(site: str, urls: list[str]) -> str:
     return f"Read {count} {noun} from {site}: {', '.join(paths)}{more}"
 
 
+def _state_key(offer_id: int) -> str:
+    return f"offer_crawl:{int(offer_id)}"
+
+
+def _save_crawl(offer_id: int, state: offer_web.CrawlState, warnings: list[str]) -> None:
+    """Keep a paused crawl (and the warnings so far) so the next call can carry on."""
+    stamp = db.now()
+    value = json.dumps({"state": state.to_json(), "warnings": warnings})
+    with db.session() as conn:
+        conn.execute(
+            "INSERT INTO settings (created_at, updated_at, key, value) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value, "
+            "updated_at = excluded.updated_at",
+            (stamp, stamp, _state_key(offer_id), value),
+        )
+
+
+def _load_crawl(offer_id: int) -> tuple[offer_web.CrawlState, list[str]] | None:
+    with db.session() as conn:
+        rows = db.query(conn, "SELECT value FROM settings WHERE key = ?", (_state_key(offer_id),))
+    if not rows:
+        return None
+    try:
+        saved = json.loads(rows[0]["value"])
+        return offer_web.CrawlState.from_json(saved["state"]), list(saved["warnings"])
+    except (ValueError, KeyError, TypeError, offer_web.WebError):
+        return None
+
+
+def _drop_crawl(offer_id: int) -> None:
+    with db.session() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (_state_key(offer_id),))
+
+
+def crawl_cursor(state: offer_web.CrawlState) -> str:
+    """The cursor that continues a paused site read: `site:<pages read so far>`."""
+    return f"site:{len(state.pages)}"
+
+
+def _more_pages_message(read: int, max_pages: int) -> str:
+    return (
+        f"{read} of up to {max_pages} pages read so far. Call ingest_offer_source again with "
+        "offer_id and cursor to read more; keep going until done is true, then read the text."
+    )
+
+
+def _site_result(
+    base: dict[str, Any], state: offer_web.CrawlState | None, urls: list[str], site: str
+) -> dict[str, Any]:
+    """Add the page list, the summary and the `done` / `cursor` fields of a site read."""
+    base["summary"] = pages_summary(site, urls)
+    if state is None:
+        base["done"] = True
+        return base
+    base["done"] = False
+    base["cursor"] = base["next_cursor"] = crawl_cursor(state)  # no text yet: one cursor, two names
+    base["message"] = _more_pages_message(len(urls), state.max_pages)
+    return base
+
+
 def ingest_url(url: str, max_pages: int = DEFAULT_PAGES, scope: str = "site") -> dict[str, Any]:
     """Read a website or a public Google Doc into a new offer.
 
     `scope="page"` reads only that URL (one page); `scope="site"` (the default) reads that URL
     plus up to `max_pages` pages in all from the same site (default 15, hard cap 50). A Google
     Doc is always one page. Returns `{"ok": True, "offer_id", "name", "total_chars", "pages",
-    "summary", "unconfirmed_snippets", "unconfirmed_count", "warnings", ...}`; `summary` is a
-    plain sentence such as "Read 12 pages from example.com: /, /about, ...". A dead, blocked or
-    empty page returns the structured error `{"ok": False, "error": {"code", "message",
-    "hint"}}` suggesting pasted text or a file. Fetching takes roughly 1 second per page.
+    "summary", "unconfirmed_snippets", "unconfirmed_count", "warnings", "done", ...}`; `summary`
+    is a plain sentence such as "Read 12 pages from example.com: /, /about, ...".
+
+    One call reads for about 50 seconds at most (1 request a second). When pages are left and
+    `max_pages` is not reached, the reply has `done: false` and a `cursor`; `continue_site` (the
+    `ingest_offer_source` tool with `offer_id` and that cursor) reads more into the same offer.
+    A dead, blocked or empty page returns the structured error `{"ok": False, "error": {"code",
+    "message", "hint"}}` suggesting pasted text or a file.
     """
     if scope not in SCOPES:
         return _error("invalid_scope", f"scope must be one of: {', '.join(SCOPES)}.")
@@ -314,17 +380,83 @@ def ingest_url(url: str, max_pages: int = DEFAULT_PAGES, scope: str = "site") ->
             result["summary"] = "Read 1 page: a Google Doc"
             return result
         start = offer_web.normalize_start_url(url)
-        crawled, warnings = offer_web.crawl(start, max_pages=max_pages)
+        chunk = offer_web.crawl_chunk(start, max_pages=max_pages)
     except offer_web.WebError as exc:
         google = exc.code in ("private_document", "unsupported_google_link")
         return _error(exc.code, exc.message, _GDOC_HINT if google else _PASTE_HINT)
-    raw = "\n\n".join(f"# {page.url}\n{page.text}" for page in crawled)
+    raw = "\n\n".join(f"# {page.url}\n{page.text}" for page in chunk.pages)
     host = urlparse(start).hostname or start
     name = host[4:] if host.startswith("www.") else host
-    pages = [{"url": page.url, "chars": len(page.text)} for page in crawled]
-    result = _store(name, "url", start, raw, pages=pages, warnings=warnings)
-    result["summary"] = pages_summary(name, [page.url for page in crawled])
-    return result
+    pages = [{"url": page.url, "chars": len(page.text)} for page in chunk.pages]
+    result = _store(name, "url", start, raw, pages=pages, warnings=chunk.warnings)
+    urls = [page.url for page in chunk.pages]
+    if chunk.state is not None:
+        _save_crawl(result["offer_id"], chunk.state, chunk.warnings)
+    return _site_result(result, chunk.state, urls, name)
+
+
+def continue_site(offer_id: int, cursor: str) -> dict[str, Any]:
+    """Read more pages of a site read that stopped at the time limit (`done: false`).
+
+    `cursor` is the one the previous reply gave (`site:<pages read>`). The new pages are added to
+    the same offer; no page is read twice. The reply has the same shape as `ingest_url`: `pages`
+    and `summary` cover every page read so far, `done` says whether more remain. Raises
+    `OfferError` (`not_found`, `invalid_cursor`, `nothing_to_continue`).
+    """
+    with db.session() as conn:
+        row = _get_row(conn, offer_id)
+    saved = _load_crawl(row["id"])
+    if saved is None:
+        raise OfferError(
+            "nothing_to_continue",
+            "This offer has no site read waiting to continue.",
+            "If done was true the whole site was read: use read_offer_text. Otherwise attach "
+            "the website again.",
+        )
+    state, warnings = saved
+    if str(cursor).strip() != crawl_cursor(state):
+        raise OfferError(
+            "invalid_cursor",
+            "That cursor is not the latest one for this site read.",
+            f"Use cursor {crawl_cursor(state)}, the one from the last reply.",
+        )
+    try:
+        chunk = offer_web.crawl_chunk(state.start, state=state)
+    except offer_web.WebError as exc:
+        return _error(exc.code, exc.message, "Call again with the same cursor to retry.")
+    new_raw = "\n\n".join(f"# {page.url}\n{page.text}" for page in chunk.pages)
+    all_warnings = [*warnings, *chunk.warnings]
+    text = row["raw_text"]
+    if new_raw:
+        text = f"{text}\n\n{new_raw}" if text else new_raw
+    if len(text) > MAX_RAW_CHARS:
+        text = text[:MAX_RAW_CHARS]
+        note = "The text was very long and was cut at 1,000,000 characters."
+        if note not in all_warnings:
+            all_warnings.append(note)
+    with db.session() as conn:
+        db.update(conn, "offers", row["id"], raw_text=text)
+    if chunk.state is None:
+        _drop_crawl(row["id"])
+    else:
+        _save_crawl(row["id"], chunk.state, all_warnings)
+    final = chunk.state or state
+    snippets, count = find_unconfirmed(text)
+    result: dict[str, Any] = {
+        "ok": True,
+        "offer_id": row["id"],
+        "name": row["name"],
+        "source_type": row["source_type"],
+        "source_ref": row["source_ref"],
+        "total_chars": len(text),
+        "unconfirmed_snippets": snippets,
+        "unconfirmed_count": count,
+        "warnings": all_warnings,
+        "pages": [{"url": u, "chars": n} for u, n in final.pages],
+    }
+    host = urlparse(state.start).hostname or state.start
+    site = host[4:] if host.startswith("www.") else host
+    return _site_result(result, chunk.state, [u for u, _n in final.pages], site)
 
 
 def ingest_text(text: str, name: str | None = None) -> dict[str, Any]:
@@ -477,6 +609,13 @@ def ingest_source(
     `cursor` of the previous reply to read the next chunk of an offer already stored. With
     `file_root` set (remote mode) a file must lie inside that folder.
 
+    A website read stops after about 50 seconds. If pages are left (and `max_pages` is not
+    reached) the reply has `done: false`, a `cursor` (also in `next_cursor`) such as `site:40` and
+    no `text` yet; call
+    again with `offer_id` and that `cursor` to read more pages into the same offer (no page is
+    read twice) until `done` is true; that last reply carries the first chunk of the text. The
+    project's source is replaced once, by the first call.
+
     For a `url`, `scope` is `page` (only that page) or `site` (that page plus pages of the same
     site, `max_pages` in all: default 15, at most 50); `site` is the default. With `project_id`
     the new source becomes that project's one source and replaces the old one (campaigns already
@@ -490,6 +629,9 @@ def ingest_source(
                 "Give either offer_id (to read more of an offer) or a new source, not both.",
                 "To read more of an offer pass only offer_id and cursor.",
             )
+        if isinstance(cursor, str) and cursor.strip().startswith("site:"):
+            reply = continue_site(int(offer_id), cursor)
+            return _with_first_chunk(reply) if reply.get("ok") and reply["done"] else reply
         try:
             start = int(cursor or 0)
         except (TypeError, ValueError):
@@ -543,8 +685,30 @@ def ingest_source(
     if project_id is not None:
         swap = projects.replace_offer(project_id, result["offer_id"])
         result = {**result, "project_id": project_id, **swap}
+    return _with_first_chunk(result)
+
+
+def _with_first_chunk(result: dict[str, Any]) -> dict[str, Any]:
+    """Add the first chunk of the text to a finished read; a read that is not done has none yet."""
+    if not result.get("done", True):
+        return result
     first = read_offer_text(result["offer_id"], 0)
     return {**result, "text": first["text"], "next_cursor": first["next_cursor"]}
+
+
+def ingest_source_all(**kwargs: Any) -> dict[str, Any]:
+    """`ingest_source`, then keep calling it with the cursor until the read is done.
+
+    For callers that can wait (the dashboard): a big site is read over several time-limited
+    calls and the reply is the last one, with the project fields of the first. Takes the same
+    arguments as `ingest_source` for a new source.
+    """
+    result = ingest_source(**kwargs)
+    extra = {k: result[k] for k in ("project_id", "replaced_offer_id", "old_offer_deleted")
+             if k in result}  # fmt: skip
+    while result.get("ok") and result.get("done") is False:
+        result = ingest_source(offer_id=result["offer_id"], cursor=result["cursor"])
+    return {**result, **extra} if result.get("ok") else result
 
 
 def guide_text() -> str:

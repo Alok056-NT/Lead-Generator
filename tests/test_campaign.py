@@ -294,11 +294,11 @@ def test_update_search_mode_directly_and_merge_options(offer_id):
     created = make(offer_id, options={"invite_note": True})
     got = c.update_campaign(created["id"], search_mode="ai")
     assert got["options"]["search_mode"] == "ai" and got["options"]["invite_note"] is True
-    got = c.update_campaign(created["id"], options={"allow_risky_emails": True},
+    got = c.update_campaign(created["id"], options={"allow_risky_emails": False},
                             allow_guess_emails=True)
     assert got["options"] == {
         "invite_note": True,
-        "allow_risky_emails": True,
+        "allow_risky_emails": False,
         "allow_guess_emails": True,
         "search_mode": "ai",
         "ai_search_needs_recheck": False,

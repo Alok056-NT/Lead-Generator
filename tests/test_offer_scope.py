@@ -129,6 +129,206 @@ def test_the_summary_names_the_pages_that_were_read():
     assert offer.ingest_text("Northwind sells training.")["summary"].startswith("Read the pasted")
 
 
+# --- big sites are read in steps of about 50 seconds -------------------------------------------
+
+
+class Clock:
+    """A fake clock: every page fetch takes `per_page` seconds, nothing else takes any time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.per_page = 5.0
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = Clock()
+    real_fetch = offer_web._fetch
+
+    def slow_fetch(client, url):
+        fake.now += fake.per_page
+        return real_fetch(client, url)
+
+    monkeypatch.setattr(offer_web, "_clock", lambda: fake.now)
+    monkeypatch.setattr(offer_web, "_fetch", slow_fetch)
+    return fake
+
+
+def read_all(first: dict) -> list[dict]:
+    """Every reply of a site read: the first one, then one per call with the cursor."""
+    replies = [first]
+    while replies[-1]["done"] is False:
+        assert len(replies) < 20, "the read never finished"
+        replies.append(
+            offer.ingest_source(offer_id=first["offer_id"], cursor=replies[-1]["cursor"])
+        )
+    return replies
+
+
+@respx.mock
+def test_the_first_call_stops_at_the_time_limit(clock):
+    routes = mock_site(70)
+    first = offer.ingest_url(BASE + "/", max_pages=50, scope="site")
+    assert first["ok"] and first["done"] is False
+    assert first["cursor"] == f"site:{len(first['pages'])}" == first["next_cursor"]
+    assert 2 <= len(first["pages"]) < 50 and clock.now <= 50.0 + clock.per_page
+    assert first["summary"].startswith(f"Read {len(first['pages'])} pages from ")
+    assert "again with offer_id and cursor" in first["message"]
+    assert len(pages_fetched(routes)) == len(first["pages"])
+
+
+@respx.mock
+def test_the_next_call_carries_on_until_max_pages_without_fetching_a_page_twice(clock):
+    routes = mock_site(70)
+    first = offer.ingest_source(url=BASE + "/", scope="site", max_pages=50)
+    assert first["done"] is False and "text" not in first  # no text until the read is done
+    replies = read_all(first)
+    assert len(replies) >= 3 and all(r["ok"] for r in replies)
+    last = replies[-1]
+    assert last["done"] is True and len(last["pages"]) == 50
+    assert [len(r["pages"]) for r in replies] == sorted(len(r["pages"]) for r in replies)
+    assert last["summary"].startswith("Read 50 pages from northwind.example.com: /")
+    assert len(pages_fetched(routes)) == 50  # exactly the pages read, none dropped
+    assert all(route.call_count <= 1 for path, route in routes.items() if path != "/robots.txt")
+    urls = [p["url"] for p in last["pages"]]
+    assert len(urls) == len(set(urls))
+    assert last["text"] and "cursor" not in last  # the finished reply carries the first text
+    assert last["next_cursor"] is None or isinstance(last["next_cursor"], int)  # text paging
+    assert offer.get_offer(last["offer_id"])["total_chars"] == last["total_chars"]
+    stored = offer.read_offer_text(last["offer_id"], 0, 40_000)["text"]
+    assert stored.startswith("# " + BASE + "/") and stored.count("# https://") <= 50
+
+
+@respx.mock
+def test_every_call_stays_within_the_time_limit(clock):
+    mock_site(70)
+    first = offer.ingest_url(BASE + "/", max_pages=50, scope="site")
+    calls = 1
+    reply = first
+    while reply["done"] is False:
+        before = clock.now
+        reply = offer.ingest_source(offer_id=first["offer_id"], cursor=reply["cursor"])
+        assert clock.now - before <= offer_web.DEADLINE_SECONDS + clock.per_page
+        calls += 1
+    assert calls >= 4 and len(reply["pages"]) == 50
+
+
+@respx.mock
+def test_a_site_with_fewer_pages_ends_when_there_are_no_more(clock):
+    mock_site(20)
+    replies = read_all(offer.ingest_url(BASE + "/", max_pages=50, scope="site"))
+    assert replies[-1]["done"] is True and len(replies[-1]["pages"]) == 21
+    assert len(replies) >= 2
+    with pytest.raises(offer.OfferError) as info:  # nothing is waiting any more
+        offer.ingest_source(offer_id=replies[0]["offer_id"], cursor=replies[0]["cursor"])
+    assert info.value.code == "nothing_to_continue"
+
+
+@respx.mock
+def test_a_small_read_is_done_in_one_call(clock):
+    mock_site(30)
+    reply = offer.ingest_source(url=BASE + "/", scope="site", max_pages=5)
+    assert reply["done"] is True and len(reply["pages"]) == 5 and "cursor" not in reply
+    assert reply["text"] and offer.ingest_text("Some text.")["done"] is True
+
+
+@respx.mock
+def test_only_the_latest_cursor_continues_a_read(clock):
+    mock_site(70)
+    first = offer.ingest_url(BASE + "/", max_pages=50, scope="site")
+    for bad in ("site:1", "site:999", "site:", "site:x"):
+        with pytest.raises(offer.OfferError) as info:
+            offer.ingest_source(offer_id=first["offer_id"], cursor=bad)
+        assert info.value.code == "invalid_cursor"
+    second = offer.ingest_source(offer_id=first["offer_id"], cursor=first["cursor"])
+    assert len(second["pages"]) > len(first["pages"])
+    with pytest.raises(offer.OfferError):  # the old cursor no longer matches
+        offer.ingest_source(offer_id=first["offer_id"], cursor=first["cursor"])
+
+
+@respx.mock
+def test_the_projects_source_is_replaced_once_by_the_first_call(clock, project):
+    old = offer.ingest_source(text="Northwind sells safety training.", project_id=project)
+    mock_site(70)
+    first = offer.ingest_source(url=BASE + "/", scope="site", max_pages=50, project_id=project)
+    assert first["done"] is False and first["replaced_offer_id"] == old["offer_id"]
+    assert projects.get_project(project)["offer_id"] == first["offer_id"]
+    replies = read_all(first)[1:]
+    assert replies and all("replaced_offer_id" not in r for r in replies)
+    assert projects.get_project(project)["offer_id"] == first["offer_id"]
+    assert [o["id"] for o in offer.list_offers()] == [first["offer_id"]]  # one source only
+
+
+@respx.mock
+def test_requests_keep_to_one_a_second_across_calls(clock, monkeypatch):
+    mock_site(70)
+    monkeypatch.setattr(offer_web, "REQUESTS_PER_SECOND", 1.0)
+    slept: list[float] = []
+
+    class NoWait:
+        def __init__(self, per_second: float) -> None:
+            pass
+
+        def acquire(self) -> None:
+            pass
+
+    monkeypatch.setattr(offer_web, "RateLimiter", NoWait)
+    monkeypatch.setattr(offer_web.time, "sleep", slept.append)
+    first = offer.ingest_url(BASE + "/", max_pages=50, scope="site")
+    assert slept == []  # nothing to wait for in the first call
+    offer.ingest_source(offer_id=first["offer_id"], cursor=first["cursor"])
+    assert len(slept) == 1 and 0 < slept[0] <= 1.0  # the gap since the last request is made up
+
+
+@respx.mock
+def test_a_failed_continue_keeps_the_read_so_it_can_be_retried(clock):
+    mock_site(70)
+    first = offer.ingest_url(BASE + "/", max_pages=50, scope="site")
+    respx.get(f"{BASE}/robots.txt").mock(return_value=httpx.Response(403))  # now blocked
+    blocked = offer.ingest_source(offer_id=first["offer_id"], cursor=first["cursor"])
+    assert blocked["ok"] is False and blocked["error"]["code"] == "robots_blocked"
+    respx.get(f"{BASE}/robots.txt").mock(return_value=httpx.Response(404))
+    again = offer.ingest_source(offer_id=first["offer_id"], cursor=first["cursor"])
+    assert again["ok"] and len(again["pages"]) > len(first["pages"])
+
+
+@respx.mock
+def test_the_mcp_tool_reads_more_pages_with_the_cursor(mcp, clock, project):
+    mock_site(70)
+    reply = mcp("ingest_offer_source", url=BASE + "/", scope="site", max_pages=50,
+                project_id=project)  # fmt: skip
+    assert reply["done"] is False and reply["cursor"].startswith("site:")
+    while reply["done"] is False:
+        reply = mcp("ingest_offer_source", offer_id=reply["offer_id"], cursor=reply["cursor"])
+    assert reply["done"] is True and reply["summary"].startswith("Read 50 pages")
+    assert reply["text"]
+
+
+def test_the_tool_and_guide_say_to_call_again_while_done_is_false():
+    from leadgen.services import guide
+
+    with anyio.from_thread.start_blocking_portal() as portal:
+        with portal.wrap_async_context_manager(Client(mcp_server.build_server())) as client:
+            tools = {t.name: t for t in portal.call(client.list_tools).tools}
+    text = " ".join(tools["ingest_offer_source"].description.split())
+    assert "done=false" in text and "cursor" in text and "until done is true" in text
+    field = tools["ingest_offer_source"].input_schema["properties"]["cursor"]
+    assert "while done is false" in field["description"]
+    workflow = " ".join(guide.get_guide("workflow")["text"].split())
+    assert "`done: false`" in workflow and "until `done` is true" in workflow
+
+
+@respx.mock
+def test_the_dashboard_follows_the_cursor_itself(client, clock, project):
+    mock_site(70)
+    body = {"url": BASE + "/", "scope": "site", "max_pages": 50}
+    reply = client.post(f"/api/projects/{project}/source", headers=CSRF, json=body).json()
+    assert reply["ok"] and reply["done"] is True
+    assert reply["summary"].startswith("Read 50 pages") and reply["project_id"] == project
+    assert "replaced_offer_id" in reply and "text" not in reply and "cursor" not in reply
+    assert projects.get_project(project)["offer_id"] == reply["offer_id"]
+
+
 # --- one source per project --------------------------------------------------------------------
 
 

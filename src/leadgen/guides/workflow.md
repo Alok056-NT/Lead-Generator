@@ -80,9 +80,12 @@ companies show `warm_contacts`. Do not add warm companies to a campaign on your 
    `max_pages`, default 15, at most 50). Call `ingest_offer_source` with `project_id` (so the new
    source replaces the project's old one) and one of `url`, `text`, `file_path`. The reply
    has a plain `summary` ("Read 12 pages from example.com: /, /about, ..." or "Read 1 page ...");
-   tell the user what was read. It returns an `offer_id`, the first chunk of text and
-   `next_cursor`; call it again with `offer_id` and `cursor` until `next_cursor` is empty. Read
-   all of it.
+   tell the user what was read. A big website is read in steps of about 50 seconds: while the
+   reply says `done: false` it carries a `cursor` (such as `site:40`) and no text yet; call
+   `ingest_offer_source` again with `offer_id` and that `cursor` (nothing else) to read more
+   pages into the same offer, until `done` is true. The last reply returns the `offer_id`, the
+   first chunk of text and `next_cursor`; call it again with `offer_id` and `cursor` set to
+   `next_cursor` until `next_cursor` is empty. Read all of it.
 2. If the page was empty or blocked, the error says what to do (usually: ask the user to paste
    the text or give a file).
 3. Fetch the profile rules once with `get_workflow_guide(section="offer_profile")` and write

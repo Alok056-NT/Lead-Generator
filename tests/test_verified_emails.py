@@ -109,13 +109,51 @@ def test_a_new_campaign_takes_the_projects_policy(ready_db):
     assert camp.exportable_email_statuses(loose) == ("verified", "risky")
 
 
-def test_an_explicit_campaign_option_wins_at_creation(ready_db):
+def test_a_campaign_option_cannot_override_the_projects_policy(ready_db):
     pid = project_with_offer("verified_only")
-    got = new_campaign(pid, name="Run A", allow_risky_emails=True)
-    assert got["options"]["allow_risky_emails"] is True
+    with pytest.raises(camp.CampaignError) as info:
+        new_campaign(pid, name="Run A", allow_risky_emails=True)
+    assert info.value.code == "email_policy_locked"
+    assert "email_policy" in str(info.value) and "update_project" in info.value.hint
+    assert camp.list_campaigns(project_id=pid) == []  # nothing was created
+    # saying the same thing as the policy is harmless
+    same = new_campaign(pid, name="Run A", allow_risky_emails=False)
+    assert same["options"]["allow_risky_emails"] is False
     pid2 = project_with_offer("allow_risky")
-    got = new_campaign(pid2, name="Run B", allow_risky_emails=False)
-    assert got["options"]["allow_risky_emails"] is False
+    with pytest.raises(camp.CampaignError) as info:
+        new_campaign(pid2, name="Run B", allow_risky_emails=False)
+    assert info.value.code == "email_policy_locked"
+    got = new_campaign(pid2, name="Run B", allow_risky_emails=True)
+    assert got["options"]["allow_risky_emails"] is True
+
+
+def test_update_campaign_cannot_switch_risky_emails_on(ready_db):
+    pid = project_with_offer("verified_only")
+    created = new_campaign(pid, name="Run C")
+    for kwargs in ({"allow_risky_emails": True}, {"options": {"allow_risky_emails": True}}):
+        with pytest.raises(camp.CampaignError) as info:
+            camp.update_campaign(created["id"], **kwargs)
+        assert info.value.code == "email_policy_locked"
+    assert camp.get_campaign(created["id"])["options"]["allow_risky_emails"] is False
+    # other options still change, and an echo of the stored value is fine
+    got = camp.update_campaign(created["id"], search_mode="ai", allow_risky_emails=False)
+    assert got["options"]["search_mode"] == "ai"
+
+
+def test_an_old_campaign_keeps_its_stored_value_and_can_only_be_tightened(ready_db):
+    pid = project_with_offer("verified_only")
+    old = new_campaign(pid, name="Old loose run")
+    with db.session() as conn:  # a campaign made before the policy existed
+        stored = {**old["options"], "allow_risky_emails": True}
+        db.update(conn, "campaigns", old["id"], options_json=stored)
+    assert camp.update_campaign(old["id"], search_mode="ai")["options"]["allow_risky_emails"]
+    assert camp.update_campaign(old["id"], allow_risky_emails=True)["options"][
+        "allow_risky_emails"
+    ]  # unchanged: not a loosening
+    tightened = camp.update_campaign(old["id"], allow_risky_emails=False)
+    assert tightened["options"]["allow_risky_emails"] is False
+    with pytest.raises(camp.CampaignError):  # and now it cannot be loosened again
+        camp.update_campaign(old["id"], allow_risky_emails=True)
 
 
 def test_existing_campaigns_keep_their_stored_value_when_the_policy_changes(ready_db):
@@ -341,6 +379,29 @@ def test_lemlist_pushes_risky_when_the_campaign_allows_it(ready_db, key):
     assert dry["preview"][0]["payload"]["emailStatus"] == "risky"
 
 
+@respx.mock
+def test_a_verified_only_campaign_can_never_get_a_risky_address_out(ready_db, key):
+    cid, ids = build(["risky", "verified"])
+    campaign = camp.get_campaign(cid)
+    assert camp.exportable_email_statuses(campaign) == ("verified",)
+    with pytest.raises(camp.CampaignError):  # every way of switching it on is refused
+        camp.update_campaign(cid, allow_risky_emails=True)
+    with pytest.raises(camp.CampaignError):
+        camp.update_campaign(cid, options={"allow_risky_emails": True})
+    with pytest.raises(camp.CampaignError):
+        new_campaign(campaign["project_id"], name="Another", allow_risky_emails=True)
+    for fmt in ("generic", "lemlist"):
+        rows = by_name(read(export_campaign(cid, fmt, include="qa_pass")["path"]))
+        assert rows["Aria"]["email"] == "" and rows["Aria"]["unverifiedEmail"]
+        assert rows["Marcus"]["email"] == "marcus.tan@northwind.example"
+    route = respx.post(f"{API}/campaigns/cam_abc123/leads/").mock(
+        return_value=httpx.Response(200, json={"_id": "lea_1"})
+    )
+    push_to_lemlist(cid, "cam_abc123", dry_run=False, confirm=True, allow_incomplete=True)
+    sent = "".join(call.request.content.decode() for call in route.calls)
+    assert "marcus.tan@northwind.example" in sent and "aria.tan@" not in sent
+
+
 # --- counts -----------------------------------------------------------------------------------
 
 
@@ -351,9 +412,13 @@ def test_campaign_counts_verified_and_not_verified_emails(ready_db):
         "verified_emails": 2, "found_not_verified": 2, "invalid_emails": 1, "no_email": 1,
     }
     assert camp.email_summary(cid) == summary
-    camp.update_campaign(cid, allow_risky_emails=True)
-    assert camp.email_summary(cid)["verified_emails"] == 3
-    assert camp.email_summary(cid)["found_not_verified"] == 1
+    with pytest.raises(camp.CampaignError):  # the campaign cannot turn risky addresses on
+        camp.update_campaign(cid, allow_risky_emails=True)
+    assert camp.email_summary(cid)["verified_emails"] == 2
+    loose, _ = build(["verified", "verified", "risky", "guess", "invalid", None],
+                     options={"allow_risky_emails": True})  # fmt: skip  (an allow_risky project)
+    assert camp.email_summary(loose)["verified_emails"] == 3
+    assert camp.email_summary(loose)["found_not_verified"] == 1
 
 
 def test_a_person_with_two_addresses_counts_once_by_the_best_one(ready_db):

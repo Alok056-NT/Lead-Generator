@@ -318,12 +318,15 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         computer). For a website, scope says what to read: "page" (only that address) or "site"
         (that page plus others on the same site, max_pages in all: default 15, at most 50, about
         a second each); ask the user which they want. Pass project_id to make this the project's
-        one source: a new source replaces the old one. Returns offer_id, a plain summary ("Read
-        12 pages from example.com: /, /about, ..."), the first chunk of the text (up to 40,000
-        characters) and next_cursor; to read the rest call it again with offer_id and cursor
-        until next_cursor is empty. Also lists lines marked as unconfirmed (to confirm, TBC,
-        placeholders). Free. Ask the user for the source first. If the page is blocked or empty
-        the error says what to ask for instead.""",
+        one source: a new source replaces the old one. A website read stops after about 50
+        seconds: if the reply has done=false, call this tool again with offer_id and the
+        reply's cursor (for example site:40) to read more pages into the same offer, and keep
+        going until done is true. Returns offer_id, a plain summary ("Read 12 pages from
+        example.com: /, /about, ..." counting every page so far), and once done the first
+        chunk of the text (up to 40,000 characters) and next_cursor; to read the rest call it
+        again with offer_id and next_cursor until next_cursor is empty. Also lists lines marked
+        as unconfirmed (to confirm, TBC, placeholders). Free. Ask the user for the source first.
+        If the page is blocked or empty the error says what to ask for instead.""",
         WRITE | {"open_world": True},
         keep=("text",),
     )
@@ -337,7 +340,13 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         offer_id: Annotated[
             int | None, Field(description="To read more of an offer already stored, with cursor.")
         ] = None,
-        cursor: Cursor = None,
+        cursor: Annotated[
+            str | int | None,
+            Field(
+                description="To read more of an offer with offer_id: the next_cursor (more text) "
+                "or the cursor (more pages while done is false) of the previous reply."
+            ),
+        ] = None,
         scope: Annotated[
             Literal["page", "site"] | None,
             Field(description="For a url: page (just that page) or site (default)."),
@@ -513,7 +522,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         {label, keywords[], search_terms[]}; order matters (first match wins). exclusions is
         {companies[], domains[], people[], competitors[]}. budget is {search, hunter, verify}
         numbers (defaults 300, 25, 200). search_mode: api, ai (use your own web search) or auto
-        (default). Free.""",
+        (default). Risky email addresses follow the project's email_policy; a campaign cannot
+        change that. Free.""",
         WRITE,
     )
     def create_campaign(
@@ -545,11 +555,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         invite_note: Annotated[
             bool | None, Field(description="Draft LinkedIn invite notes.")
         ] = None,
-        allow_risky_emails: Annotated[
-            bool | None, Field(description="Allow risky addresses.")
-        ] = None,
         allow_guess_emails: Annotated[
-            bool | None, Field(description="Allow unverified guesses.")
+            bool | None, Field(description="Expert switch: allow unverified guesses.")
         ] = None,
         max_people: Annotated[
             int | None, Field(description="n: confirmed people to keep (1 to 10000).")
@@ -565,7 +572,6 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             key: value
             for key, value in (
                 ("search_mode", search_mode), ("invite_note", invite_note),
-                ("allow_risky_emails", allow_risky_emails),
                 ("allow_guess_emails", allow_guess_emails), ("max_people", max_people),
                 ("max_companies", max_companies), ("max_per_company", max_per_company),
             )
@@ -581,9 +587,12 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
     @tool(
         "Update a campaign",
         """Changes a campaign; only the fields you pass change (exclusions and options are
-        merged). Use it to set search_mode ("ai" for AI search mode), to turn on
-        allow_guess_emails or allow_risky_emails (only after warning the user that some
-        addresses will bounce) or to change the targeting. After changing countries,
+        merged). Use it to set search_mode ("ai" for AI search mode) or to change the
+        targeting. Whether risky addresses are allowed follows the project's email_policy
+        (change it with update_project; it applies to campaigns made afterwards), so there is
+        no switch for it here. allow_guess_emails is an expert switch: use it only when the
+        user explicitly asks, after warning that guessed addresses will bounce, and they are
+        still never exported as the email. After changing countries,
         designations or seniority, call recheck_people so people already found are judged by
         the new rules. status: draft, active or archived. Free.""",
         WRITE | {"idempotent": True},
@@ -614,11 +623,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         invite_note: Annotated[
             bool | None, Field(description="Draft LinkedIn invite notes.")
         ] = None,
-        allow_risky_emails: Annotated[
-            bool | None, Field(description="Allow risky addresses.")
-        ] = None,
         allow_guess_emails: Annotated[
-            bool | None, Field(description="Allow unverified guesses.")
+            bool | None, Field(description="Expert switch: allow unverified guesses.")
         ] = None,
         max_people: Annotated[
             int | None, Field(description="n: confirmed people to keep; 0 removes the limit.")
@@ -643,8 +649,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             "company_size": company_size, "channels": channels, "designations": designations,
             "seniority_min": seniority_min, "exclusions": exclusions, "locale": locale,
             "budget": budget, "status": status, "search_mode": search_mode,
-            "invite_note": invite_note, "allow_risky_emails": allow_risky_emails,
-            "allow_guess_emails": allow_guess_emails,
+            "invite_note": invite_note, "allow_guess_emails": allow_guess_emails,
         }  # fmt: skip
         return campaign_svc.update_campaign(
             campaign_id, **{k: v for k, v in given.items() if v is not None}, **limits
