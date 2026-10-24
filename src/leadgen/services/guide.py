@@ -21,6 +21,11 @@ def workflow_text() -> str:
     return resources.files("leadgen").joinpath("guides", "workflow.md").read_text(encoding="utf-8")
 
 
+def studio_text() -> str:
+    """The Studio brief for the chat AI (`guides/studio.md`)."""
+    return resources.files("leadgen").joinpath("guides", "studio.md").read_text(encoding="utf-8")
+
+
 def _section_text(name: str) -> str:
     if name == "workflow":
         return workflow_text()

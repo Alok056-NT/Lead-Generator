@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -31,6 +31,7 @@ from leadgen.services import (
     ai_setup,
     analytics,
     browse,
+    chat,
     contacts_import,
     dashboard_ctl,
     designations,
@@ -63,7 +64,10 @@ CSP = (
     "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
 )
-STATUS_BY_CODE = {"not_found": 404, "csrf": 403, "bad_host": 400, "internal_error": 500}
+STATUS_BY_CODE = {
+    "not_found": 404, "csrf": 403, "bad_host": 400, "internal_error": 500,
+    "turn_running": 409, "ai_not_ready": 409, "sending_in_progress": 409,
+}
 UPLOAD_LIMIT = 21 * 1024 * 1024  # a little over the 20 MB the readers accept
 _RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
                    *(f"LPT{i}" for i in range(1, 10))}  # fmt: skip
@@ -173,6 +177,11 @@ class AiModeBody(_Body):
 
 class AiKeyBody(_Body):
     key: str = Field(max_length=500)
+
+
+class ChatBody(_Body):
+    message: str = ""
+    attachments: list[str] = Field(default=[], max_length=10)
 
 
 # --- replies ------------------------------------------------------------------------------------
@@ -733,6 +742,45 @@ def _register_routes(app: FastAPI) -> None:
     @app.post("/api/ai/test")
     def ai_test() -> JSONResponse:
         return _reply(ai_setup.check_connection())
+
+    # ---- Studio chat --------------------------------------------------------------------------
+
+    @app.get("/api/projects/{project_id}/chat")
+    def chat_history(project_id: int) -> JSONResponse:
+        projects.get_project(project_id)  # not_found
+        ai = ai_setup.get_status()
+        return _json({"ok": True, "messages": chat.history(project_id),
+                      "turn": chat.turn_state(project_id),
+                      "ai": {"ready": ai["ready"], "mode": ai["mode"]}})
+
+    @app.post("/api/projects/{project_id}/chat")
+    def chat_send(project_id: int, body: ChatBody) -> JSONResponse:
+        return _reply(chat.start_turn(project_id, body.message, body.attachments))
+
+    @app.get("/api/projects/{project_id}/chat/stream")
+    def chat_stream(request: Request, project_id: int, turn: str, after: int = 0) -> Response:
+        last = request.headers.get("last-event-id", "").strip()
+        start = int(last) if last.isdigit() else after
+        events = chat.stream_events(project_id, turn, start)  # raises not_found before streaming
+        return StreamingResponse(events, media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/projects/{project_id}/chat/stop")
+    def chat_stop(project_id: int) -> JSONResponse:
+        return _reply(chat.cancel_turn(project_id))
+
+    @app.post("/api/projects/{project_id}/chat/upload")
+    def chat_upload(
+        request: Request, project_id: int, file: UploadFile = File(...)  # noqa: B008
+    ) -> JSONResponse:
+        projects.get_project(project_id)
+        try:
+            saved = _save_upload(request, file, chat.uploads_dir(project_id), chat.UPLOAD_SUFFIXES)
+        except _UploadRefused as refused:
+            return refused.reply
+        kind = "contacts" if saved.suffix.lower() in (".csv", ".xlsx") else "product"
+        size = saved.stat().st_size
+        return _json({"ok": True, "file": {"name": saved.name, "size": size, "kind": kind}})
 
 
 def serve(port: int | None = None) -> int:
