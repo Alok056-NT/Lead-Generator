@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import resources
@@ -30,16 +30,110 @@ from leadgen.core import paths
 BASE_VERSION = 1
 MIN_SQLITE = (3, 35, 0)  # needed for RETURNING
 
-# Forward-only migrations applied after schema.sql, as (version, sql). Versions must be greater
-# than BASE_VERSION and strictly increasing. Each script runs in one transaction, so it must not
-# contain BEGIN/COMMIT. Empty for now.
-MIGRATIONS: list[tuple[int, str]] = []
+_V2_SQL = """
+CREATE TABLE projects (
+    id            INTEGER PRIMARY KEY,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    offer_id      INTEGER REFERENCES offers(id) ON DELETE RESTRICT,
+    cooldown_days INTEGER NOT NULL DEFAULT 90,
+    status        TEXT NOT NULL DEFAULT 'active'     -- active / archived
+);
+CREATE UNIQUE INDEX uq_projects_name ON projects(name COLLATE NOCASE);
+CREATE INDEX idx_projects_offer ON projects(offer_id);
+
+ALTER TABLE campaigns ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT;
+CREATE INDEX idx_campaigns_project ON campaigns(project_id);
+
+CREATE TABLE contact_log (
+    id               INTEGER PRIMARY KEY,
+    project_id       INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    campaign_id      INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
+    person_id        INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    key_linkedin     TEXT NOT NULL DEFAULT '',
+    key_email        TEXT NOT NULL DEFAULT '',
+    key_name_company TEXT NOT NULL DEFAULT '',
+    channel          TEXT NOT NULL,   -- found / exported_csv / lemlist / email_sent / imported
+    at               TEXT NOT NULL,
+    source           TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_contact_log_linkedin ON contact_log(project_id, key_linkedin);
+CREATE INDEX idx_contact_log_email ON contact_log(project_id, key_email);
+CREATE INDEX idx_contact_log_name ON contact_log(project_id, key_name_company);
+CREATE INDEX idx_contact_log_campaign ON contact_log(campaign_id);
+CREATE INDEX idx_contact_log_person ON contact_log(person_id);
+
+CREATE TRIGGER trg_campaigns_project_required BEFORE INSERT ON campaigns
+WHEN NEW.project_id IS NULL
+BEGIN
+    SELECT RAISE(ABORT, 'campaigns.project_id is required');
+END;
+CREATE TRIGGER trg_campaigns_project_kept BEFORE UPDATE OF project_id ON campaigns
+WHEN NEW.project_id IS NULL
+BEGIN
+    SELECT RAISE(ABORT, 'campaigns.project_id cannot be cleared');
+END;
+"""
+
+
+def _unique_project_name(name: str, used: set[str]) -> str:
+    base = " ".join(name.split())[:120].strip() or "Project"
+    candidate, n = base, 1
+    while candidate.casefold() in used:
+        n += 1
+        candidate = f"{base} ({n})"
+    used.add(candidate.casefold())
+    return candidate
+
+
+def _v2_assign_projects(conn: sqlite3.Connection) -> None:
+    """Give every offer a project named after it and put each campaign in its offer's project.
+
+    Campaigns without an offer (allowed in v1) go to one extra project. Nothing is deleted.
+    """
+    stamp = now()
+    used: set[str] = set()
+    for offer in conn.execute("SELECT id, name FROM offers ORDER BY id").fetchall():
+        name = _unique_project_name(offer[1] or f"Offer {offer[0]}", used)
+        cur = conn.execute(
+            "INSERT INTO projects (created_at, updated_at, name, offer_id) VALUES (?, ?, ?, ?)",
+            (stamp, stamp, name, offer[0]),
+        )
+        conn.execute(
+            "UPDATE campaigns SET project_id = ? WHERE offer_id = ?", (cur.lastrowid, offer[0])
+        )
+    if conn.execute("SELECT 1 FROM campaigns WHERE project_id IS NULL LIMIT 1").fetchone():
+        name = _unique_project_name("Campaigns without an offer", used)
+        cur = conn.execute(
+            "INSERT INTO projects (created_at, updated_at, name) VALUES (?, ?, ?)",
+            (stamp, stamp, name),
+        )
+        conn.execute(
+            "UPDATE campaigns SET project_id = ? WHERE project_id IS NULL", (cur.lastrowid,)
+        )
+    from leadgen.services import projects  # late import: services import this module
+
+    projects.backfill_v1_contacts(conn)
+
+
+# Forward-only migrations applied after schema.sql, as (version, sql) or (version, sql, after).
+# Versions must be greater than BASE_VERSION and strictly increasing. Each runs in one
+# transaction, so the SQL must not contain BEGIN/COMMIT; `after(conn)` (optional) runs in the
+# same transaction once the SQL has run, for data changes that plain SQL cannot express.
+# v2 (T23): projects, contact memory, campaigns.project_id.
+Migration = tuple[int, str] | tuple[int, str, Callable[[sqlite3.Connection], None]]
+MIGRATIONS: list[Migration] = [(2, _V2_SQL, _v2_assign_projects)]
+SCHEMA_VERSION = max([BASE_VERSION, *(m[0] for m in MIGRATIONS)])
 
 TABLES = frozenset(
     {
         "schema_version",
         "offers",
+        "projects",
         "campaigns",
+        "contact_log",
         "companies",
         "people",
         "search_tasks",
@@ -118,7 +212,8 @@ def _schema_sql() -> str:
 
 def _check_migrations() -> None:
     last = BASE_VERSION
-    for version, _sql in MIGRATIONS:
+    for migration in MIGRATIONS:
+        version = migration[0]
         if version <= last:
             raise ValueError(f"migration versions must be increasing and above {BASE_VERSION}")
         last = version
@@ -136,11 +231,14 @@ def init_db(path: str | Path | None = None) -> int:
         )
         conn.commit()
         applied = current_version(conn)
-        for version, sql in MIGRATIONS:
+        for migration in MIGRATIONS:
+            version, sql = migration[0], migration[1]
             if version <= applied:
                 continue
             try:
                 conn.executescript("BEGIN;\n" + sql)
+                if len(migration) > 2:
+                    migration[2](conn)
                 conn.execute(
                     "INSERT INTO schema_version (version, applied_at) VALUES (?, ?)",
                     (version, now()),

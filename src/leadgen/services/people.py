@@ -6,6 +6,12 @@ PLAN section 11 (`services/confirm.py`); everyone else is stored as `review` wit
 Only the title, link and snippet that Google returned are stored; profile pages are never
 fetched. Long runs are chunked (`find_people` returns a `next_cursor`). Callers must run
 `db.init_db()` first.
+
+Projects (T23): the campaign's size limits (`max_people`, `max_companies`, `max_per_company`)
+and the project's contact memory apply when a person is stored. A person the rules confirm but
+who is already in another active campaign of the project (L25) or was found or contacted inside
+the project's cooldown (L24) is stored as `review` with that reason; a confirmed person beyond a
+limit is stored as `reserve` (kept for a later campaign, see `move_reserve`).
 """
 
 from __future__ import annotations
@@ -24,15 +30,16 @@ from leadgen.core.text import normalize_whitespace
 from leadgen.providers import registry, search
 from leadgen.providers.base import ProviderError
 from leadgen.providers.search import SearchResult
-from leadgen.services import budget
+from leadgen.services import budget, projects
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import confirm as rules
+from leadgen.services.seniority import LEVELS
 
 PAGE_SIZE_MAX = 50
 SEARCH_NUM = 10
 CALL_TIME_LIMIT_S = 50.0
 MAX_SEARCHES_PER_CALL = 30  # find_people default; ai_search.fill_from_cache uses it too
-STATUSES = ("confirmed", "review", "rejected", "removed")
+STATUSES = ("confirmed", "review", "rejected", "removed", "reserve")
 MANUAL_PREFIX = "MANUAL:"
 SAMPLE_SIZE = 5
 _HARD_BLOCKS = ("L03", "L16")  # a person who fails these is never promoted by hand
@@ -148,8 +155,9 @@ def search_plan(
 
 
 def approved_company_rows(campaign_id: int) -> list[dict[str, Any]]:
-    """The campaign's approved companies (rows of the `companies` table), oldest first."""
-    return _company_rows(campaign_id)
+    """The campaign's approved companies (rows of the `companies` table) that a search covers:
+    oldest first, or only the first `max_companies` of them (by company id, the order added)."""
+    return _searched_companies(_campaign(campaign_id), None)
 
 
 def company_view(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -189,6 +197,28 @@ def _company_rows(
         params.extend(company_ids)
     with db.session() as conn:
         rows = db.query(conn, sql + " ORDER BY id", params)
+    return rows
+
+
+def _limits(campaign: Mapping[str, Any]) -> tuple[int | None, int | None, int | None]:
+    """`(max_people, max_companies, max_per_company)` of a campaign (None = no limit)."""
+    options = campaign.get("options") or {}
+    return options.get("max_people"), options.get("max_companies"), options.get("max_per_company")
+
+
+def _searched_companies(
+    camp: Mapping[str, Any], company_ids: Sequence[int] | None
+) -> list[dict[str, Any]]:
+    """The approved companies a search covers. With `max_companies` only the first c approved
+    ones count (company id, the order they were added: it never changes, unlike `updated_at`),
+    whatever `company_ids` asks for."""
+    _n, max_companies, _p = _limits(camp)
+    rows = _company_rows(camp["id"])
+    if max_companies:
+        rows = rows[:max_companies]  # `_company_rows` is ordered by id
+    if company_ids:
+        wanted = set(company_ids)
+        rows = [r for r in rows if r["id"] in wanted]
     return rows
 
 
@@ -288,6 +318,74 @@ def _note(
         )
 
 
+@dataclass
+class _Entry:
+    """One parsed result waiting for its status (see `process_results`)."""
+
+    position: int
+    obj: SearchResult
+    cand: rules.Candidate
+    status: str = "review"
+
+
+class _ProjectScreen(projects.ContactScreen):
+    """`projects.ContactScreen` for a campaign dict; `reasons` gives `Lnn:text` strings."""
+
+    def __init__(self, campaign: Mapping[str, Any], also_exclude: Sequence[int] = ()) -> None:
+        super().__init__(campaign.get("project_id"), campaign["id"], also_exclude)
+
+    def reasons(  # type: ignore[override]
+        self, keys: Mapping[str, str], below_person_id: int | None = None
+    ) -> list[str]:
+        return [f"{code}:{text}" for code, text in self.findings(keys, below_person_id)]
+
+
+class _Capacity:
+    """How many more confirmed people the campaign and each company can take."""
+
+    def __init__(self, campaign: Mapping[str, Any]) -> None:
+        self.max_people, _c, self.max_per_company = _limits(campaign)
+        self.total = 0
+        self.per_company: dict[int, int] = {}
+        if self.max_people or self.max_per_company:
+            with db.session() as conn:
+                rows = db.query(
+                    conn,
+                    "SELECT company_id, COUNT(*) AS n FROM people "
+                    "WHERE campaign_id = ? AND status = 'confirmed' GROUP BY company_id",
+                    (campaign["id"],),
+                )
+            self.per_company = {r["company_id"]: r["n"] for r in rows}
+            self.total = sum(self.per_company.values())
+
+    def take(self, company_id: int) -> str:
+        """`confirmed` (and use the room) or `reserve` when a limit is reached."""
+        if self.max_people and self.total >= self.max_people:
+            return "reserve"
+        if self.max_per_company and self.per_company.get(company_id, 0) >= self.max_per_company:
+            return "reserve"
+        self.total += 1
+        self.per_company[company_id] = self.per_company.get(company_id, 0) + 1
+        return "confirmed"
+
+
+def _rank(campaign: Mapping[str, Any], designation: str, seniority: str) -> tuple[int, int]:
+    """Sort key: designation group order (first group first), then seniority (highest first)."""
+    labels = [g["label"] for g in campaign.get("designations") or []]
+    group = labels.index(designation) if designation in labels else len(labels)
+    level = LEVELS.index(seniority) if seniority in LEVELS else -1
+    return group, -level
+
+
+def _candidate_keys(cand: rules.Candidate, company_name: str) -> dict[str, str]:
+    return projects.make_keys(
+        {
+            "linkedin_url": cand.linkedin_url, "first_name": cand.first_name,
+            "last_name": cand.last_name, "raw_name": cand.raw_name, "company": company_name,
+        }
+    )  # fmt: skip
+
+
 def process_results(
     campaign: Mapping[str, Any],
     company: Mapping[str, Any],
@@ -301,16 +399,25 @@ def process_results(
     """Parse and store the results of one search (`campaign`/`company` are the dicts returned by
     `campaign.get_campaign` and `companies.list_companies`). The same function handles results
     that were not fetched by an API (AI-submitted ones, origin `ai_web_search`), with the same
-    rules. Returns counts (`confirmed`, `review`, `duplicates`, `ignored`) and short samples.
+    rules. Returns counts (`confirmed`, `review`, `reserve`, `duplicates`, `ignored`) and short
+    samples.
 
     `screen(candidate, result)` may return extra `Lnn:text` reasons (AI search uses it for its
     anti-fabrication checks); any reason sends the person to `review`. `outcomes`, when given,
-    receives one `{index, url, outcome, reasons}` per result (`confirmed`, `review`, `duplicate`
-    or `ignored`)."""
+    receives one `{index, url, outcome, reasons}` per result (`confirmed`, `review`, `reserve`,
+    `duplicate` or `ignored`).
+
+    Project rules (campaigns inside a project): a confirmed person who is in another active
+    campaign of the project (L25) or was found or contacted inside the cooldown (L24) goes to
+    `review`; the others are kept as `confirmed` until the campaign's `max_people` or
+    `max_per_company` is reached, then stored as `reserve`. Within one batch the people who
+    rank first (campaign group order, then seniority, then position) get the room first.
+    Everyone newly `confirmed` is written to the project's contact log (`found`)."""
     camp_ctx = _campaign_ctx(campaign)
     comp_ctx = _company_ctx(company, campaign)
-    stats = {"confirmed": 0, "review": 0, "duplicates": 0, "ignored": 0}
+    stats = {"confirmed": 0, "review": 0, "reserve": 0, "duplicates": 0, "ignored": 0}
     samples: dict[str, list[dict[str, Any]]] = {"confirmed": [], "review": []}
+    notes: list[tuple[int, str, str, list[str]]] = []  # (position, url, outcome, reasons)
     with db.session() as conn:
         existing = db.query(
             conn,
@@ -319,12 +426,13 @@ def process_results(
         )
         urls = {rules.url_key(r["linkedin_url"]) for r in existing}
         names = {(r["company_id"], rules.name_key(r["raw_name"])) for r in existing}
+        entries: list[_Entry] = []
         for position, item in enumerate(results, start=1):
             obj = _result_to_obj(item, position)
             cand = rules.parse_result(obj, comp_ctx, camp_ctx)
             if cand is None:
                 stats["ignored"] += 1
-                _note(outcomes, position, obj.link, "ignored", ["L01:not a personal profile link"])
+                notes.append((position, obj.link, "ignored", ["L01:not a personal profile link"]))
                 continue
             if screen is not None:
                 cand.reasons.extend(r for r in screen(cand, obj) if r not in cand.reasons)
@@ -332,11 +440,31 @@ def process_results(
             name_key = (company["id"], rules.name_key(cand.raw_name))
             if key in urls or (cand.raw_name and name_key in names):
                 stats["duplicates"] += 1
-                _note(outcomes, position, obj.link, "duplicate", cand.reasons)
+                notes.append((position, obj.link, "duplicate", cand.reasons))
                 continue
-            status = "confirmed" if cand.confirmed else "review"
+            urls.add(key)
+            names.add(name_key)
+            entries.append(_Entry(position, obj, cand))
+
+        confirmed = [e for e in entries if e.cand.confirmed]
+        if confirmed:
+            project_screen = _ProjectScreen(campaign)
+            capacity = _Capacity(campaign)
+            confirmed.sort(
+                key=lambda e: (*_rank(campaign, e.cand.designation, e.cand.seniority), e.position)
+            )
+            for entry in confirmed:
+                extra = project_screen.reasons(_candidate_keys(entry.cand, company["name"]))
+                if extra:
+                    entry.cand.reasons.extend(extra)
+                else:
+                    entry.status = capacity.take(company["id"])
+
+        found: list[dict[str, Any]] = []
+        for entry in entries:
+            cand, status = entry.cand, entry.status
             try:
-                db.insert(
+                person_id = db.insert(
                     conn,
                     "people",
                     campaign_id=campaign["id"],
@@ -360,14 +488,18 @@ def process_results(
                 )
             except sqlite3.IntegrityError:
                 stats["duplicates"] += 1
-                _note(outcomes, position, obj.link, "duplicate", cand.reasons)
+                notes.append((entry.position, entry.obj.link, "duplicate", cand.reasons))
                 continue
-            urls.add(key)
-            names.add(name_key)
             stats[status] += 1
-            _note(outcomes, position, obj.link, status, cand.reasons)
-            if len(samples[status]) < SAMPLE_SIZE:
+            notes.append((entry.position, entry.obj.link, status, cand.reasons))
+            if status == "confirmed":
+                found.append({**_candidate_keys(cand, company["name"]), "person_id": person_id})
+            if status in samples and len(samples[status]) < SAMPLE_SIZE:
                 samples[status].append(_brief(cand, company["name"]))
+        if found and campaign.get("project_id") is not None:
+            projects.log_found_in(conn, campaign["project_id"], campaign["id"], found)
+    for position, url, outcome, reasons in sorted(notes, key=lambda n: n[0]):
+        _note(outcomes, position, url, outcome, reasons)
     return {**stats, "group": group_label, "samples": samples}
 
 
@@ -396,7 +528,7 @@ def estimate_people_search(
     `credits_needed` (one per uncached search) and `budget_left` for the campaign."""
     camp = _campaign(campaign_id)
     ids = _int_list(company_ids)
-    plan = _all_searches(camp, _company_rows(campaign_id, ids or None))
+    plan = _all_searches(camp, _searched_companies(camp, ids))
     pkey = _provider_key()
     cached = sum(1 for s in plan if search.is_cached(pkey, s.query, s.gl, SEARCH_NUM))
     needed = len(plan) - cached
@@ -423,6 +555,20 @@ def _counts(campaign_id: int) -> dict[str, int]:
         )
     found = {r["status"]: r["n"] for r in rows}
     return {s: found.get(s, 0) for s in STATUSES}
+
+
+def _people_limit_reached(camp: Mapping[str, Any]) -> bool:
+    """True when the campaign has `max_people` confirmed people (nothing more to search for)."""
+    limit = _limits(camp)[0]
+    return bool(limit) and _counts(camp["id"])["confirmed"] >= limit
+
+
+def _limit_message(camp: Mapping[str, Any]) -> str:
+    return (
+        f"Limit reached: the campaign has its {_limits(camp)[0]} confirmed people "
+        "(max_people), so searching stopped. Extra confirmed people are kept as reserve for "
+        "a later campaign (move_reserve_people)."
+    )
 
 
 def _cursor(value: str | int | None) -> int:
@@ -454,6 +600,10 @@ def find_people(
     50 seconds) and returns `next_cursor` until done. Cached searches cost nothing.
     Missing keys or no credits give the structured `needs_key` / `quota_exhausted` reply
     (with the progress made so far). `provider` lets tests pass a fake.
+
+    Campaign limits: only the first `max_companies` approved companies are searched, and the
+    search stops (`done`, `limit_reached`) once `max_people` people are confirmed; confirmed
+    people beyond `max_per_company` (or `max_people`) are stored as `reserve`.
     """
     camp = _campaign(campaign_id)
     if camp["options"].get("search_mode") == "ai":
@@ -473,7 +623,25 @@ def find_people(
     ids = _int_list(company_ids)
     start = _cursor(cursor)
     max_searches = min(max(1, int(max_searches_per_call)), 100)
-    rows = _company_rows(campaign_id, ids or None)
+    if _people_limit_reached(camp):
+        return {
+            "ok": True,
+            "searches_done": 0,
+            "searches_total": 0,
+            "cache_hits": 0,
+            "credits_used": 0.0,
+            "this_call": dict.fromkeys(
+                ("confirmed", "review", "reserve", "duplicates", "ignored"), 0
+            ),
+            "campaign_people": _counts(campaign_id),
+            "sample_confirmed": [],
+            "sample_review": [],
+            "done": True,
+            "next_cursor": None,
+            "limit_reached": True,
+            "message": _limit_message(camp),
+        }
+    rows = _searched_companies(camp, ids)
     skipped = sorted(set(ids) - {r["id"] for r in rows})
     plan = _all_searches(camp, rows)
     by_id = {r["id"]: _company_dict(r) for r in rows}
@@ -506,8 +674,9 @@ def find_people(
                 "repeat the call with confirm=true.",
             }
 
-    totals = {"confirmed": 0, "review": 0, "duplicates": 0, "ignored": 0}
+    totals = {"confirmed": 0, "review": 0, "reserve": 0, "duplicates": 0, "ignored": 0}
     samples: dict[str, list[dict[str, Any]]] = {"confirmed": [], "review": []}
+    limit_hit = False
     done = 0
     cache_hits = 0
     credits = 0.0
@@ -516,6 +685,9 @@ def find_people(
     began = time.monotonic()
     while position < len(plan) and done < max_searches:
         if done and time.monotonic() - began > CALL_TIME_LIMIT_S:
+            break
+        if done and _people_limit_reached(camp):
+            limit_hit = True
             break
         item = plan[position]
         cached_already = search.is_cached(pkey, item.query, item.gl, SEARCH_NUM)
@@ -546,8 +718,10 @@ def find_people(
             samples[status].extend(out["samples"][status][:room])
         position += 1
         done += 1
+    if not limit_hit and stop is None and position < len(plan) and done >= max_searches:
+        limit_hit = _people_limit_reached(camp)
 
-    finished = position >= len(plan) and stop is None
+    finished = (position >= len(plan) or limit_hit) and stop is None
     reply: dict[str, Any] = {
         **(stop if stop is not None else {"ok": True}),
         "searches_done": done,
@@ -561,6 +735,9 @@ def find_people(
         "done": finished,
         "next_cursor": None if finished else str(position),
     }
+    if limit_hit:
+        reply["limit_reached"] = True
+        reply["message"] = _limit_message(camp)
     if skipped:
         reply["skipped_company_ids"] = skipped
     return reply
@@ -625,14 +802,14 @@ def list_people(
 def set_person_status(
     campaign_id: int, ids: Sequence[int], status: str, reason: str = ""
 ) -> dict[str, Any]:
-    """Set `confirmed`, `review`, `rejected` or `removed` on people of the campaign.
+    """Set `confirmed`, `review`, `reserve`, `rejected` or `removed` on people of the campaign.
 
     Moving someone to `confirmed` by hand needs a `reason` (it is stored with the person as a
     `MANUAL:` entry in `reasons`, and `recheck_people` leaves such people alone). People who fail
     the excluded-company (L03) or suppression (L16) rule cannot be promoted. Returns `updated`,
     `not_found` and `refused`.
     """
-    _campaign(campaign_id)
+    camp = _campaign(campaign_id)
     if status not in STATUSES:
         raise PeopleError("invalid_value", f"status must be one of: {', '.join(STATUSES)}.")
     id_list = _int_list(ids)
@@ -644,6 +821,8 @@ def set_person_status(
             "Say why the evidence is good enough, e.g. 'checked the profile'.",
         )
     updated, missing, refused = [], [], []
+    to_log: list[dict[str, Any]] = []
+    to_forget: list[int] = []
     with db.session() as conn:
         for person_id in id_list:
             row = db.get(conn, "people", person_id)
@@ -663,12 +842,188 @@ def set_person_status(
                 "people",
                 person_id,
                 status=status,
-                confirmed=int(status == "confirmed"),
+                confirmed=int(status in ("confirmed", "reserve")),
                 reasons_json=reasons,
             )
             updated.append(person_id)
+            if status == "confirmed" and row["status"] != "confirmed":
+                company = db.get(conn, "companies", row["company_id"]) or {}
+                to_log.append({**row, "company": company.get("name", ""), "person_id": person_id})
+            elif status != "confirmed" and row["status"] == "confirmed":
+                to_forget.append(person_id)
+        projects.forget_found(conn, to_forget)
+        if to_log and camp.get("project_id") is not None:
+            projects.log_found_in(conn, camp["project_id"], campaign_id, to_log)
     return {"ok": True, "updated": len(updated), "ids": updated, "not_found": missing,
             "refused": refused}  # fmt: skip
+
+
+def _limit_arg(name: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 10_000:
+        raise PeopleError("invalid_value", f"{name} must be a whole number from 1 to 10000.")
+    return value
+
+
+def _smallest(*values: int | None) -> int | None:
+    given = [v for v in values if v]
+    return min(given) if given else None
+
+
+def _target_company(
+    conn: sqlite3.Connection, target_id: int, source: Mapping[str, Any]
+) -> int:
+    """The target campaign's company for a source company (same domain, else same name); a new
+    approved copy is created when there is none."""
+    rows = db.query(conn, "SELECT * FROM companies WHERE campaign_id = ?", (target_id,))
+    domain = str(source["domain"] or "")
+    for row in rows:
+        if domain and row["domain"] == domain:
+            return row["id"]
+    for row in rows:
+        if row["name"].casefold() == str(source["name"]).casefold():
+            return row["id"]
+    return db.insert(
+        conn,
+        "companies",
+        campaign_id=target_id,
+        name=source["name"],
+        aliases_json=source["aliases_json"] or [],
+        domain=domain,
+        country=source["country"],
+        sector=source["sector"],
+        size_note=source["size_note"],
+        source=f"moved from campaign {source['campaign_id']}",
+        domain_ok=source["domain_ok"],
+        status="approved",
+    )
+
+
+def move_reserve(
+    from_campaign_id: int,
+    to_campaign_id: int,
+    max_per_company: int | None = None,
+    max_people: int | None = None,
+) -> dict[str, Any]:
+    """Move `reserve` people of one campaign into another campaign of the same project.
+
+    They become `confirmed` in the target (best ranked first: the target's group order, then
+    seniority, then the order they were found) while the target's limits hold: its own
+    `max_people`, `max_companies` and `max_per_company`, and the stricter of those and the
+    `max_people` / `max_per_company` given here. A person is left in reserve when the target's
+    rules no longer confirm them (the stored evidence is judged again), when they are already in
+    the target, or when they were contacted or sit in a third campaign of the project (L24, L25).
+    Returns `moved`, `moved_ids`, `left_in_reserve` and why (`limit_reached`, `not_matching`,
+    `duplicates`, `already_contacted`). Raises `PeopleError`.
+    """
+    if from_campaign_id == to_campaign_id:
+        raise PeopleError("invalid_value", "Pick two different campaigns.")
+    source, target = _campaign(from_campaign_id), _campaign(to_campaign_id)
+    if source.get("project_id") is None or source["project_id"] != target.get("project_id"):
+        raise PeopleError(
+            "different_project",
+            "Reserve people can only move between campaigns of the same project.",
+            "Check both campaigns with get_campaign.",
+        )
+    if target["status"] == "archived":
+        raise PeopleError("campaign_archived", "The target campaign is archived.")
+    per_company = _smallest(_limit_arg("max_per_company", max_per_company), _limits(target)[2])
+    total_limit = _smallest(_limit_arg("max_people", max_people), _limits(target)[0])
+    max_companies = _limits(target)[1]
+
+    camp_ctx = _campaign_ctx(target)
+    screen = _ProjectScreen(target, also_exclude=[from_campaign_id])
+    moved: list[int] = []
+    why = {"limit_reached": 0, "not_matching": 0, "duplicates": 0, "already_contacted": 0}
+    with db.session() as conn:
+        reserve = db.query(
+            conn,
+            "SELECT * FROM people WHERE campaign_id = ? AND status = 'reserve' ORDER BY id",
+            (from_campaign_id,),
+        )
+        reserve.sort(key=lambda r: (*_rank(target, r["designation"], r["seniority"]), r["id"]))
+        existing = db.query(
+            conn,
+            "SELECT linkedin_url, company_id, status FROM people WHERE campaign_id = ?",
+            (to_campaign_id,),
+        )
+        urls = {rules.url_key(r["linkedin_url"]) for r in existing}
+        per: dict[int, int] = {}
+        for r in existing:
+            if r["status"] == "confirmed":
+                per[r["company_id"]] = per.get(r["company_id"], 0) + 1
+        total = sum(per.values())
+        found: list[dict[str, Any]] = []
+        for row in reserve:
+            key = rules.url_key(row["linkedin_url"])
+            if key in urls:
+                why["duplicates"] += 1
+                continue
+            if total_limit and total >= total_limit:
+                why["limit_reached"] += 1
+                continue
+            source_company = db.get(conn, "companies", row["company_id"]) or {}
+            company = _company_dict({**source_company, "id": None, "status": "approved"})
+            result = SearchResult(
+                title=row["evidence_title"], link=row["linkedin_url"],
+                snippet=row["evidence_snippet"], position=0,
+            )  # fmt: skip
+            cand = rules.parse_result(result, _company_ctx(company, target), camp_ctx)
+            if cand is None or not cand.confirmed:
+                why["not_matching"] += 1
+                continue
+            if screen.reasons(_candidate_keys(cand, company["name"])):
+                why["already_contacted"] += 1
+                continue
+            known = db.query(
+                conn,
+                "SELECT id, domain, name FROM companies WHERE campaign_id = ?",
+                (to_campaign_id,),
+            )
+            match = next(
+                (
+                    c["id"] for c in known
+                    if (company["domain"] and c["domain"] == company["domain"])
+                    or c["name"].casefold() == company["name"].casefold()
+                ),
+                None,
+            )  # fmt: skip
+            if match is None and max_companies and len(per) >= max_companies:
+                why["limit_reached"] += 1
+                continue
+            if match is not None and per_company and per.get(match, 0) >= per_company:
+                why["limit_reached"] += 1
+                continue
+            company_id = _target_company(
+                conn, to_campaign_id, {**source_company, "campaign_id": from_campaign_id}
+            )
+            db.update(
+                conn, "people", row["id"],
+                campaign_id=to_campaign_id, company_id=company_id, status="confirmed",
+                confirmed=1, first_name=cand.first_name, last_name=cand.last_name,
+                greeting_name=cand.greeting_name, raw_name=cand.raw_name, title=cand.headline,
+                designation=cand.designation, seniority=cand.seniority, country=cand.country,
+                reasons_json=[],
+            )  # fmt: skip
+            urls.add(key)
+            total += 1
+            per[company_id] = per.get(company_id, 0) + 1
+            moved.append(row["id"])
+            found.append({**_candidate_keys(cand, company["name"]), "person_id": row["id"]})
+        if found:
+            projects.log_found_in(conn, target["project_id"], to_campaign_id, found)
+    left = len(reserve) - len(moved)
+    return {
+        "ok": True,
+        "from_campaign_id": from_campaign_id,
+        "to_campaign_id": to_campaign_id,
+        "moved": len(moved),
+        "moved_ids": moved,
+        "left_in_reserve": left,
+        **why,
+        "message": f"Moved {len(moved)} reserve people; {left} stay in reserve.",
+    }
 
 
 def _is_manual(reasons: Iterable[str]) -> bool:
@@ -695,6 +1050,10 @@ def recheck_people(campaign_id: int) -> dict[str, Any]:
     camp = _campaign(campaign_id)
     camp_ctx = _campaign_ctx(camp)
     companies = {r["id"]: _company_dict(r) for r in _company_rows(campaign_id, None, False)}
+    project_screen = _ProjectScreen(camp)
+    capacity = _Capacity(camp)
+    to_log: list[dict[str, Any]] = []
+    to_forget: list[int] = []
     to_confirmed: list[dict[str, Any]] = []
     to_review: list[dict[str, Any]] = []
     unchanged = refreshed = manual = checked = 0
@@ -723,7 +1082,15 @@ def recheck_people(campaign_id: int) -> dict[str, Any]:
                 new_status = "review"
             else:
                 cand.reasons.extend(r for r in kept if r not in cand.reasons)
+                if cand.confirmed:  # the project rules (L24, L25) are judged afresh
+                    cand.reasons.extend(
+                        project_screen.reasons(
+                            _candidate_keys(cand, company["name"]), below_person_id=row["id"]
+                        )
+                    )
                 new_status = "confirmed" if cand.confirmed else "review"
+                if new_status == "confirmed" and row["status"] != "confirmed":
+                    new_status = capacity.take(row["company_id"])
                 values = {
                     "first_name": cand.first_name,
                     "last_name": cand.last_name,
@@ -741,13 +1108,23 @@ def recheck_people(campaign_id: int) -> dict[str, Any]:
                 brief = {
                     "id": row["id"], "name": row["raw_name"], "reasons": values["reasons_json"],
                 }  # fmt: skip
-                (to_confirmed if new_status == "confirmed" else to_review).append(brief)
+                if new_status == "confirmed":
+                    to_confirmed.append(brief)
+                    to_log.append(
+                        {**row, **values, "company": company["name"], "person_id": row["id"]}
+                    )
+                elif new_status == "review":
+                    to_review.append(brief)
+                    to_forget.append(row["id"])
             elif changed:
                 refreshed += 1
             else:
                 unchanged += 1
                 continue
             db.update(conn, "people", row["id"], status=new_status, **values)
+        projects.forget_found(conn, to_forget)
+        if to_log and camp.get("project_id") is not None:
+            projects.log_found_in(conn, camp["project_id"], campaign_id, to_log)
     return {
         "ok": True,
         "checked": checked,

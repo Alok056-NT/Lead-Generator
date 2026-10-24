@@ -10,7 +10,7 @@ from leadgen import db
 from leadgen.providers.base import ProviderError
 from leadgen.providers.fake import FakeSearchProvider
 from leadgen.providers.search import SearchResult
-from leadgen.services import budget, people
+from leadgen.services import budget, people, projects
 from leadgen.services import campaign as camp
 from leadgen.services.campaign import CampaignError
 from leadgen.services.people import PeopleError
@@ -23,6 +23,7 @@ def cid(ready_db):
     return camp.create_campaign(
         name="SG logistics",
         offer_id=offer_id,
+        project_id=projects.ensure_project_for_offer(offer_id),
         countries=["SG"],
         sectors=["logistics"],
         company_size="200-1000",
@@ -156,7 +157,9 @@ def test_find_people_stores_confirmed_and_review(cid):
     out = people.find_people(cid, provider=provider)
     assert out["ok"] and out["done"] and out["next_cursor"] is None
     assert out["searches_done"] == out["searches_total"] == 2
-    assert out["this_call"] == {"confirmed": 1, "review": 1, "duplicates": 2, "ignored": 2}
+    assert out["this_call"] == {
+        "confirmed": 1, "review": 1, "reserve": 0, "duplicates": 2, "ignored": 2
+    }  # fmt: skip
     assert out["campaign_people"]["confirmed"] == 1 and out["campaign_people"]["review"] == 1
     assert out["credits_used"] == 2.0 and budget.used(cid, "search") == 2.0
     assert [s["name"] for s in out["sample_confirmed"]] == ["Mira Lee"]
@@ -444,7 +447,7 @@ def test_list_people_filters_and_paging(found):
     cid, a, b = found
     everyone = people.list_people(cid)
     assert everyone["total"] == 4 and everyone["counts"] == {
-        "confirmed": 3, "review": 1, "rejected": 0, "removed": 0,
+        "confirmed": 3, "review": 1, "rejected": 0, "removed": 0, "reserve": 0,
     }  # fmt: skip
     assert people.list_people(cid, status="review")["total"] == 1
     assert people.list_people(cid, company_id=b)["total"] == 1
@@ -493,7 +496,7 @@ def test_reject_remove_and_review_do_not_need_a_reason(found):
     people.set_person_status(cid, [ids["Ivy Tan"]], "removed", "left the company")
     people.set_person_status(cid, [ids["Jonah Reyes"]], "review")
     counts = people.list_people(cid)["counts"]
-    assert counts == {"confirmed": 0, "review": 2, "rejected": 1, "removed": 1}
+    assert counts == {"confirmed": 0, "review": 2, "rejected": 1, "removed": 1, "reserve": 0}
     row = next(p for p in people.list_people(cid)["people"] if p["raw_name"] == "Mira Lee")
     assert row["confirmed"] is False and row["reasons"] == []
     with pytest.raises(PeopleError):
@@ -517,9 +520,10 @@ def test_people_of_another_campaign_are_not_touched(found):
     cid, _, _ = found
     with db.session() as conn:
         offer_id = db.insert(conn, "offers", name="Other", source_type="text")
+    project_id = projects.create_project("Other project", offer_id=offer_id)["id"]
     other = camp.create_campaign(name="Other", offer_id=offer_id, countries=["SG"], sectors=[],
                                  company_size="any", channels=["linkedin"],
-                                 designations=["ld"])["id"]  # fmt: skip
+                                 designations=["ld"], project_id=project_id)["id"]  # fmt: skip
     ids = ids_by_name(cid)
     out = people.set_person_status(other, [ids["Mira Lee"]], "rejected")
     assert out["updated"] == 0 and out["not_found"] == [ids["Mira Lee"]]
@@ -595,7 +599,7 @@ def test_recheck_leaves_manual_rejected_and_removed_alone(found):
     assert out["kept_manual"] == 1 and out["checked"] == 1
     assert {p["name"] for p in out["to_review"]} == {"Jonah Reyes"}
     counts = people.list_people(cid)["counts"]
-    assert counts == {"confirmed": 1, "review": 1, "rejected": 1, "removed": 1}
+    assert counts == {"confirmed": 1, "review": 1, "rejected": 1, "removed": 1, "reserve": 0}
 
 
 def test_recheck_handles_a_stored_link_that_is_not_a_profile(found):

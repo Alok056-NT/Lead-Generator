@@ -135,7 +135,7 @@ def assert_no_secrets(*texts: str) -> None:
 def test_api_flow_end_to_end(mcp, world, monkeypatch):
     # 0. status: a new workspace points at the offer; the three keys are set and masked
     status = mcp("get_status")
-    assert status["next_step"]["tool"] == "ingest_offer_source"
+    assert status["next_step"]["tool"] == "create_project"  # work starts with a project
     keys = {k["provider"]: k for k in status["keys"]}
     assert all(keys[p]["configured"] for p in ("serper", "hunter", "reoon"))
     assert not keys["lemlist"]["configured"]
@@ -170,7 +170,7 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
     assert [r["next_cursor"] for r in found] == ["10", "20", None]
     assert [r["done"] for r in found] == [False, False, True]
     assert found[-1]["campaign_people"] == {
-        "confirmed": CONFIRMED, "review": REVIEW, "rejected": 0, "removed": 0,
+        "confirmed": CONFIRMED, "review": REVIEW, "rejected": 0, "removed": 0, "reserve": 0,
     }  # fmt: skip
     assert world.calls["serper"] == estimate["searches"]
     confirmed = all_people(mcp, cid, "confirmed")
@@ -402,6 +402,45 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
     exported_text = [f.read_text(encoding="utf-8-sig") for f in export_files]
     assert_no_secrets("\n".join(mcp.transcript), log_text, *exported_text)
     assert mcp("get_status")["campaigns"][0]["next_step"]["tool"]
+
+    # 14. the project remembers everyone found, exported and emailed ...
+    project_id = campaign["project_id"]
+    channels = {
+        r["channel"]: r["n"]
+        for r in sql(
+            "SELECT channel, COUNT(*) AS n FROM contact_log WHERE project_id = ? GROUP BY channel",
+            (project_id,),
+        )
+    }
+    assert channels["email_sent"] == 12 and channels["exported_csv"] > 0 and channels["found"] > 0
+    project = mcp("get_project", project_id=project_id)
+    assert project["counts"]["contacted_in_cooldown"] > 0
+    # ... so a second campaign of the same project (its searches are cached, so they are free)
+    # is not offered the same people again: they wait in the review list with L24 or L25.
+    # (Someone the first campaign rejected is not remembered, so may be found again.)
+    serper_calls = world.calls["serper"]
+    again = new_campaign(
+        mcp, offer_id, "Lanternfish second wave", channels=("linkedin",), project_id=project_id
+    )
+    run_chunked(mcp, "find_people", again, confirm=True)
+    assert world.calls["serper"] == serper_calls
+    now_confirmed = {
+        r["raw_name"]
+        for r in sql("SELECT raw_name FROM people WHERE campaign_id = ? AND status = 'confirmed'",
+                     (again,))  # fmt: skip
+    }
+    first_confirmed = {
+        r["raw_name"]
+        for r in sql("SELECT raw_name FROM people WHERE campaign_id = ? AND status = 'confirmed'",
+                     (cid,))  # fmt: skip
+    }
+    assert now_confirmed.isdisjoint(first_confirmed)
+    held = sql(
+        "SELECT reasons_json FROM people WHERE campaign_id = ? AND status = 'review'", (again,)
+    )
+    codes = [r["reasons_json"][0].split(":")[0] for r in held]
+    assert codes.count("L25") > 0  # in another active campaign of the project
+    assert mcp("get_status")["projects"][0]["campaigns"] == 2
 
 
 # --- the AI search flow ---------------------------------------------------------------------------

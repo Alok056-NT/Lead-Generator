@@ -12,7 +12,7 @@ from leadgen import db
 from leadgen.providers.base import ProviderError
 from leadgen.providers.fake import FakeSearchProvider
 from leadgen.providers.search import SearchResult
-from leadgen.services import budget
+from leadgen.services import budget, projects
 from leadgen.services import campaign as camp
 from leadgen.services import companies as co
 from leadgen.services.campaign import CampaignError
@@ -64,6 +64,7 @@ def make_campaign(offer_id, **overrides):
         "company_size": "200-1000",
         "channels": ["linkedin"],
         "designations": ["ld"],
+        "project_id": projects.ensure_project_for_offer(offer_id),
     }
     args.update(overrides)
     return camp.create_campaign(**args)["id"]

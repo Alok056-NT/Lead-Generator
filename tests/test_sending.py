@@ -607,6 +607,20 @@ def test_worker_sends_the_queue_with_random_gaps(world, clock):
     assert sending.worker_status()["reason"] == "queue_empty"
 
 
+def test_sent_emails_go_into_the_project_contact_log(world, clock):
+    cid, _, messages = world
+    queue_all(cid, limit=2)
+    run(clock, FakeMailbox())
+    with db.session() as conn:
+        entries = db.query(conn, "SELECT * FROM contact_log ORDER BY id")
+        sent = db.query(conn, "SELECT m.person_id FROM messages m WHERE m.status = 'sent'")
+    assert len(entries) == 2 == len(sent)
+    assert all(e["channel"] == "email_sent" and e["campaign_id"] == cid for e in entries)
+    assert {e["person_id"] for e in entries} == {r["person_id"] for r in sent}
+    assert entries[0]["key_email"] == "aria.tan@northwind.example"
+    assert entries[0]["at"].endswith("Z") and entries[0]["key_name_company"]
+
+
 def test_the_first_email_waits_for_the_gap_after_the_last_send(world, clock):
     cid, _, messages = world
     queue_all(cid, limit=1)

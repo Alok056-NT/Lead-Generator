@@ -7,14 +7,14 @@ from qa_world import add_company, add_message, add_person, make_campaign
 
 from leadgen import db
 from leadgen.core import secrets
-from leadgen.services import offer, status
+from leadgen.services import offer, projects, status
 
 
 def camp(**over):
     """A campaign dict shaped like `get_campaign`, with zero counts."""
     counts = {
         "companies": {"candidate": 0, "approved": 0, "excluded": 0},
-        "people": {"confirmed": 0, "review": 0, "rejected": 0, "removed": 0},
+        "people": {"confirmed": 0, "review": 0, "rejected": 0, "removed": 0, "reserve": 0},
         "emails": {"verified": 0, "risky": 0, "guess": 0, "invalid": 0, "unknown": 0},
         "messages": {"draft": 0, "qa_fail": 0, "qa_pass": 0, "approved": 0, "sent": 0},
     }
@@ -87,6 +87,8 @@ def test_status_lists_campaigns_with_counts_and_steps(ready_db):
 def test_status_offer_without_profile_and_with_profile(ready_db):
     with db.session() as conn:
         offer_id = db.insert(conn, "offers", name="Raw", source_type="text", raw_text="x")
+    assert status.get_status()["next_step"]["tool"] == "create_project"
+    project = projects.create_project("Raw project", offer_id=offer_id)
     first = status.get_status()
     assert first["next_step"]["tool"] == "save_offer_profile"
     assert first["next_step"]["offer_id"] == offer_id
@@ -96,6 +98,7 @@ def test_status_offer_without_profile_and_with_profile(ready_db):
     second = status.get_status()
     assert second["next_step"]["tool"] == "create_campaign"
     assert second["next_step"]["offer_id"] == offer_id
+    assert second["next_step"]["project_id"] == project["id"]
 
 
 def test_status_reports_a_broken_settings_file(ready_db):

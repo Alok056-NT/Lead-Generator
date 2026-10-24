@@ -1,7 +1,9 @@
 """Campaigns: create, update, read, list and archive (PLAN section 6, workflow step 2).
 
-A campaign ties an offer to its targeting: countries, sectors, company size, channels,
-designation groups, minimum seniority, exclusions and options. All validation lives here;
+A campaign belongs to a project (`services/projects.py`) and ties the project's offer to its
+targeting: countries, sectors, company size, channels, designation groups, minimum seniority,
+exclusions and options (including the size limits `max_people`, `max_companies`,
+`max_per_company`). All validation lives here;
 errors are raised as `CampaignError` so adapters can return the structured reply.
 Callers must run `db.init_db()` first.
 """
@@ -31,12 +33,17 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "allow_guess_emails": False,
     "search_mode": "auto",
     "ai_search_needs_recheck": False,  # set by the AI-search spot check (services/spot_check.py)
+    "max_people": None,  # n: confirmed people the campaign keeps (None = no limit)
+    "max_companies": None,  # c: companies searched (the first c approved ones)
+    "max_per_company": None,  # p: confirmed people per company; more go to `reserve`
 }
+LIMIT_OPTIONS = ("max_people", "max_companies", "max_per_company")
+MAX_LIMIT = 10_000
 EXCLUSION_KEYS = ("companies", "domains", "people", "competitors")
 
 _STATUS_VALUES = {
     "companies": ("candidate", "approved", "excluded"),
-    "people": ("confirmed", "review", "rejected", "removed"),
+    "people": ("confirmed", "review", "rejected", "removed", "reserve"),
     "emails": ("verified", "risky", "guess", "invalid", "unknown"),
     "messages": ("draft", "qa_fail", "qa_pass", "approved", "sent"),
 }
@@ -210,6 +217,16 @@ def _options(value: Any, base: Mapping[str, Any] | None = None) -> dict[str, Any
     ):  # fmt: skip
         if not isinstance(out[key], bool):
             raise CampaignError("invalid_value", f"option {key} must be true or false.")
+    for key in LIMIT_OPTIONS:
+        limit = out[key]
+        if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT
+        ):
+            raise CampaignError(
+                "invalid_value",
+                f"option {key} must be a whole number from 1 to {MAX_LIMIT} "
+                "(or empty for no limit).",
+            )
     if out["search_mode"] not in SEARCH_MODES:
         raise CampaignError(
             "invalid_value",
@@ -289,6 +306,7 @@ def _shape(row: dict[str, Any]) -> dict[str, Any]:
         "id": row["id"],
         "name": row["name"],
         "offer_id": row["offer_id"],
+        "project_id": row["project_id"],
         "countries": row["countries_json"],
         "sectors": row["sectors_json"],
         "company_size": row["company_size"],
@@ -344,10 +362,17 @@ def get_campaign(campaign_id: int) -> dict[str, Any]:
     return {**_shape(row), "counts": counts}
 
 
-def list_campaigns(include_archived: bool = True) -> list[dict[str, Any]]:
-    """Short summaries of the campaigns, newest first."""
+def list_campaigns(
+    include_archived: bool = True, project_id: int | None = None
+) -> list[dict[str, Any]]:
+    """Short summaries of the campaigns, newest first; `project_id` limits them to one project."""
     with db.session() as conn:
-        rows = db.query(conn, "SELECT * FROM campaigns ORDER BY id DESC")
+        if project_id is None:
+            rows = db.query(conn, "SELECT * FROM campaigns ORDER BY id DESC")
+        else:
+            rows = db.query(
+                conn, "SELECT * FROM campaigns WHERE project_id = ? ORDER BY id DESC", (project_id,)
+            )
     out = []
     for row in rows:
         if row["status"] == "archived" and not include_archived:
@@ -357,6 +382,7 @@ def list_campaigns(include_archived: bool = True) -> list[dict[str, Any]]:
                 "id": row["id"],
                 "name": row["name"],
                 "offer_id": row["offer_id"],
+                "project_id": row["project_id"],
                 "status": row["status"],
                 "countries": row["countries_json"],
                 "channels": row["channels_json"],
@@ -371,31 +397,82 @@ def list_campaigns(include_archived: bool = True) -> list[dict[str, Any]]:
 # --- writing --------------------------------------------------------------------------------
 
 
+def _project_offer(conn, project_id: Any, offer_id: Any) -> tuple[int, int]:
+    """`(project id, offer id)` for a new campaign: the offer defaults to the project's offer; a
+    project without an offer adopts the one given. Raises `CampaignError`."""
+    if project_id is None:
+        raise CampaignError(
+            "project_required",
+            "A campaign belongs to a project, so project_id is needed.",
+            "Use list_projects to pick one, or create_project, then pass project_id.",
+        )
+    project = (
+        db.get(conn, "projects", project_id)
+        if isinstance(project_id, int) and not isinstance(project_id, bool)
+        else None
+    )
+    if project is None:
+        raise CampaignError(
+            "invalid_project",
+            f"There is no project with id {project_id}.",
+            "Use list_projects to see them, or create_project.",
+        )
+    if project["status"] == "archived":
+        raise CampaignError(
+            "project_archived",
+            f"Project '{project['name']}' is archived.",
+            "Use update_project(status='active') to reopen it, or pick another project.",
+        )
+    if offer_id is None:
+        if project["offer_id"] is None:
+            raise CampaignError(
+                "project_has_no_offer",
+                f"Project '{project['name']}' has no offer yet.",
+                "Read the offer (ingest_offer_source), then set_project_offer, then create the "
+                "campaign.",
+            )
+        return project["id"], project["offer_id"]
+    offer_id = _check_offer(conn, offer_id)
+    if project["offer_id"] is None:
+        db.update(conn, "projects", project["id"], offer_id=offer_id)
+    elif project["offer_id"] != offer_id:
+        raise CampaignError(
+            "offer_mismatch",
+            f"Project '{project['name']}' uses offer {project['offer_id']}, not {offer_id}.",
+            "Leave offer_id out to use the project's offer, or change it with set_project_offer.",
+        )
+    return project["id"], offer_id
+
+
 def create_campaign(
     name: str,
-    offer_id: int,
-    countries: list[str],
-    sectors: list[str],
-    company_size: str,
-    channels: list[str],
-    designations: list[dict] | list[str],
+    offer_id: int | None = None,
+    countries: list[str] | None = None,
+    sectors: list[str] | None = None,
+    company_size: str | None = "",
+    channels: list[str] | None = None,
+    designations: list[dict] | list[str] | None = None,
     seniority_min: str = "manager",
     exclusions: dict | None = None,
     locale: str | None = None,
     budget: dict | None = None,
     options: dict | None = None,
+    project_id: int | None = None,
 ) -> dict[str, Any]:
-    """Create a draft campaign and return it (see `get_campaign`).
+    """Create a draft campaign inside a project and return it (see `get_campaign`).
 
-    `countries` accepts codes, names or aliases and stores ISO codes. `designations` is a list of
-    1-8 template keys (see `designations.TEMPLATES`) or full group objects. `options` is merged
-    over the defaults. `locale` defaults to the offer profile's language, then the settings.
+    `project_id` is required. `offer_id` defaults to the project's offer (an error if the project
+    has none yet; a project without an offer adopts the one given). `countries` accepts codes,
+    names or aliases and stores ISO codes. `designations` is a list of 1-8 template keys (see
+    `designations.TEMPLATES`) or full group objects. `options` is merged over the defaults and
+    may hold the size limits `max_people`, `max_companies` and `max_per_company`. `locale`
+    defaults to the offer profile's language, then the settings.
     Raises `CampaignError` with a stable `code` for each invalid input.
     """
     values = {
         "name": _name(name),
         "countries_json": _countries(countries),
-        "sectors_json": _text_list("sectors", sectors),
+        "sectors_json": _text_list("sectors", [] if sectors is None else sectors),
         "company_size": _company_size(company_size),
         "channels_json": _channels(channels),
         "designations_json": _designations(designations),
@@ -405,7 +482,8 @@ def create_campaign(
         "options_json": _options(options or {}),
     }
     with db.session() as conn:
-        values["offer_id"] = _check_offer(conn, offer_id)
+        values["project_id"], offer_id = _project_offer(conn, project_id, offer_id)
+        values["offer_id"] = offer_id
         _check_unique_name(conn, values["name"], None)
         values["locale"] = _locale(locale) if locale else _default_locale(conn, offer_id)
         values["status"] = "draft"
@@ -417,8 +495,9 @@ def update_campaign(campaign_id: int, **changes: Any) -> dict[str, Any]:
     """Change fields of a campaign and return it. Accepts any create field plus `status`.
 
     `options` and `exclusions` are merged into the stored values (only the given keys change).
-    The options `search_mode`, `invite_note`, `allow_risky_emails` and `allow_guess_emails` can
-    also be passed directly, e.g. `update_campaign(3, search_mode="ai")`.
+    The options (`search_mode`, `invite_note`, `allow_risky_emails`, `allow_guess_emails`,
+    `max_people`, `max_companies`, `max_per_company`) can also be passed directly, e.g.
+    `update_campaign(3, search_mode="ai")`; a limit set to None is removed.
     Raises `CampaignError`.
     """
     direct = {k: changes.pop(k) for k in list(changes) if k in DEFAULT_OPTIONS}

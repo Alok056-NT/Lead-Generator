@@ -108,6 +108,34 @@ def test_lemlist_csv(world):
     assert any("Accepted invite" in step for step in reply["next_steps"])
 
 
+def contact_log():
+    with db.session() as conn:
+        return db.query(conn, "SELECT * FROM contact_log ORDER BY id")
+
+
+def test_export_writes_the_people_to_the_project_contact_log(world):
+    cid, _, ids = world
+    reply = export_campaign(cid, "generic")
+    entries = contact_log()
+    assert [e["channel"] for e in entries] == ["exported_csv"] * 3
+    assert [e["person_id"] for e in entries] == ids
+    assert all(e["campaign_id"] == cid and e["source"] == Path(reply["path"]).name for e in entries)
+    assert entries[0]["key_email"] == "aria.tan@northwind.example"
+    assert entries[0]["key_linkedin"].startswith("in/") and entries[0]["key_name_company"]
+    export_campaign(cid, "generic")  # the same people again: no duplicate entries
+    assert len(contact_log()) == 3
+    export_campaign(cid, "lemlist")  # another format of the same people is not a new contact
+    assert len(contact_log()) == 3
+
+
+def test_a_blocked_export_logs_nobody(world):
+    cid, _, ids = world
+    with db.session() as conn:
+        conn.execute("UPDATE messages SET status = 'draft', ai_review = ''")
+    assert export_campaign(cid, "generic")["path"] is None
+    assert contact_log() == []
+
+
 def test_generic_and_instantly_csv(world):
     cid, _, _ = world
     reply = export_campaign(cid, "generic")

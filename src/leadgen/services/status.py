@@ -1,4 +1,4 @@
-"""Status of the tool: providers and keys, campaigns with counts, and the suggested next step."""
+"""Status of the tool: providers and keys, projects, campaigns with counts, and the next step."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from leadgen.providers import base, registry
 from leadgen.providers.base import ProviderError
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import offer as offer_mod
+from leadgen.services import projects as projects_mod
 from leadgen.services import spot_check
 
 # Free allowance we can work out: (amount, period). "all" = one-time allowance, "month" = resets.
@@ -164,7 +165,7 @@ def next_step_for(
             "companies", "add_companies",
             "No companies yet. Propose target companies and add them.", campaign_id=cid,
         )  # fmt: skip
-    if people["confirmed"] + people["review"] == 0:
+    if people["confirmed"] + people["review"] + people["reserve"] == 0:
         if mode == "ai":
             return _step(
                 "people_ai", "get_search_tasks",
@@ -181,6 +182,12 @@ def next_step_for(
             "people", "estimate_people_search",
             "Estimate the people search, tell the user the cost, then find_people.",
             campaign_id=cid,
+        )  # fmt: skip
+    if people["confirmed"] == 0 and people["reserve"] > 0 and people["review"] == 0:
+        return _step(
+            "people_reserve", "list_people",
+            "Everyone found is in reserve (beyond this campaign's size limits). Raise the "
+            "limits with update_campaign, or search more companies.", campaign_id=cid,
         )  # fmt: skip
     if people["confirmed"] == 0:
         return _step(
@@ -232,8 +239,46 @@ def next_step_for(
     )  # fmt: skip
 
 
+def _project_step(
+    projects: list[dict[str, Any]], offers: list[dict[str, Any]], profile_by_offer: dict[int, bool]
+) -> dict[str, Any]:
+    """The next step when no campaign exists yet: pick or create a project, give it an offer
+    (with a saved profile), then create the first campaign."""
+    active = [p for p in projects if p["status"] == "active"]
+    if not active:
+        with_profile = [o for o in offers if o["has_profile"]]
+        extra = {"offer_id": with_profile[0]["id"]} if with_profile else {}
+        return _step(
+            "project", "create_project",
+            "Start with a project: one product, service, content piece or website. Ask the user "
+            "what it is and give it a short name, then create the project.", **extra,
+        )  # fmt: skip
+    project = active[0]
+    pid = project["id"]
+    if project["offer_id"] is None:
+        return _step(
+            "offer", "ingest_offer_source",
+            f"Project '{project['name']}' has no offer yet. Ask for a website address (one page "
+            "or the whole site), pasted text or a document, read it, then set_project_offer.",
+            project_id=pid,
+        )  # fmt: skip
+    if not profile_by_offer.get(project["offer_id"], False):
+        return _step(
+            "offer_profile", "save_offer_profile",
+            "The offer has no saved profile yet. Read the offer text, write the profile with "
+            "the user and save it.", project_id=pid, offer_id=project["offer_id"],
+        )  # fmt: skip
+    return _step(
+        "campaign", "create_campaign",
+        f"Ask about countries, sectors, company size, channels and job roles (and how many "
+        f"people, companies and people per company), then create the campaign in project "
+        f"'{project['name']}'.", project_id=pid, offer_id=project["offer_id"],
+    )  # fmt: skip
+
+
 def get_status() -> dict[str, Any]:
-    """Workspace, version, keys (masked), offers, campaigns with counts and the next step."""
+    """Workspace, version, keys (masked), offers, projects, campaigns with counts and the next
+    step."""
     notes: list[str] = []
     try:
         config.load_settings()
@@ -253,6 +298,8 @@ def get_status() -> dict[str, Any]:
     ]
     offers = offer_mod.list_offers()
     profile_by_offer = {o["id"]: o["has_profile"] for o in offers}
+    all_projects = projects_mod.list_projects(include_archived=False)
+    project_names = {p["id"]: p["name"] for p in all_projects}
     campaigns: list[dict[str, Any]] = []
     for short in campaign_mod.list_campaigns(include_archived=False)[:MAX_LISTED]:
         camp = campaign_mod.get_campaign(short["id"])
@@ -266,6 +313,8 @@ def get_status() -> dict[str, Any]:
             {
                 "id": camp["id"],
                 "name": camp["name"],
+                "project_id": camp["project_id"],
+                "project": project_names.get(camp["project_id"], ""),
                 "status": camp["status"],
                 "countries": camp["countries"],
                 "channels": camp["channels"],
@@ -276,23 +325,8 @@ def get_status() -> dict[str, Any]:
         )
     if campaigns:
         next_step = campaigns[0]["next_step"]
-    elif not offers:
-        next_step = _step(
-            "offer", "ingest_offer_source",
-            "Start by learning the offer: ask for a website address, pasted text or a document.",
-        )  # fmt: skip
-    elif not any(profile_by_offer.values()):
-        next_step = _step(
-            "offer_profile", "save_offer_profile",
-            "The offer has no saved profile yet. Read the offer text, write the profile with "
-            "the user and save it.", offer_id=offers[0]["id"],
-        )  # fmt: skip
     else:
-        next_step = _step(
-            "campaign", "create_campaign",
-            "Ask about countries, sectors, company size, channels and job roles, then create "
-            "the campaign.", offer_id=next(o["id"] for o in offers if o["has_profile"]),
-        )  # fmt: skip
+        next_step = _project_step(all_projects, offers, profile_by_offer)
     if not has_key:
         notes.append(
             "No search key is set. A free Serper key gives 2,500 searches; or use AI search "
@@ -306,6 +340,18 @@ def get_status() -> dict[str, Any]:
         "offers": [
             {"id": o["id"], "name": o["name"], "has_profile": o["has_profile"]}
             for o in offers[:MAX_LISTED]
+        ],
+        "projects": [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "offer_id": p["offer_id"],
+                "offer": p["offer_name"],
+                "cooldown_days": p["cooldown_days"],
+                "campaigns": p["campaigns"],
+                "confirmed_people": p["confirmed_people"],
+            }
+            for p in all_projects[:MAX_LISTED]
         ],
         "campaigns": campaigns,
         "next_step": next_step,

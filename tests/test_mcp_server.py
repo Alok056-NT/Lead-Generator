@@ -50,6 +50,11 @@ EXTRA_TOOLS = {
     "list_lemlist_campaigns",
     "skip_task",
     "acknowledge_compliance",
+    "create_project",
+    "list_projects",
+    "get_project",
+    "update_project",
+    "move_reserve_people",
 }
 COMPANY = "Northwind Logistics"
 
@@ -186,7 +191,7 @@ def test_get_status_on_a_new_workspace(mcp):
     secrets.set("SERPER_API_KEY", "sk-serper-secret-0123456789")
     reply = mcp("get_status")
     assert reply["ok"] and reply["campaigns"] == [] and reply["offers"] == []
-    assert reply["next_step"]["tool"] == "ingest_offer_source"
+    assert reply["projects"] == [] and reply["next_step"]["tool"] == "create_project"
     serper = next(k for k in reply["keys"] if k["provider"] == "serper")
     assert serper["configured"] is True and serper["masked_key"].endswith("6789")
     assert "sk-serper-secret-0123456789" not in json.dumps(reply)
@@ -194,13 +199,22 @@ def test_get_status_on_a_new_workspace(mcp):
 
 
 def test_next_step_follows_the_work(mcp):
+    project = mcp("create_project", name="Training courses")
+    step = mcp("get_status")["next_step"]
+    assert step["tool"] == "ingest_offer_source" and step["project_id"] == project["id"]
     ingested = mcp("ingest_offer_source", text="We run practical training courses for managers.")
+    assert mcp("get_status")["next_step"]["tool"] == "ingest_offer_source"  # offer not attached
+    mcp("update_project", project_id=project["id"], offer_id=ingested["offer_id"])
     assert mcp("get_status")["next_step"]["tool"] == "save_offer_profile"
     mcp("save_offer_profile", offer_id=ingested["offer_id"], profile=PROFILE)
-    assert mcp("get_status")["next_step"]["tool"] == "create_campaign"
-    campaign = make_campaign(mcp, ingested["offer_id"])
+    step = mcp("get_status")["next_step"]
+    assert step["tool"] == "create_campaign" and step["project_id"] == project["id"]
+    campaign = make_campaign(mcp, ingested["offer_id"], project_id=project["id"])
     step = mcp("get_status")["next_step"]
     assert step["tool"] == "add_companies" and step["campaign_id"] == campaign["id"]
+    status = mcp("get_status")
+    assert status["projects"][0]["campaigns"] == 1
+    assert status["campaigns"][0]["project_id"] == project["id"]
 
 
 # --- error shapes -------------------------------------------------------------------------------
@@ -208,11 +222,19 @@ def test_next_step_follows_the_work(mcp):
 
 def make_campaign(mcp, offer_id, **over):
     args = {
-        "name": "SG logistics", "offer_id": offer_id, "countries": ["SG"],
+        "name": "SG logistics", "countries": ["SG"],
         "sectors": ["logistics"], "company_size": "200-1000", "channels": ["linkedin"],
         "designations": ["ld", "hr"],
     }  # fmt: skip
     args.update(over)
+    if "project_id" not in args:
+        found = [
+            x for x in mcp("list_projects")["projects"] if x["offer_id"] == offer_id
+        ]
+        made = found[0] if found else mcp(
+            "create_project", name=f"Project for offer {offer_id}", offer_id=offer_id
+        )
+        args["project_id"] = made["id"]
     reply = mcp("create_campaign", **args)
     assert reply["ok"], reply
     return reply
@@ -262,11 +284,83 @@ def test_budget_reached_gives_the_error_shape(mcp, fake_search):
     assert not fake_search.calls
 
 
+def test_project_tools_round_trip(mcp):
+    created = mcp("create_project", name="Lanternfish VR", description="VR training",
+                  cooldown_days=30)  # fmt: skip
+    assert created["ok"] and created["cooldown_days"] == 30 and created["status"] == "active"
+    pid = created["id"]
+    assert [p["id"] for p in mcp("list_projects")["projects"]] == [pid]
+    got = mcp("get_project", project_id=pid)
+    assert got["counts"]["campaigns"]["total"] == 0 and got["campaign_list"] == []
+    assert got["counts"]["people"]["reserve"] == 0 and got["counts"]["contacted_in_cooldown"] == 0
+    updated = mcp("update_project", project_id=pid, cooldown_days=0, name="Lanternfish")
+    assert updated["cooldown_days"] == 0 and updated["name"] == "Lanternfish"
+    assert mcp("update_project", project_id=pid, status="archived")["status"] == "archived"
+    assert mcp("list_projects")["projects"] == []
+    assert len(mcp("list_projects", include_archived=True)["projects"]) == 1
+    assert error_code(mcp("create_project", name="lanternfish")) == "duplicate_name"
+    assert error_code(mcp("create_project", name="X", cooldown_days=-1)) == "invalid_cooldown"
+    assert error_code(mcp("create_project", name="X", cooldown_days=4000)) == "invalid_cooldown"
+    assert error_code(mcp("get_project", project_id=999)) == "not_found"
+    assert error_code(mcp("update_project", project_id=999, name="Y")) == "not_found"
+
+
+def test_campaigns_belong_to_projects_and_take_size_limits(mcp):
+    offer_id = stored_offer(mcp)
+    project = mcp("create_project", name="Courses", offer_id=offer_id)
+    args = {
+        "countries": ["SG"], "sectors": ["logistics"], "company_size": "200-1000",
+        "channels": ["linkedin"], "designations": ["ld"],
+    }  # fmt: skip
+    assert error_code(mcp("create_campaign", name="A", project_id=999, **args)) == (
+        "invalid_project"
+    )
+    reply = mcp("create_campaign", name="A", project_id=project["id"], max_people=40,
+                max_companies=10, max_per_company=2, **args)  # fmt: skip
+    assert reply["ok"] and reply["offer_id"] == offer_id  # the project's offer
+    assert reply["project_id"] == project["id"]
+    assert {k: reply["options"][k] for k in ("max_people", "max_companies", "max_per_company")} == {
+        "max_people": 40, "max_companies": 10, "max_per_company": 2,
+    }  # fmt: skip
+    bad = mcp("create_campaign", name="B", project_id=project["id"], max_people=0, **args)
+    assert error_code(bad) == "invalid_value"
+    changed = mcp("update_campaign", campaign_id=reply["id"], max_people=0, max_per_company=3)
+    assert changed["options"]["max_people"] is None and changed["options"]["max_per_company"] == 3
+    assert changed["options"]["max_companies"] == 10  # untouched
+    listing = mcp("list_campaigns", project_id=project["id"])["campaigns"]
+    assert [c["id"] for c in listing] == [reply["id"]]
+    assert mcp("list_campaigns", project_id=999)["campaigns"] == []
+    got = mcp("get_project", project_id=project["id"])
+    assert got["counts"]["campaigns"]["total"] == 1
+    assert [c["id"] for c in got["campaign_list"]] == [reply["id"]]
+    assert mcp("get_status")["projects"][0]["campaigns"] == 1
+
+
+def test_move_reserve_people_tool(mcp):
+    offer_id = stored_offer(mcp)
+    one = mcp("create_project", name="One", offer_id=offer_id)
+    two = mcp("create_project", name="Two", offer_id=offer_id)
+    first = make_campaign(mcp, offer_id, name="First", project_id=one["id"])["id"]
+    second = make_campaign(mcp, offer_id, name="Second", project_id=one["id"])["id"]
+    elsewhere = make_campaign(mcp, offer_id, name="Elsewhere", project_id=two["id"])["id"]
+    ok = mcp("move_reserve_people", from_campaign_id=first, to_campaign_id=second)
+    assert ok["ok"] and ok["moved"] == 0 and ok["left_in_reserve"] == 0
+    bad = mcp("move_reserve_people", from_campaign_id=first, to_campaign_id=elsewhere)
+    assert error_code(bad) == "different_project" and bad["error"]["hint"]
+    assert error_code(mcp("move_reserve_people", from_campaign_id=first, to_campaign_id=999)) == (
+        "not_found"
+    )
+    assert error_code(
+        mcp("move_reserve_people", from_campaign_id=first, to_campaign_id=second, max_people=0)
+    ) == "invalid_value"
+
+
 def test_validation_error_has_the_error_shape(mcp):
     offer_id = stored_offer(mcp)
+    project = mcp("create_project", name="Bad project", offer_id=offer_id)
     reply = mcp(
-        "create_campaign", name="Bad", offer_id=offer_id, countries=["SG"], sectors=["x"],
-        company_size="small", channels=["carrier pigeon"], designations=["ld"],
+        "create_campaign", name="Bad", project_id=project["id"], countries=["SG"],
+        sectors=["x"], company_size="small", channels=["carrier pigeon"], designations=["ld"],
     )  # fmt: skip
     assert reply["ok"] is False
     assert set(reply["error"]) == {"code", "message", "hint"}
@@ -881,7 +975,7 @@ def test_stdio_server_speaks_mcp_and_keeps_stdout_clean(workspace):
 
     tools, status = anyio.run(main)
     assert len(tools.tools) == len(PLAN_TOOLS | EXTRA_TOOLS)
-    assert json.loads(status.content[0].text)["next_step"]["tool"] == "ingest_offer_source"
+    assert json.loads(status.content[0].text)["next_step"]["tool"] == "create_project"
 
 
 def test_module_runs_as_a_script_help():

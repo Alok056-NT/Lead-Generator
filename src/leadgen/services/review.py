@@ -380,7 +380,7 @@ def list_qa_issues(
         and code not in qa_leads.LEAD_SEVERITY
         and code not in (qa_messages.MESSAGE_SEVERITY)
     ):
-        raise ReviewError("invalid_value", f"Unknown QA code {code!r} (L01-L23, M01-M16).")
+        raise ReviewError("invalid_value", f"Unknown QA code {code!r} (L01-L25, M01-M16).")
     page = max(1, _int(page, "page"))
     page_size = min(max(1, _int(page_size, "page_size")), PAGE_SIZE)
     where = "p.campaign_id = ?"

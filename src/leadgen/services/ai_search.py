@@ -25,7 +25,7 @@ from leadgen.providers.search import SearchResult, cached_results
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import companies as companies_mod
 from leadgen.services import confirm as rules
-from leadgen.services import emails, people
+from leadgen.services import emails, people, projects
 
 KINDS = ("people", "email", "company")
 BATCH_DEFAULT = 10
@@ -353,12 +353,23 @@ def get_search_tasks(
     tasks after this batch), `next_cursor` and `cache_pending` (cached searches not loaded yet:
     call again while it is above 0; every call, with or without a cursor, loads one more chunk).
     Work in batches of 10 and report progress after
-    each batch. Raises `AISearchError`.
+    each batch. Only the first `max_companies` approved companies get people tasks, and once
+    the campaign has `max_people` confirmed people no task is handed out (`limit_reached`).
+    Raises `AISearchError`.
     """
     _check_kind(kind)
     camp = _campaign(campaign_id)
     size = min(max(1, int(batch_size)), BATCH_MAX)
     after = _cursor(cursor)
+    if kind == "people" and people._people_limit_reached(camp):
+        return {
+            "ok": True, "campaign_id": campaign_id, "kind": kind,
+            "search_mode": camp["options"].get("search_mode"), "tasks": [], "batch_size": size,
+            "remaining": 0, "open_total": _open_count(campaign_id, kind), "tasks_created": 0,
+            "filled_from_cache": 0, "cache_pending": 0, "next_cursor": None,
+            "limit_reached": True, "message": people._limit_message(camp),
+            "result_fields": RESULT_FIELDS, "instructions": INSTRUCTIONS[kind],
+        }  # fmt: skip
     # every call (with or without a cursor) loads one chunk of cached searches and reports what
     # is still waiting, so an AI that only follows `next_cursor` still ends with all of them loaded
     created, filled, pending = _ensure(campaign_id, kind)
@@ -510,13 +521,16 @@ def _apply_conflicts(campaign_id: int, conflicts: Mapping[str, set[str]]) -> int
             "SELECT id, linkedin_url, status, reasons_json FROM people WHERE campaign_id = ?",
             (campaign_id,),
         )
+        demoted: list[int] = []
         for row in rows:
             if rules.url_key(row["linkedin_url"]) not in conflicts or row["status"] != "confirmed":
                 continue
             reasons = list(row["reasons_json"] or [])
             reasons.append("L22:the same LinkedIn address was submitted for a different name")
             db.update(conn, "people", row["id"], status="review", confirmed=0, reasons_json=reasons)
+            demoted.append(row["id"])
             changed += 1
+        projects.forget_found(conn, demoted)  # a person sent to review is not "found"
     return changed
 
 

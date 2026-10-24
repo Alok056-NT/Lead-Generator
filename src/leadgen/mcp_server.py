@@ -46,6 +46,7 @@ from leadgen.services import (
 from leadgen.services import campaign as campaign_svc
 from leadgen.services import companies as companies_svc
 from leadgen.services import designations as designations_svc
+from leadgen.services import projects as projects_svc
 from leadgen.services import status as status_svc
 
 log = logging.getLogger("leadgen.mcp")
@@ -60,7 +61,9 @@ _QUIET_LOGGERS = ("httpx", "httpcore", "httpx2", "httpcore2", "uvicorn.access")
 
 INSTRUCTIONS = (
     "Lead Generator finds target companies and the right people at them, checks every lead, "
-    "writes personalised messages and exports them. Call get_status first in every "
+    "writes personalised messages and exports them. Work is organised in projects (one per "
+    "product, service, content piece or website), each with one offer and several campaigns. "
+    "Call get_status first in every "
     "conversation and follow its next_step. Call get_workflow_guide for the full step-by-step "
     "script (some clients do not show prompts). Always show the user an estimate and get a "
     "clear yes before any tool that spends credits or sends anything. Never invent companies, "
@@ -170,6 +173,7 @@ Cursor = Annotated[
 Page = Annotated[int, Field(description="Page number, starting at 1.")]
 PageSize = Annotated[int, Field(description="Rows per page, at most 50.")]
 Ids = Annotated[list[int], Field(description="Row ids (from the matching list tool).")]
+ProjectId = Annotated[int, Field(description="Project id from create_project or list_projects.")]
 
 
 def _ann(
@@ -362,6 +366,100 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
     def get_offer(offer_id: Annotated[int, Field(description="Offer id.")]) -> dict[str, Any]:
         return offer.get_offer(offer_id)
 
+    # ---- projects -----------------------------------------------------------------------------
+
+    @tool(
+        "Create a project",
+        """Creates a project: one product, service, content piece or website. A project has ONE
+        offer and many campaigns, and it remembers every person found or contacted in it so
+        nobody is offered twice until cooldown_days have passed (default 90; 0 = never block
+        repeats; at most 3650). Ask the user what the project is and what to call it. Set the
+        offer now (offer_id from ingest_offer_source) or later with update_project. Free.""",
+        WRITE,
+    )
+    def create_project(
+        name: Annotated[str, Field(description="Short unique name, e.g. the product name.")],
+        description: Annotated[str, Field(description="Optional one-line description.")] = "",
+        cooldown_days: Annotated[
+            int, Field(description="Days before someone can be offered again (0 to 3650).")
+        ] = 90,
+        offer_id: Annotated[int | None, Field(description="Offer id, if already read.")] = None,
+    ) -> dict[str, Any]:
+        return projects_svc.create_project(name, description, cooldown_days, offer_id)
+
+    @tool(
+        "List projects",
+        """Lists the projects (newest first) with their offer, cooldown, number of campaigns and
+        confirmed people. Free, changes nothing.""",
+        READ,
+    )
+    def list_projects(
+        include_archived: Annotated[
+            bool, Field(description="Also list archived projects.")
+        ] = False,
+    ) -> dict[str, Any]:
+        return {"projects": projects_svc.list_projects(include_archived)}
+
+    @tool(
+        "Get a project",
+        """Returns one project with its campaigns by status, its people by status (confirmed,
+        reserve, review, rejected, removed) and how many people are still inside the cooldown.
+        Free, changes nothing.""",
+        READ,
+    )
+    def get_project(project_id: ProjectId) -> dict[str, Any]:
+        result = projects_svc.get_project(project_id)
+        result["campaign_list"] = campaign_svc.list_campaigns(True, project_id)
+        return result
+
+    @tool(
+        "Update a project",
+        """Changes a project; only the fields you pass change: name, description,
+        cooldown_days (0 to 3650), offer_id (the project's offer; campaigns already made keep
+        theirs) or status (active or archived). Free.""",
+        WRITE | {"idempotent": True},
+    )
+    def update_project(
+        project_id: ProjectId,
+        name: Annotated[str | None, Field(description="New name.")] = None,
+        description: Annotated[str | None, Field(description="New description.")] = None,
+        cooldown_days: Annotated[
+            int | None, Field(description="Days before someone can be offered again.")
+        ] = None,
+        offer_id: Annotated[int | None, Field(description="The project's offer id.")] = None,
+        status: Annotated[
+            Literal["active", "archived"] | None, Field(description="Status.")
+        ] = None,
+    ) -> dict[str, Any]:
+        given = {
+            "name": name, "description": description, "cooldown_days": cooldown_days,
+            "offer_id": offer_id, "status": status,
+        }  # fmt: skip
+        return projects_svc.update_project(
+            project_id, **{k: v for k, v in given.items() if v is not None}
+        )
+
+    @tool(
+        "Move reserve people",
+        """Moves people kept in reserve (confirmed, but beyond a campaign's size limits) from one
+        campaign into another campaign of the SAME project, as confirmed, while the target's
+        limits (max_people, max_companies, max_per_company) hold. Their evidence is judged
+        again by the target's rules and anyone already contacted or in a third campaign stays
+        in reserve. max_per_company / max_people can tighten the limits for this move. Free.""",
+        WRITE,
+    )
+    def move_reserve_people(
+        from_campaign_id: Annotated[int, Field(description="Campaign holding the reserve.")],
+        to_campaign_id: Annotated[int, Field(description="Campaign that receives them.")],
+        max_per_company: Annotated[
+            int | None, Field(description="At most this many per company in the target.")
+        ] = None,
+        max_people: Annotated[
+            int | None, Field(description="At most this many confirmed people in the target.")
+        ] = None,
+    ) -> dict[str, Any]:
+        return people.move_reserve(from_campaign_id, to_campaign_id, max_per_company, max_people)
+
     # ---- 8-12: designations and campaigns -----------------------------------------------------
 
     @tool(
@@ -377,8 +475,13 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Create a campaign",
-        """Creates a draft campaign: the offer plus who to target. Ask the user for countries,
-        sectors, company size and channels first, and have them confirm the designation groups.
+        """Creates a draft campaign inside a project (project_id is required; create the project
+        first). A campaign is the whole plan for finding and writing to people by email and
+        LinkedIn; sending stays optional. The offer is the project's offer. Ask the user for
+        countries, sectors, company size and channels first, and have them confirm the
+        designation groups. Size: max_people (n people in all), max_companies (c companies
+        searched) and max_per_company (p people per company; extra confirmed people are kept
+        in reserve for a later campaign); leave out for no limit.
         designations is 1 to 8 template keys (see list_designation_templates) or custom groups
         {label, keywords[], search_terms[]}; order matters (first match wins). exclusions is
         {companies[], domains[], people[], competitors[]}. budget is {search, hunter, verify}
@@ -390,7 +493,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         name: Annotated[
             str, Field(description="Campaign name, unique, with some letters or digits.")
         ],
-        offer_id: Annotated[int, Field(description="Offer id (with a saved profile).")],
+        project_id: ProjectId,
         countries: Annotated[list[str], Field(description="Country names or ISO codes.")],
         sectors: Annotated[list[str], Field(description="Sectors, e.g. logistics.")],
         company_size: Annotated[str, Field(description="Company size, e.g. 200-1000 employees.")],
@@ -398,6 +501,9 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         designations: Annotated[
             list[str | dict[str, Any]], Field(description="Template keys or custom groups.")
         ],
+        offer_id: Annotated[
+            int | None, Field(description="Leave out: the project's offer is used.")
+        ] = None,
         seniority_min: Annotated[
             str, Field(description="individual, manager, director, vp or c_suite.")
         ] = "manager",
@@ -418,13 +524,23 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         allow_guess_emails: Annotated[
             bool | None, Field(description="Allow unverified guesses.")
         ] = None,
+        max_people: Annotated[
+            int | None, Field(description="n: confirmed people to keep (1 to 10000).")
+        ] = None,
+        max_companies: Annotated[
+            int | None, Field(description="c: companies to search (1 to 10000).")
+        ] = None,
+        max_per_company: Annotated[
+            int | None, Field(description="p: confirmed people per company (1 to 10000).")
+        ] = None,
     ) -> dict[str, Any]:
         options = {
             key: value
             for key, value in (
                 ("search_mode", search_mode), ("invite_note", invite_note),
                 ("allow_risky_emails", allow_risky_emails),
-                ("allow_guess_emails", allow_guess_emails),
+                ("allow_guess_emails", allow_guess_emails), ("max_people", max_people),
+                ("max_companies", max_companies), ("max_per_company", max_per_company),
             )
             if value is not None
         }  # fmt: skip
@@ -432,7 +548,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             name=name, offer_id=offer_id, countries=countries, sectors=sectors,
             company_size=company_size, channels=channels, designations=designations,
             seniority_min=seniority_min, exclusions=exclusions, locale=locale,
-            budget=budget, options=options,
+            budget=budget, options=options, project_id=project_id,
         )  # fmt: skip
 
     @tool(
@@ -477,7 +593,24 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         allow_guess_emails: Annotated[
             bool | None, Field(description="Allow unverified guesses.")
         ] = None,
+        max_people: Annotated[
+            int | None, Field(description="n: confirmed people to keep; 0 removes the limit.")
+        ] = None,
+        max_companies: Annotated[
+            int | None, Field(description="c: companies to search; 0 removes the limit.")
+        ] = None,
+        max_per_company: Annotated[
+            int | None, Field(description="p: people per company; 0 removes the limit.")
+        ] = None,
     ) -> dict[str, Any]:
+        limits = {
+            key: (None if value == 0 else value)
+            for key, value in (
+                ("max_people", max_people), ("max_companies", max_companies),
+                ("max_per_company", max_per_company),
+            )
+            if value is not None
+        }  # fmt: skip
         given = {
             "name": name, "offer_id": offer_id, "countries": countries, "sectors": sectors,
             "company_size": company_size, "channels": channels, "designations": designations,
@@ -487,7 +620,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             "allow_guess_emails": allow_guess_emails,
         }  # fmt: skip
         return campaign_svc.update_campaign(
-            campaign_id, **{k: v for k, v in given.items() if v is not None}
+            campaign_id, **{k: v for k, v in given.items() if v is not None}, **limits
         )
 
     @tool(
@@ -501,16 +634,20 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "List campaigns",
-        """Lists campaigns, newest first, with name, status, countries, channels and
-        designation labels. Free, changes nothing.""",
+        """Lists campaigns, newest first, with name, project, status, countries, channels and
+        designation labels; pass project_id to list one project's campaigns. Free, changes
+        nothing.""",
         READ,
     )
     def list_campaigns(
         include_archived: Annotated[
             bool, Field(description="Also list archived campaigns.")
         ] = False,
+        project_id: Annotated[
+            int | None, Field(description="Only this project's campaigns.")
+        ] = None,
     ) -> dict[str, Any]:
-        return {"campaigns": campaign_svc.list_campaigns(include_archived)}
+        return {"campaigns": campaign_svc.list_campaigns(include_archived, project_id)}
 
     # ---- 13-16: companies ---------------------------------------------------------------------
 
@@ -761,7 +898,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Run the quality check",
-        """Re-checks every lead (L01-L23) and every message (M01-M16) of a campaign and stores
+        """Re-checks every lead (L01-L25) and every message (M01-M16) of a campaign and stores
         the issues. Returns counts per code, the top 20 issues and how much is export-ready.
         Blocking issues keep a lead or message out of exports and sending. Run it after saving
         drafts and again after fixes. Free.""",

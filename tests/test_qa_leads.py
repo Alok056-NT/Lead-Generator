@@ -21,7 +21,7 @@ from qa_world import (
 
 from leadgen import db
 from leadgen.services import campaign as camp
-from leadgen.services import qa_leads
+from leadgen.services import contact_checks, qa_leads
 from leadgen.services.qa_leads import Issue, LeadContext, check_person
 
 
@@ -61,7 +61,7 @@ def test_issue_as_dict_and_tables_cover_every_code():
         "severity": "block",
         "detail": "x",
     }
-    expected = {f"L{n:02d}" for n in range(1, 24)}
+    expected = {f"L{n:02d}" for n in range(1, 26)}
     assert set(qa_leads.LEAD_SEVERITY) == expected == set(qa_leads.LEAD_TITLES)
 
 
@@ -487,12 +487,14 @@ def test_extra_checks_can_be_registered():
         seen.append(person["id"])
         return [Issue("L99", "warn", "extension")]
 
+    before = list(qa_leads.EXTRA_LEAD_CHECKS)  # the project checks (L24, L25) are registered
     qa_leads.EXTRA_LEAD_CHECKS.append(extra)
     try:
         assert "L99" in codes(run())
     finally:
         qa_leads.EXTRA_LEAD_CHECKS.remove(extra)
-    assert seen == [1] and qa_leads.EXTRA_LEAD_CHECKS == []
+    assert seen == [1] and qa_leads.EXTRA_LEAD_CHECKS == before
+    assert contact_checks.check in before
 
 
 def test_first_finding_of_a_code_wins_and_blocks_beat_warnings():

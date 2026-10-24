@@ -45,7 +45,7 @@ from leadgen.core.compliance import EmailRule
 from leadgen.send.footer import with_footer
 from leadgen.send.smtp_imap import MailboxError, SmtpImapMailbox
 from leadgen.services import campaign as campaign_mod
-from leadgen.services import drafting, qa_leads, review
+from leadgen.services import drafting, projects, qa_leads, review
 from leadgen.services.emails import clean_domain, is_role_address
 
 DEFAULT_LIMIT = 10
@@ -1209,6 +1209,10 @@ def run_worker(
                     provider_message_id=result.message_id, error="",
                 )  # fmt: skip
                 db.update(conn, "messages", cand.message_id, status="sent")
+            projects.remember(  # the project remembers who was emailed (contact memory)
+                [cand.person_id], "email_sent", source="sent email",
+                emails={cand.person_id: cand.to},
+            )  # fmt: skip
             sent += 1
     finally:
         _heartbeat(state="stopped", reason=reason, sent=sent, started=started)

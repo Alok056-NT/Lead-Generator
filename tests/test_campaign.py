@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from leadgen import db
 from leadgen.core import config
 from leadgen.services import campaign as c
+from leadgen.services import projects
 from leadgen.services.campaign import CampaignError
 
 CUSTOM = {"label": "Chefs", "keywords": ["chef"], "search_terms": ["head chef"]}
@@ -30,6 +33,9 @@ def bare_offer_id(ready_db):
         return db.insert(conn, "offers", name="No profile yet", source_type="text")
 
 
+_projects = itertools.count(1)
+
+
 def make(offer_id, **overrides):
     args = {
         "name": "Singapore logistics Q4",
@@ -41,6 +47,8 @@ def make(offer_id, **overrides):
         "designations": ["ld", "hr"],
     }
     args.update(overrides)
+    if "project_id" not in args:
+        args["project_id"] = projects.create_project(f"Project {next(_projects)}")["id"]
     return c.create_campaign(**args)
 
 
@@ -94,9 +102,14 @@ def test_create_stores_everything(offer_id):
         "allow_guess_emails": False,
         "search_mode": "auto",
         "ai_search_needs_recheck": False,
+        "max_people": None,
+        "max_companies": None,
+        "max_per_company": None,
     }
     assert got["locale"] == "en-SG"  # from the offer profile
-    assert got["counts"]["people"] == {"confirmed": 0, "review": 0, "rejected": 0, "removed": 0}
+    assert got["counts"]["people"] == {
+        "confirmed": 0, "review": 0, "rejected": 0, "removed": 0, "reserve": 0
+    }  # fmt: skip
 
 
 def test_defaults(offer_id):
@@ -158,7 +171,9 @@ def test_get_counts(offer_id):
         db.insert(conn, "messages", person_id=p3, channel="email", status="sent")
     counts = c.get_campaign(got["id"])["counts"]
     assert counts["companies"] == {"candidate": 2, "approved": 1, "excluded": 0}
-    assert counts["people"] == {"confirmed": 1, "review": 1, "rejected": 0, "removed": 0}
+    assert counts["people"] == {
+        "confirmed": 1, "review": 1, "rejected": 0, "removed": 0, "reserve": 0
+    }  # fmt: skip
     assert counts["emails"] == {"verified": 1, "risky": 0, "guess": 1, "invalid": 0, "unknown": 0}
     assert counts["messages"] == {
         "draft": 1, "qa_fail": 0, "qa_pass": 1, "approved": 0, "sent": 0,
@@ -287,6 +302,9 @@ def test_update_search_mode_directly_and_merge_options(offer_id):
         "allow_guess_emails": True,
         "search_mode": "ai",
         "ai_search_needs_recheck": False,
+        "max_people": None,
+        "max_companies": None,
+        "max_per_company": None,
     }
     got = c.update_campaign(created["id"], ai_search_needs_recheck=True)
     assert got["options"]["ai_search_needs_recheck"] is True

@@ -20,7 +20,7 @@ from leadgen import db
 from leadgen.core import secrets
 from leadgen.providers import base, registry
 from leadgen.providers.base import ProviderError, RateLimiter, Verdict
-from leadgen.services import budget, emails
+from leadgen.services import budget, emails, projects
 from leadgen.services import campaign as camp
 from leadgen.services.emails import EmailError
 
@@ -80,6 +80,7 @@ def cid(ready_db):
     return camp.create_campaign(
         name="SG logistics",
         offer_id=offer_id,
+        project_id=projects.ensure_project_for_offer(offer_id),
         countries=["SG"],
         sectors=["logistics"],
         company_size="200-1000",

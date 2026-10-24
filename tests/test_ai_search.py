@@ -9,7 +9,7 @@ import pytest
 
 from leadgen import db
 from leadgen.providers.search import SearchResult, cached_search
-from leadgen.services import ai_search, companies, emails, people, qa_leads
+from leadgen.services import ai_search, companies, emails, people, projects, qa_leads
 from leadgen.services import campaign as camp
 from leadgen.services.ai_search import AISearchError
 
@@ -26,7 +26,9 @@ def make_campaign(offer_id, name="AI run", channels=("linkedin",), **extra):
     return camp.create_campaign(
         name=name, offer_id=offer_id, countries=["SG"], sectors=["logistics"],
         company_size="200-1000", channels=list(channels), designations=["ld", "hr"],
-        options={"search_mode": "ai"}, **extra,
+        options={"search_mode": "ai"},
+        project_id=projects.create_project(f"Project {name}", offer_id=offer_id)["id"],
+        **extra,
     )["id"]  # fmt: skip
 
 
@@ -196,6 +198,7 @@ def _three_group_campaign(offer_id):
         name="three groups", offer_id=offer_id, countries=["SG"], sectors=["logistics"],
         company_size="200-1000", channels=["linkedin"], designations=["ld", "hr", "sales"],
         options={"search_mode": "ai"},
+        project_id=projects.create_project("Project three groups", offer_id=offer_id)["id"],
     )["id"]  # fmt: skip
 
 

@@ -272,6 +272,26 @@ def test_chunking_and_idempotency(ready_db, key, sleeps):
 
 
 @respx.mock
+def test_pushed_people_go_into_the_project_contact_log(ready_db, key, sleeps):
+    cid, ids = _build(3)
+    respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
+        side_effect=[
+            httpx.Response(200, json={"_id": "lea_1"}),
+            httpx.Response(400, text="Invalid email address"),
+            httpx.Response(400, text="Lead already in the campaign"),
+        ]
+    )
+    push_to_lemlist(cid, TARGET, dry_run=False, confirm=True)
+    with db.session() as conn:
+        entries = db.query(conn, "SELECT * FROM contact_log ORDER BY id")
+    # created and duplicate leads are remembered; the rejected one never reached lemlist
+    assert [e["person_id"] for e in entries] == [ids[0], ids[2]]
+    assert all(e["channel"] == "lemlist" and e["campaign_id"] == cid for e in entries)
+    assert [e["key_email"] for e in entries] == ["p0@northwind.example", "p2@northwind.example"]
+    assert entries[0]["source"] == f"lemlist {TARGET}"
+
+
+@respx.mock
 def test_duplicate_and_rejected_results(ready_db, key, sleeps):
     cid, ids = _build(3)
     respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(

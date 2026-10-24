@@ -501,10 +501,19 @@ def new_offer(mcp) -> tuple[int, dict[str, Any]]:
     return ingested["offer_id"], ingested
 
 
-def new_campaign(mcp, offer_id: int, name: str, *, channels, **options) -> int:
-    """Create a campaign for both countries, add the 12 companies and approve them."""
+def new_campaign(
+    mcp, offer_id: int, name: str, *, channels, project_id: int | None = None, **options
+) -> int:
+    """Create a campaign for both countries, add the 12 companies and approve them.
+
+    Each campaign gets a project of its own (the same people are found in several campaigns
+    of one test on purpose, which one shared project would stop with L24/L25)."""
+    if project_id is None:
+        project = mcp("create_project", name=f"Project {name}", offer_id=offer_id)
+        assert project["ok"], project
+        project_id = project["id"]
     created = mcp(
-        "create_campaign", name=name, offer_id=offer_id, countries=["SG", "GB"],
+        "create_campaign", name=name, project_id=project_id, countries=["SG", "GB"],
         sectors=["logistics", "healthcare", "retail"], company_size="200+ employees",
         channels=list(channels), designations=["ld", "hr"], locale="en-GB", **options,
     )  # fmt: skip

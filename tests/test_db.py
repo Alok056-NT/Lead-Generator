@@ -18,8 +18,12 @@ def conn():
     connection.close()
 
 
+def make_project(conn, name="Northwind project") -> int:
+    return db.insert(conn, "projects", name=name)
+
+
 def make_campaign(conn, name="Northwind push") -> int:
-    return db.insert(conn, "campaigns", name=name)
+    return db.insert(conn, "campaigns", name=name, project_id=make_project(conn, f"P {name}"))
 
 
 def make_company(conn, campaign_id, name="Northwind Logistics", domain="northwind.example.com"):
@@ -53,11 +57,11 @@ def test_connect_pragmas(conn):
 
 
 def test_init_db_creates_database_in_workspace_and_is_idempotent():
-    assert db.init_db() == 1
+    assert db.init_db() == db.SCHEMA_VERSION == 2
     assert paths.db_path().exists()
-    assert db.init_db() == 1
+    assert db.init_db() == db.SCHEMA_VERSION
     with db.session() as conn:
-        assert count(conn, "schema_version") == 1
+        assert count(conn, "schema_version") == 2
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert db.TABLES <= names
 
@@ -120,12 +124,12 @@ def test_failed_migration_rolls_back(monkeypatch):
     monkeypatch.setattr(
         db,
         "MIGRATIONS",
-        [(2, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
+        [(3, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
     )
     with pytest.raises(sqlite3.Error):
         db.init_db()
     with db.session() as conn:
-        assert db.current_version(conn) == 1
+        assert db.current_version(conn) == 2
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
         assert "half_done" not in tables
 
@@ -192,6 +196,7 @@ def test_json_round_trip(conn):
         conn,
         "campaigns",
         name="JSON",
+        project_id=make_project(conn),
         countries_json=["Singapore", "Malaysia"],
         options_json={"invite_note": False, "search_mode": "auto", "note": "café – ✓"},
     )
@@ -430,6 +435,6 @@ def test_company_delete_cascades_to_people(conn):
 
 def test_offer_with_campaigns_cannot_be_deleted(conn):
     oid = db.insert(conn, "offers", name="Offer")
-    db.insert(conn, "campaigns", name="C", offer_id=oid)
+    db.insert(conn, "campaigns", name="C", offer_id=oid, project_id=make_project(conn))
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("DELETE FROM offers WHERE id = ?", (oid,))

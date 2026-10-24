@@ -114,8 +114,8 @@ function query(params) {
 
 // ---- labels -----------------------------------------------------------------------------------
 
-const PERSON_STATUS = { confirmed: 'Confirmed', review: 'Needs review', rejected: 'Rejected', removed: 'Removed' };
-const PERSON_TONE = { confirmed: 'ok', review: 'warn', rejected: 'bad', removed: 'none' };
+const PERSON_STATUS = { confirmed: 'Confirmed', reserve: 'Kept for later', review: 'Needs review', rejected: 'Rejected', removed: 'Removed' };
+const PERSON_TONE = { confirmed: 'ok', reserve: 'none', review: 'warn', rejected: 'bad', removed: 'none' };
 const COMPANY_STATUS = { candidate: 'Candidate', approved: 'Approved', excluded: 'Excluded' };
 const COMPANY_TONE = { candidate: 'info', approved: 'ok', excluded: 'none' };
 const EMAIL_STATUS = {

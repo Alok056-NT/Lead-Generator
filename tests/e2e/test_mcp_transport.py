@@ -84,13 +84,14 @@ def test_mini_flow_over_stdio_with_fake_providers(workspace, tmp_path):
     )
     with Session(server) as mcp:
         # the server answers over stdout only with protocol messages (a stray print would break it)
-        assert mcp("get_status")["next_step"]["tool"] == "ingest_offer_source"
+        assert mcp("get_status")["next_step"]["tool"] == "create_project"
 
         ingested = mcp("ingest_offer_source", text="Lanternfish VR builds short VR training.")
         saved = mcp("save_offer_profile", offer_id=ingested["offer_id"], profile=PROFILE)
         assert saved["profile"]["name"] == "Lanternfish VR"
+        project = mcp("create_project", name="Transport check", offer_id=ingested["offer_id"])
         created = mcp(
-            "create_campaign", name="Transport check", offer_id=ingested["offer_id"],
+            "create_campaign", name="Transport check", project_id=project["id"],
             countries=["SG"], sectors=["logistics"], company_size="200+ employees",
             channels=["linkedin"], designations=["ld", "hr"], locale="en-GB",
         )  # fmt: skip

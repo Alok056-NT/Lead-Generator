@@ -1,4 +1,4 @@
-"""Lead quality checks L01-L23 (PLAN section 14).
+"""Lead quality checks L01-L25 (PLAN section 14; L24 and L25 are the project checks of T23).
 
 `check_person` re-runs the confirmation rules (`confirm.parse_result`) over a person's stored
 evidence and turns each failed rule into an `Issue`, then adds the checks that need more than one
@@ -38,7 +38,7 @@ LEAD_SEVERITY: dict[str, str] = {
     "L06": "block", "L07": "block", "L08": "block", "L09": "block", "L10": "block",
     "L11": "warn", "L12": "warn", "L13": "warn", "L14": "block", "L15": "warn",
     "L16": "block", "L17": "block", "L18": "warn", "L19": "block", "L20": "warn",
-    "L21": "warn", "L22": "warn", "L23": "warn",
+    "L21": "warn", "L22": "warn", "L23": "warn", "L24": "block", "L25": "block",
 }  # fmt: skip
 
 LEAD_TITLES: dict[str, str] = {
@@ -65,6 +65,8 @@ LEAD_TITLES: dict[str, str] = {
     "L21": "Evidence came from AI web search",
     "L22": "LinkedIn URL does not match the name",
     "L23": "Email is an unverified guess",
+    "L24": "Already found or contacted in this project",
+    "L25": "Already in another campaign of this project",
 }  # fmt: skip
 
 # Blocks that stop the email channel only (a LinkedIn message to the same person is still fine).
@@ -119,6 +121,7 @@ class LeadContext:
     suppressed_emails: frozenset[str] = frozenset()
     suppressed_domains: frozenset[str] = frozenset()
     ai_spot_check: str = ""  # "" (no AI-search leads), "ok", "incomplete" or "failed"
+    extras: dict[str, Any] = field(default_factory=dict)  # caches of the EXTRA_LEAD_CHECKS
 
     @classmethod
     def basic(cls, campaign: Mapping[str, Any]) -> LeadContext:
@@ -136,7 +139,7 @@ ExtraCheck = Callable[
     ],
     list[Issue],
 ]
-EXTRA_LEAD_CHECKS: list[ExtraCheck] = []  # T21 registers more checks here
+EXTRA_LEAD_CHECKS: list[ExtraCheck] = []  # more checks register here (T23: contact_checks)
 
 
 def _issue(code: str, detail: str, severity: str | None = None) -> Issue:
@@ -595,3 +598,6 @@ def check_all(data: LeadData) -> dict[int, list[Issue]]:
             person, company, data.campaign, data.emails.get(person["id"]), data.context
         )
     return out
+
+
+from leadgen.services import contact_checks  # noqa: E402,F401  (registers L24 and L25)

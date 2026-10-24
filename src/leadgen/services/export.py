@@ -31,7 +31,7 @@ from typing import Any
 from leadgen import db
 from leadgen.core import paths
 from leadgen.core.text import slugify
-from leadgen.services import drafting, review
+from leadgen.services import drafting, projects, review
 from leadgen.services.emails import is_role_address
 from leadgen.services.qa_leads import Issue
 
@@ -483,6 +483,10 @@ def export_campaign(
     if out_rows:
         path = _stamp_path(folder, format)
         _write_csv(path, columns, out_rows)
+        projects.remember(  # the project remembers who is in a file (contact memory)
+            [r["personId"] for r in exported_rows], "exported_csv", source=path.name,
+            emails={r["personId"]: str(r["email"] or "") for r in exported_rows},
+        )  # fmt: skip
     qa_path = folder / "qa_report.csv"
     _write_csv(qa_path, QA_COLUMNS, _qa_report_rows(data, exported_ids, no_email_ids))
     removed_path = folder / "removed.csv"

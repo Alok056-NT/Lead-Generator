@@ -12,7 +12,7 @@ import pytest
 
 from leadgen import db
 from leadgen.services import campaign as camp
-from leadgen.services import drafting, offer, qa_messages
+from leadgen.services import drafting, offer, projects, qa_messages
 from leadgen.services.drafting import CHANNEL_SPECS, DraftError
 
 PROFILE = {
@@ -46,6 +46,7 @@ def make_campaign(
     return camp.create_campaign(
         name=f"SG logistics {next(_n)}",
         offer_id=offer_id,
+        project_id=projects.ensure_project_for_offer(offer_id),
         countries=["SG"],
         sectors=list(sectors),
         company_size="200-1000",

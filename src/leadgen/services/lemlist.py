@@ -34,7 +34,7 @@ from typing import Any
 from leadgen import db
 from leadgen.providers.base import ProviderError
 from leadgen.providers.lemlist import LemlistProvider
-from leadgen.services import export
+from leadgen.services import export, projects
 
 CHUNK_SIZE = 25
 PREVIEW_SIZE = 3
@@ -287,6 +287,11 @@ def push_to_lemlist(
             )
     finally:
         _save_log(key, log)
+    projects.remember(  # the project remembers who went to lemlist (contact memory)
+        [r["person_id"] for r in results if r["status"] in ("created", "duplicate")],
+        "lemlist", source=f"lemlist {target}",
+        emails={row["personId"]: str(row["email"] or "") for row in chunk},
+    )  # fmt: skip
 
     summary = {
         s: sum(1 for r in results if r["status"] == s) for s in ("created", "duplicate", "rejected")
