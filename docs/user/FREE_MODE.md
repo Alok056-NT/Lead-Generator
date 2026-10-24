@@ -62,8 +62,8 @@ The AI searches for published email addresses at each company. Lead Generator al
 
 Without an email checker key (Reoon or ZeroBounce), every address stays marked **guess**, meaning nobody has checked that it works.
 
-- You can export guess addresses to a CSV. They are labelled "guess".
-- The built-in email sender will not send to a guess unless you turn on "allow guess emails" for the campaign, after a warning. Some of them will bounce.
+- Only verified emails go out. A guess is not put in the `email` column of a CSV (it is listed in a separate `unverifiedEmail` column with its status, so nobody imports it by mistake) and is not pushed to lemlist.
+- The built-in email sender does not send to a guess either.
 - For better results, add a free Reoon key. It is 20 checks a day. See [Providers](PROVIDERS.md).
 
 ## Limits to know about

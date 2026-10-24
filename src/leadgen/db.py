@@ -105,6 +105,13 @@ CREATE INDEX idx_known_name ON known_contacts(project_id, key_name_company);
 CREATE INDEX idx_known_company ON known_contacts(project_id, key_company);
 """
 
+# v4 (T25): the project's email policy. A new column with a default, so a v3 database keeps all
+# its rows (every existing project becomes `verified_only`; existing campaigns keep their own
+# stored `allow_risky_emails`).
+_V4_SQL = """
+ALTER TABLE projects ADD COLUMN email_policy TEXT NOT NULL DEFAULT 'verified_only';
+"""
+
 
 def _unique_project_name(name: str, used: set[str]) -> str:
     base = " ".join(name.split())[:120].strip() or "Project"
@@ -151,8 +158,11 @@ def _v2_assign_projects(conn: sqlite3.Connection) -> None:
 # transaction, so the SQL must not contain BEGIN/COMMIT; `after(conn)` (optional) runs in the
 # same transaction once the SQL has run, for data changes that plain SQL cannot express.
 # v2 (T23): projects, contact memory, campaigns.project_id. v3 (T24): known_contacts.
+# v4 (T25): projects.email_policy.
 Migration = tuple[int, str] | tuple[int, str, Callable[[sqlite3.Connection], None]]
-MIGRATIONS: list[Migration] = [(2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL)]
+MIGRATIONS: list[Migration] = [
+    (2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL), (4, _V4_SQL),
+]
 SCHEMA_VERSION = max([BASE_VERSION, *(m[0] for m in MIGRATIONS)])
 
 TABLES = frozenset(

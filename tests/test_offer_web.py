@@ -208,13 +208,20 @@ def test_crawl_stops_at_max_pages():
 
 
 @respx.mock
-def test_crawl_hard_cap_is_15_pages():
-    links = "".join(f'<a href="/p{i}">P{i}</a>' for i in range(30))
+def test_crawl_default_is_15_and_hard_cap_is_50_pages():
+    links = "".join(f'<a href="/p{i}">P{i}</a>' for i in range(60))
     pages = {"/": page(f"<p>Home</p>{links}")}
-    pages.update({f"/p{i}": page(f"<p>Page {i} text</p>") for i in range(30)})
+    pages.update({f"/p{i}": page(f"<p>Page {i} text</p>") for i in range(60)})
     mock_site(pages)
-    result, _ = offer_web.crawl(BASE + "/", max_pages=100)
+    result, _ = offer_web.crawl(BASE + "/")
     assert len(result) == 15
+    result, _ = offer_web.crawl(BASE + "/", max_pages=100)
+    assert len(result) == 50
+
+
+def test_crawl_time_allowance_grows_with_the_page_count():
+    assert offer_web.crawl_deadline(1) == offer_web.crawl_deadline(15) == 50.0
+    assert offer_web.crawl_deadline(50) == 50.0 + 35 * 3.0
 
 
 @respx.mock

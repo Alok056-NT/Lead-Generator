@@ -421,8 +421,9 @@ def _email_issues(
             out.append(
                 _issue(
                     "L23",
-                    f"{address} is an unverified guess. It can be exported with a 'guess' label "
-                    "but is not sent unless the campaign allows guessed emails.",
+                    f"{address} is an unverified guess. It is never put in the email column of an "
+                    "export (only in unverifiedEmail) and is not sent unless the campaign allows "
+                    "guessed emails.",
                     "block",
                 )
             )

@@ -96,9 +96,9 @@ Exports and the dashboard show where each lead came from (`evidence_origin`).
 
 ## 7. Emails in this mode
 
-Without a verifier key, emails are `guess` (not checked). They can go into a CSV export with a
-clear label, but they are **never sent** by the built-in sender unless the user enables
-`allow_guess_emails` for the campaign after you have warned them that some addresses will bounce.
+Without a verifier key, emails are `guess` (not checked). They are **not exported** as emails
+(they appear only in the `unverifiedEmail` column) and are **not sent**. Tell the user: "Add a
+free Reoon key: 20 checks a day" and run `find_emails` again to verify them.
 
 ## 8. Be honest
 

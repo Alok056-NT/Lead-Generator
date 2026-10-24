@@ -20,7 +20,10 @@ person and sends it with `providers.lemlist.create_lead`.
   email channel, or no exportable LinkedIn message while LinkedIn is a channel, is held back by
   default (reason `messages_incomplete`): lemlist shows missing variables only in its manual
   Launch review, so blank steps could go out. `allow_incomplete=True` (the user's explicit
-  choice) pushes them anyway. `guess` email addresses are counted and warned about.
+  choice) pushes them anyway.
+* Only verified emails are pushed (`export.build_rows` puts nothing else in `email`). A person
+  whose only address is a guess, unchecked or not allowed by the campaign counts under
+  `no_email_for_lemlist_api` and `found_not_verified`, and the address is never sent.
 
 Callers must run `db.init_db()` first.
 """
@@ -165,8 +168,9 @@ def push_to_lemlist(
 ) -> dict[str, Any]:
     """Create leads in an existing lemlist campaign (see the module docstring).
 
-    Returns counts (`ready`, `already_pushed`, `no_email_for_lemlist_api`, `messages_incomplete`,
-    `guess_emails`, `to_push`) and `warnings`; a dry run
+    Returns counts (`ready`, `already_pushed`, `no_email_for_lemlist_api`, `found_not_verified`
+    (the part of those whose address is found but not verified), `messages_incomplete`,
+    `to_push`) and `warnings`; only verified emails are ever sent. A dry run
     adds `preview` (the first 3 payloads), a real run adds this call's results and `next_cursor`
     / `done`. Raises `LemlistError`, `CampaignError` or `ReviewError`.
     """
@@ -190,9 +194,9 @@ def push_to_lemlist(
     ]
     incomplete = [r for r in remaining if export.missing_messages(data.campaign, r)]
     incomplete_ids = {r["personId"] for r in incomplete}
+    not_verified = sum(1 for r in no_email if r["unverifiedEmail"])
     held = [] if allow_incomplete else incomplete
     pending = [r for r in remaining if allow_incomplete or r["personId"] not in incomplete_ids]
-    guesses = sum(1 for r in pending if r["emailStatus"] == "guess")
 
     base: dict[str, Any] = {
         "ok": True,
@@ -203,17 +207,22 @@ def push_to_lemlist(
         "already_pushed": len(done_ids),
         "no_email_for_lemlist_api": len(no_email),
         "messages_incomplete": len(held),
-        "guess_emails": guesses,
+        "found_not_verified": not_verified,
         "to_push": len(pending),
         "blocked_by_code": dict(data.gate["blocked_by"]),
     }
     warnings: list[str] = []
     if no_email:
+        extra = (
+            f"; {not_verified} of them have an address that is found but not verified"
+            if not_verified
+            else ""
+        )
         base["no_email_hint"] = (
-            f"{len(no_email)} lead(s) have no email, so the lemlist API push skips them "
-            "(reason no_email_for_lemlist_api). lemlist's CSV import also needs an email on "
-            "every row, so run find_emails for them first, or add those leads by hand in lemlist "
-            "from their LinkedIn profile."
+            f"{len(no_email)} lead(s) have no verified email, so the lemlist API push skips "
+            f"them (reason no_email_for_lemlist_api{extra}). lemlist's CSV import also needs an "
+            "email on every row, so run find_emails for them first (a verifier key is needed "
+            "to verify), or add those leads by hand in lemlist from their LinkedIn profile."
         )
     if held:
         base["messages_incomplete_hint"] = (
@@ -227,11 +236,6 @@ def push_to_lemlist(
         warnings.append(
             f"{len(incomplete)} lead(s) are pushed without a message for every channel of the "
             "campaign (allow_incomplete=true). Their lemlist steps will show missing variables."
-        )
-    if guesses:
-        warnings.append(
-            f"{guesses} lead(s) have an unverified guessed email (emailStatus = guess). "
-            "Verify them before you launch the lemlist campaign."
         )
     base["warnings"] = warnings
 

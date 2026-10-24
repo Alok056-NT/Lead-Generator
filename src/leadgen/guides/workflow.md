@@ -73,10 +73,16 @@ companies show `warm_contacts`. Do not add warm companies to a campaign on your 
 
 0. If the project already has an offer with a saved profile, skip to section 3. Otherwise
    continue below and attach the offer to the project in step 5.
-1. Ask for the product or service: a website address, pasted text or a document path. Call
-   `ingest_offer_source` (one of `url`, `text`, `file_path`). It returns an `offer_id`, the
-   first chunk of text and `next_cursor`; call it again with `offer_id` and `cursor` until
-   `next_cursor` is empty. Read all of it.
+1. Tell the user plainly: "Attach your product or service here: a website (one page, or the
+   whole site up to 15 pages), a PDF/Word/text file, or pasted text. To change it later,
+   attach a new source; it replaces the old one." Then ask for it. For a website ask which they
+   want: **just that page** (`scope="page"`) or **the whole site** (`scope="site"`, up to
+   `max_pages`, default 15, at most 50). Call `ingest_offer_source` with `project_id` (so the new
+   source replaces the project's old one) and one of `url`, `text`, `file_path`. The reply
+   has a plain `summary` ("Read 12 pages from example.com: /, /about, ..." or "Read 1 page ...");
+   tell the user what was read. It returns an `offer_id`, the first chunk of text and
+   `next_cursor`; call it again with `offer_id` and `cursor` until `next_cursor` is empty. Read
+   all of it.
 2. If the page was empty or blocked, the error says what to do (usually: ask the user to paste
    the text or give a file).
 3. Fetch the profile rules once with `get_workflow_guide(section="offer_profile")` and write
@@ -87,8 +93,9 @@ companies show `warm_contacts`. Do not add warm companies to a campaign on your 
    forbidden claims or leave it out. `ingest_offer_source` lists such lines as
    `unconfirmed_snippets`.
 5. When the user agrees, call `save_offer_profile(offer_id, profile)`. If it reports problems,
-   fix them and save again. Then attach the offer to the project:
-   `update_project(project_id, offer_id=offer_id)`.
+   fix them and save again. If you did not pass `project_id` when reading the source, attach
+   the offer now: `update_project(project_id, offer_id=offer_id)`. A project has one source: a
+   new source replaces the old one (campaigns already made keep theirs).
 
 ## 3. Targeting and the campaign (step 2)
 
@@ -167,12 +174,19 @@ companies show `warm_contacts`. Do not add warm companies to a campaign on your 
 
 1. `estimate_email_search`, tell the user the credits (Hunter pattern lookups and verifier
    checks), and ask. Then `find_emails(confirm=true)` in chunks like `find_people`.
-2. Report how many are `verified`, `risky` and `guess`. `guess` means not verified: say so, and
-   explain these are not sent by the built-in sender unless the user turns on
-   `allow_guess_emails` after a warning. Replies named `verifier_needs_key` or
-   `provider_issues` mean a verification key is missing or a provider failed: relay it.
+2. Only **verified** emails go out. Every address, wherever it came from (Hunter, the company
+   website, AI web search, an imported list), has to pass an email checker first. Report
+   `email_summary`: `verified_emails` and `found_not_verified` (found, but not exported or
+   sent; they appear only in the `unverifiedEmail` column of an export). A project's
+   `email_policy` is `verified_only` (default) or `allow_risky` (also catch-all domains); it sets
+   the option for new campaigns. A `guess` is never exported as an email and never sent by the
+   built-in sender; do not offer `allow_guess_emails` as a way round this, it is an expert
+   switch for the command line. Replies named `verifier_needs_key` or `provider_issues` mean a
+   verification key is missing or a provider failed: relay it plainly ("Add a free Reoon key:
+   20 checks a day").
 3. In AI search mode, `get_search_tasks(kind="email")` collects published addresses that teach
-   the company's email pattern; without a verifier key the results stay `guess`.
+   the company's email pattern; without a verifier key the results stay unverified and are not
+   exported.
 
 ## 8. Drafting messages
 

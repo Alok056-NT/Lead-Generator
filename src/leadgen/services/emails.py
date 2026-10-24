@@ -5,7 +5,9 @@ Flow per person (PLAN section 12): MX lookup (google / microsoft / gateway / oth
 domain's email pattern (cache, known examples, Hunter, the company website, default
 `{first}.{last}`) -> one candidate address -> verify it (Reoon, ZeroBounce, Hunter, then an SMTP
 probe only for small self-hosted mail servers) -> status `verified`, `risky` (catch-all domain),
-`guess` (nothing could check it), `invalid` or `unknown`. Role addresses (info@, hr@ ...) and
+`guess` (nothing could check it), `invalid` or `unknown`. Only `verified` (and `risky` when the
+project allows it) is ever exported or sent; every address, whatever its source, has to pass
+a verifier here first. Role addresses (info@, hr@ ...) and
 suppressed addresses are never stored. Long runs are chunked (`find_emails` returns a
 `next_cursor`). Callers must run `db.init_db()` first.
 """
@@ -1036,12 +1038,13 @@ def find_emails(
         "this_call": totals,
         "skipped": dict(skipped),
         "campaign_emails": _email_counts(campaign_id),
+        "email_summary": campaign_mod.email_summary(campaign_id),
         "patterns_used": dict(list(patterns.items())[:5]),
         "credits_used": {k: float(v) for k, v in run.spent.items()},
         "done": finished,
         "next_cursor": None if finished else str(last_id),
     }
-    notes = _notes(chain, run)
+    notes = _notes(chain, run, totals["guess"] + totals["unknown"])
     if notes:
         reply["notes"] = notes
     if run.issues:
@@ -1050,19 +1053,29 @@ def find_emails(
         reply["hunter_budget"] = run.hunter_blocked
     if not chain:
         reply["verifier_needs_key"] = registry.needs_key_response(
-            "reoon", "to check that the guessed addresses exist"
+            "reoon", "to verify the addresses; without it they stay unverified and are not exported"
         )
     if unknown_ids:
         reply["skipped_person_ids"] = unknown_ids
     return reply
 
 
-def _notes(chain: Sequence[Any], run: _Run) -> list[str]:
+NO_VERIFIER_NOTE = (
+    "No email checker key is set, so these addresses are NOT verified and will not be exported "
+    "or sent. Add a free Reoon key: 20 checks a day (about 600 a month), then run find_emails "
+    "again for these people."
+)
+
+
+def _notes(chain: Sequence[Any], run: _Run, unverified: int = 0) -> list[str]:
     notes: list[str] = []
     if not chain:
+        notes.append(NO_VERIFIER_NOTE)
+    elif unverified:
         notes.append(
-            "No email verifier key is set, so addresses are `guess` (not checked). Add a "
-            "Reoon key (free) to verify them."
+            f"{unverified} address(es) could not be checked this time, so they are not verified "
+            "and will not be exported or sent. Check provider_issues, then run find_emails "
+            "again with those person_ids."
         )
     if run.hunter_blocked is not None:
         notes.append("The Hunter budget was reached, so patterns came from the website or default.")

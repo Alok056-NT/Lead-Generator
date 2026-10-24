@@ -180,13 +180,13 @@ def test_instantly_skips_people_without_email(world):
     _, qa = read(reply["qa_report_path"])
     by_id = {r["person_id"]: r for r in qa}
     assert by_id[str(ids[2])]["exported"] == "no (no email for this format)"
-    assert any("no email" in w for w in reply["warnings"])
+    assert any("no verified email" in w for w in reply["warnings"])
     # lemlist keeps the person, with an empty email, and warns
     reply = export_campaign(cid, "lemlist", include="qa_pass")
     _, rows = read(reply["path"])
     assert len(rows) == 3
     assert [r["email"] for r in rows][2] == ""
-    assert any("no email" in w for w in reply["warnings"])
+    assert any("no verified email" in w for w in reply["warnings"])
 
 
 def test_include_modes(world):
@@ -260,10 +260,11 @@ def test_evidence_origin_and_guess_label(world):
     assert by[str(ids[0])]["evidenceOrigin"] == "ai_web_search"
     assert reply["evidence_origin_counts"] == {"ai_web_search": 1, "api": 2}
     assert any("AI web search" in w for w in reply["warnings"])
-    # a guess address is exported with its label (an export is not a send)
-    assert by[str(ids[1])]["email"] == "marcus.tan@northwind.example"
-    assert by[str(ids[1])]["emailStatus"] == "guess"
-    assert any("guess" in w for w in reply["warnings"])
+    # a guess address never reaches the email column: it is listed separately, with its status
+    assert by[str(ids[1])]["email"] == "" and by[str(ids[1])]["emailStatus"] == ""
+    assert by[str(ids[1])]["unverifiedEmail"] == "marcus.tan@northwind.example"
+    assert by[str(ids[1])]["unverifiedEmailStatus"] == "guess"
+    assert any("not verified" in w for w in reply["warnings"])
     header, qa = read(reply["qa_report_path"])
     assert "evidence_origin" in header
     assert {r["person_id"]: r["evidence_origin"] for r in qa}[str(ids[0])] == "ai_web_search"
@@ -319,7 +320,8 @@ def test_qa_report_and_removed_files(world):
     assert by[str(ids[0])]["exported"] == "yes"  # the LinkedIn message still goes
     assert "AI review verdict is 'fix'" in by[str(ids[0])]["blocking_issues"]
     assert "Too salesy" in by[str(ids[0])]["ai_verdict_notes"]
-    assert by[str(ids[1])]["exported"] == "yes" and by[str(ids[1])]["email_status"] == "verified"
+    assert by[str(ids[1])]["exported"] == "yes"
+    assert by[str(ids[1])]["found_email_status"] == "verified"
     assert by[str(review_one)]["person_status"] == "review"
     assert "no employer" in by[str(review_one)]["review_reasons"]
     assert by[str(review_one)]["exported"] == "no"

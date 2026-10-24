@@ -11,6 +11,11 @@ runs them as a formula.
 `build_rows` is also the lead list for `lemlist.push_to_lemlist`, so the CSV and the API push
 always agree on who is ready.
 
+The `email` column holds only addresses the campaign may use: `verified`, plus `risky` when the
+campaign allows it; a `guess` is never put there. Any other address that was found goes into the
+`unverifiedEmail` column with its status in `unverifiedEmailStatus`, so nobody imports it into an
+email sequence by mistake (an address known to be invalid is not exported at all).
+
 Include modes: `approved` (default; strict: every message needs the AI's `pass`), `qa_pass`
 (no QA block and no `fix` / `reject` verdict, AI review not required) and `all_confirmed` (every
 confirmed lead that has no lead-level block, with the messages that have no message-level block;
@@ -31,6 +36,7 @@ from typing import Any
 from leadgen import db
 from leadgen.core import paths
 from leadgen.core.text import slugify
+from leadgen.services import campaign as campaign_mod
 from leadgen.services import drafting, projects, review
 from leadgen.services.emails import is_role_address
 from leadgen.services.qa_leads import Issue
@@ -44,14 +50,14 @@ M12_REPORT_LIMIT = 1500  # above this many messages qa_report skips the near-dup
 LEMLIST_COLUMNS = (
     "email", "firstName", "lastName", "companyName", "jobTitle", "linkedinUrl", "greetingName",
     "designation", "linkedinMessage", "linkedinInvite", "emailSubject", "emailBody",
-    "companyDomain", "emailStatus", "evidenceOrigin",
+    "companyDomain", "emailStatus", "unverifiedEmail", "unverifiedEmailStatus", "evidenceOrigin",
 )  # fmt: skip
 
 GENERIC_COLUMNS = (
     "personId", "firstName", "lastName", "greetingName", "jobTitle", "designation", "seniority",
     "country", "companyName", "companyDomain", "website", "sector", "linkedinUrl", "email",
-    "emailStatus", "evidenceOrigin", "evidenceSnippet", "linkedinInvite", "linkedinMessage",
-    "emailSubject", "emailBody",
+    "emailStatus", "unverifiedEmail", "unverifiedEmailStatus", "evidenceOrigin",
+    "evidenceSnippet", "linkedinInvite", "linkedinMessage", "emailSubject", "emailBody",
 )  # fmt: skip
 
 # Instantly column -> internal row key. Instantly's predefined variables are Email, First name,
@@ -80,8 +86,9 @@ INSTANTLY_COLUMNS: dict[str, str] = {
 
 QA_COLUMNS = (
     "person_id", "firstName", "lastName", "companyName", "jobTitle", "linkedinUrl",
-    "evidence_origin", "spot_check", "person_status", "exported", "email", "email_status",
-    "messages", "blocking_issues", "warnings", "ai_verdict_notes", "review_reasons",
+    "evidence_origin", "spot_check", "person_status", "exported", "found_email",
+    "found_email_status", "messages", "blocking_issues", "warnings", "ai_verdict_notes",
+    "review_reasons",
 )  # fmt: skip
 
 REMOVED_COLUMNS = (
@@ -98,7 +105,9 @@ CHANNEL_KEYS = {
 LEMLIST_NEXT_STEPS = (
     "In lemlist, import this CSV into a campaign (map the columns; keep the names exactly as "
     "they are, lemlist variables are case-sensitive). Every lemlist CSV row needs an email "
-    "address; leads without one must be added from their LinkedIn profile instead.",
+    "address; leads without one must be added from their LinkedIn profile instead. Only "
+    "verified emails are in the email column; 'unverifiedEmail' is for your information, do not "
+    "map it to lemlist's email field.",
     "LinkedIn sequence: step 1 a LinkedIn invitation left blank (no note) or, if you want a "
     "note, {{linkedinInvite}}; then a condition 'Accepted invite' with a wait of at least 1 day; "
     "then a LinkedIn message step with the text {{linkedinMessage}}.",
@@ -109,8 +118,10 @@ LEMLIST_NEXT_STEPS = (
     "Do not edit {{variables}} inside the messages; they were checked word for word.",
 )
 GENERIC_NEXT_STEPS = (
-    "Open the file in Excel or Google Sheets. Check 'evidenceOrigin' and 'emailStatus' before "
-    "you send anything: 'guess' emails are unverified.",
+    "Open the file in Excel or Google Sheets. The 'email' column holds verified addresses only. "
+    "An address that was found but is not verified is in 'unverifiedEmail' (with its status in "
+    "'unverifiedEmailStatus'); do not put those into an email sequence. Check 'evidenceOrigin' "
+    "before you send anything.",
 )
 INSTANTLY_NEXT_STEPS = (
     "In Instantly, upload the CSV and check the column mapping: email, first_name, last_name, "
@@ -202,18 +213,25 @@ def _check(fmt: str | None, include: str | None) -> None:
 
 def _export_email(
     ev: review.Evaluation, person: dict[str, Any], email_row: dict[str, Any] | None
-) -> tuple[str, str]:
-    """(address, status) to put in the file; ("", "") when the address must not leave."""
+) -> tuple[str, str, str, str]:
+    """`(email, status, unverified email, its status)` for the file.
+
+    `email` is set only when the status is one the campaign may use (`verified`, and `risky`
+    when allowed; never `guess`). Any other found address that is not known to be invalid goes
+    to the unverified pair instead. A role address, a suppressed address and an invalid one
+    leave in neither.
+    """
     if not email_row:
-        return "", ""
+        return "", "", "", ""
     address = str(email_row.get("email") or "").strip()
     status = str(email_row.get("status") or "")
-    allowed = {*drafting.sendable_email_statuses(ev.campaign), "guess"}
-    if not address or status not in allowed or is_role_address(address):
-        return "", ""
+    if not address or is_role_address(address) or status == "invalid":
+        return "", "", "", ""
     if address.lower() in ev.leads.context.suppressed_emails:
-        return "", ""
-    return address, status
+        return "", "", "", ""
+    if status in campaign_mod.exportable_email_statuses(ev.campaign):
+        return address, status, "", ""
+    return "", "", address, status or "unknown"
 
 
 def build_rows(campaign_id: int, include: str = "approved") -> ExportData:
@@ -257,12 +275,16 @@ def build_rows(campaign_id: int, include: str = "approved") -> ExportData:
         if person is None or _suppressed(ev, pid):
             continue
         company = ev.leads.companies[person["company_id"]]
-        address, status = _export_email(ev, person, ev.leads.emails.get(pid))
+        address, status, unverified, unverified_status = _export_email(
+            ev, person, ev.leads.emails.get(pid)
+        )
         domain = str(company.get("domain") or "")
         row: dict[str, Any] = {
             "personId": pid,
             "email": address,
             "emailStatus": status,
+            "unverifiedEmail": unverified,
+            "unverifiedEmailStatus": unverified_status,
             "firstName": person.get("first_name") or "",
             "lastName": person.get("last_name") or "",
             "greetingName": person.get("greeting_name") or person.get("first_name") or "",
@@ -402,8 +424,8 @@ def _qa_report_rows(
                 "spot_check": p["spot_check"] or "",
                 "person_status": p["status"],
                 "exported": status,
-                "email": email.get("email", ""),
-                "email_status": email.get("status", ""),
+                "found_email": email.get("email", ""),
+                "found_email_status": email.get("status", ""),
                 "messages": "; ".join(parts),
                 "blocking_issues": " | ".join(blocks),
                 "warnings": " | ".join(warns),
@@ -501,8 +523,14 @@ def export_campaign(
             f"{origin['ai_web_search']} lead(s) came from AI web search (lower confidence; "
             f"spot check state: {state}). The 'evidenceOrigin' column marks them."
         )
-    if any(r["emailStatus"] == "guess" for r in exported_rows):
-        warnings.append("Some emails are unverified guesses (emailStatus = guess).")
+    unverified = sum(1 for r in exported_rows if r["unverifiedEmail"])
+    if unverified:
+        warnings.append(
+            f"{unverified} lead(s) have an email that is found but not verified. It is not in "
+            "the email column (nothing unverified is exported there); see unverifiedEmail in "
+            "the generic and lemlist files and found_email in qa_report.csv. Add a verifier "
+            "key (a free Reoon key gives 20 checks a day) and run find_emails again to verify."
+        )
     not_reviewed = sum(1 for m in data.ev.messages if m.get("ai_review") != "pass")
     if include != "approved" and not_reviewed:
         warnings.append(f"{not_reviewed} message(s) have not been passed by the AI review.")
@@ -523,10 +551,13 @@ def export_campaign(
         no_email = sum(1 for r in exported_rows if not r["email"])
         if no_email:
             warnings.append(
-                f"{no_email} lead(s) have no email; lemlist's CSV import needs one on every row."
+                f"{no_email} lead(s) have no verified email; lemlist's CSV import needs one "
+                "on every row."
             )
     if skipped:
-        warnings.append(f"{skipped} lead(s) have no email and were left out of the Instantly file.")
+        warnings.append(
+            f"{skipped} lead(s) have no verified email and were left out of the Instantly file."
+        )
 
     steps = {
         "lemlist": LEMLIST_NEXT_STEPS,
@@ -546,6 +577,8 @@ def export_campaign(
             len(data.message_ids.get(r["personId"], [])) for r in exported_rows
         ),
         "skipped_no_email": skipped,
+        "verified_emails": sum(1 for r in exported_rows if r["email"]),
+        "found_not_verified": unverified,
         "incomplete_rows": incomplete,
         "removed": len(removed),
         "blocked_by_code": dict(data.gate["blocked_by"]),

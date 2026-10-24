@@ -39,6 +39,7 @@ from leadgen.services import (
 )
 from leadgen.services import campaign as campaign_svc
 from leadgen.services import companies as companies_svc
+from leadgen.services import offer as offer_svc
 from leadgen.services import status as status_svc
 
 log = logging.getLogger("leadgen.dashboard")
@@ -76,6 +77,16 @@ class StatusBody(_Body):
 class ExportBody(_Body):
     format: Literal["generic", "lemlist", "instantly"] = "generic"
     include: Literal["approved", "qa_pass", "all_confirmed"] = "approved"
+
+
+class SourceBody(_Body):
+    """The project's product or service: a website (one page or the whole site) or pasted text."""
+
+    url: str | None = Field(default=None, max_length=2000)
+    text: str | None = Field(default=None, max_length=300_000)
+    name: str | None = Field(default=None, max_length=200)
+    scope: Literal["page", "site"] = "site"
+    max_pages: int = Field(default=15, ge=1, le=50)
 
 
 class SuppressionBody(_Body):
@@ -249,6 +260,24 @@ def _register_routes(app: FastAPI) -> None:
     def test_key(provider: str) -> JSONResponse:
         return _reply(status_svc.probe_key(provider))
 
+    # ---- project source -----------------------------------------------------------------------
+
+    @app.get("/api/offer-source-help")
+    def source_help() -> JSONResponse:
+        return _json({"ok": True, "text": offer_svc.SOURCE_HELP})
+
+    @app.post("/api/projects/{project_id}/source")
+    def attach_source(project_id: int, body: SourceBody) -> JSONResponse:
+        """Attach a website (scope page or site) or pasted text as the project's one source; it
+        replaces the old one. Files are attached by the project page (T26)."""
+        result = offer_svc.ingest_source(
+            url=body.url, text=body.text, name=body.name, scope=body.scope,
+            max_pages=body.max_pages, project_id=project_id,
+        )  # fmt: skip
+        result.pop("text", None)  # the dashboard shows the summary, not the page text
+        result.pop("next_cursor", None)
+        return _reply(result)
+
     # ---- campaigns, companies -----------------------------------------------------------------
 
     @app.get("/api/campaigns")
@@ -256,7 +285,12 @@ def _register_routes(app: FastAPI) -> None:
         rows = []
         for short in campaign_svc.list_campaigns(include_archived):
             full = campaign_svc.get_campaign(short["id"])
-            rows.append({**short, "counts": full["counts"], "sectors": full["sectors"]})
+            rows.append(
+                {
+                    **short, "counts": full["counts"], "sectors": full["sectors"],
+                    "email_summary": full["email_summary"],
+                }
+            )
         return _json({"ok": True, "campaigns": rows})
 
     @app.get("/api/campaigns/{campaign_id}")

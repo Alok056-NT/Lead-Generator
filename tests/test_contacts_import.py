@@ -841,7 +841,9 @@ def test_migration_v3_on_a_copy_of_a_v2_database(tmp_path, monkeypatch):
             return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in V2_TABLES}
 
     before = counts(copy)
-    assert db.init_db(copy) == db.SCHEMA_VERSION == 3
+    with monkeypatch.context() as patch:  # stop at v3 (v4 has its own test, T25)
+        patch.setattr(db, "MIGRATIONS", db.MIGRATIONS[:2])
+        assert db.init_db(copy) == 3
     assert counts(copy) == before  # nothing in the v2 tables changed
     with db.session(original) as conn:
         assert db.current_version(conn) == 2  # the original file was not touched
@@ -861,7 +863,9 @@ def test_migration_v3_on_a_copy_of_a_v2_database(tmp_path, monkeypatch):
         conn.execute("DELETE FROM projects")
         assert conn.execute("SELECT COUNT(*) FROM known_contacts").fetchone()[0] == 0
     # running it again changes nothing
-    assert db.init_db(copy) == 3
+    with monkeypatch.context() as patch:
+        patch.setattr(db, "MIGRATIONS", db.MIGRATIONS[:2])
+        assert db.init_db(copy) == 3
 
 
 def test_failed_v3_migration_rolls_back(tmp_path, monkeypatch):
@@ -878,8 +882,8 @@ def test_failed_v3_migration_rolls_back(tmp_path, monkeypatch):
         assert "known_contacts" not in table_names(conn)
 
 
-def test_the_current_schema_version_is_3():
-    assert db.SCHEMA_VERSION == 3 and "known_contacts" in db.TABLES
+def test_the_current_schema_has_known_contacts():
+    assert db.SCHEMA_VERSION >= 3 and "known_contacts" in db.TABLES
 
 
 # --- command line -----------------------------------------------------------------------------

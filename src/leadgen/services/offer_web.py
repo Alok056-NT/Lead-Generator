@@ -30,10 +30,12 @@ from leadgen.providers.base import RateLimiter
 
 logger = logging.getLogger("leadgen.offer_web")
 
-MAX_PAGES = 15
+DEFAULT_PAGES = 15
+MAX_PAGES = 50  # hard cap for scope "site" (T25)
 REQUESTS_PER_SECOND = 1.0
 MAX_CRAWL_DELAY = 10.0  # we never wait longer than this per request, whatever robots.txt asks
-DEADLINE_SECONDS = 50.0  # stay well under the ~60 s a tool call should take
+DEADLINE_SECONDS = 50.0  # up to DEFAULT_PAGES pages: stay well under the ~60 s a call should take
+EXTRA_SECONDS_PER_PAGE = 3.0  # more time for each page beyond DEFAULT_PAGES (50 pages: 155 s)
 MAX_PAGE_BYTES = 2_000_000
 MAX_PAGE_CHARS = 50_000
 
@@ -274,15 +276,22 @@ def _load_robots(client: httpx.Client, base: str) -> urllib.robotparser.RobotFil
 # --- crawler --------------------------------------------------------------------------------
 
 
-def crawl(start_url: str, max_pages: int = MAX_PAGES) -> tuple[list[CrawledPage], list[str]]:
+def crawl_deadline(max_pages: int) -> float:
+    """Seconds a crawl of `max_pages` pages may take: `DEADLINE_SECONDS` up to 15 pages, then
+    `EXTRA_SECONDS_PER_PAGE` more for each further page (1 request a second is the floor)."""
+    return DEADLINE_SECONDS + max(0, max_pages - DEFAULT_PAGES) * EXTRA_SECONDS_PER_PAGE
+
+
+def crawl(start_url: str, max_pages: int = DEFAULT_PAGES) -> tuple[list[CrawledPage], list[str]]:
     """Crawl `start_url` and same-domain pages; return `(pages, warnings)`.
 
     Raises `WebError` if the start page cannot be used (`invalid_url`, `robots_blocked`,
     `unreachable`, `http_error`, `not_html`, `no_text`). At most `max_pages` pages with text
-    are returned (hard cap 15), at most 1 request per second, and the crawl stops after
-    `DEADLINE_SECONDS`.
+    are returned (hard cap 50; `max_pages=1` reads exactly the start page), at most 1 request
+    per second, and the crawl stops after `crawl_deadline(max_pages)` seconds.
     """
     max_pages = max(1, min(int(max_pages), MAX_PAGES))
+    deadline = crawl_deadline(max_pages)
     start = normalize_start_url(start_url)
     parsed = urlparse(start)
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -325,7 +334,7 @@ def crawl(start_url: str, max_pages: int = MAX_PAGES) -> tuple[list[CrawledPage]
         skipped_robots = 0
         guessed = False
         while len(pages) < max_pages and requests_left > 0:
-            if time.monotonic() - started > DEADLINE_SECONDS:
+            if time.monotonic() - started > deadline:
                 warnings.append("Stopped early (time limit); some pages were not read.")
                 break
             if not frontier.heap:

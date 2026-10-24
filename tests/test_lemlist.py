@@ -447,19 +447,31 @@ def test_allow_incomplete_pushes_with_a_warning(ready_db, key, sleeps):
 
 
 @respx.mock
-def test_guess_emails_are_counted_labelled_and_warned(ready_db, key, sleeps):
+def test_only_verified_emails_are_pushed(ready_db, key, sleeps):
     cid, ids = _build(2)
     with db.session() as conn:
         conn.execute("UPDATE emails SET status = 'guess' WHERE person_id = ?", (ids[0],))
-    # a guess address has no sendable email message (L23 blocks it) but a LinkedIn one is fine
     dry = push_to_lemlist(cid, TARGET, allow_incomplete=True)
-    assert dry["guess_emails"] == 1
-    assert any("guess" in w for w in dry["warnings"])
-    guess = next(p for p in dry["preview"] if p["person_id"] == ids[0])
-    assert guess["payload"]["emailStatus"] == "guess"
+    # the person whose only address is a guess has no email for lemlist and is not pushed
+    assert dry["no_email_for_lemlist_api"] == 1 and dry["found_not_verified"] == 1
+    assert dry["to_push"] == 1 and "not verified" in dry["no_email_hint"]
+    assert [p["person_id"] for p in dry["preview"]] == [ids[1]]
     route = respx.post(f"{API}/campaigns/{TARGET}/leads/").mock(
         return_value=httpx.Response(200, json={"_id": "lea_1"})
     )
     real = push_to_lemlist(cid, TARGET, dry_run=False, confirm=True, allow_incomplete=True)
-    assert real["guess_emails"] == 1 and any("guess" in w for w in real["warnings"])
-    assert route.call_count == 2
+    assert real["pushed"]["created"] == 1 and route.call_count == 1
+    assert "p0@northwind.example" not in route.calls[0].request.content.decode()
+
+
+@respx.mock
+def test_an_unverified_address_is_never_in_a_payload(ready_db, key, sleeps, monkeypatch):
+    monkeypatch.setattr(svc, "EMAIL_REQUIRED", False)  # LinkedIn-only leads are allowed
+    cid, ids = _build(1)
+    with db.session() as conn:
+        conn.execute("UPDATE emails SET status = 'unknown' WHERE person_id = ?", (ids[0],))
+    dry = push_to_lemlist(cid, TARGET, allow_incomplete=True)
+    assert dry["to_push"] == 1
+    payload = dry["preview"][0]["payload"]
+    assert "email" not in payload and "unverifiedEmail" not in payload
+    assert "p0@northwind.example" not in str(payload)

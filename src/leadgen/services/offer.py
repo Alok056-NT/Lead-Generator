@@ -20,8 +20,17 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, ValidationError, mod
 
 from leadgen import db
 from leadgen.core.text import normalize_whitespace, truncate
-from leadgen.services import offer_files, offer_web
+from leadgen.services import offer_files, offer_web, projects
 
+SCOPES = ("page", "site")
+DEFAULT_PAGES = offer_web.DEFAULT_PAGES  # 15
+MAX_SITE_PAGES = offer_web.MAX_PAGES  # 50
+SOURCE_HELP = (
+    "Attach your product or service here: a website (one page, or the whole site up to 15 "
+    "pages), a PDF/Word/text file, or pasted text. To change it later, attach a new source; "
+    "it replaces the old one."
+)
+SUMMARY_PATHS = 8  # page paths named in the plain summary before "..."
 MAX_CHUNK_CHARS = 40_000
 MAX_RAW_CHARS = 1_000_000
 MAX_SNIPPETS = 50
@@ -262,25 +271,48 @@ def _store(
     return result
 
 
-def ingest_url(url: str, max_pages: int = 15) -> dict[str, Any]:
-    """Read a website (up to `max_pages`, hard cap 15) or a public Google Doc into a new offer.
+def _path_of(url: str) -> str:
+    parsed = urlparse(url)
+    return (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
 
-    Returns `{"ok": True, "offer_id", "name", "total_chars", "pages", "unconfirmed_snippets",
-    "unconfirmed_count", "warnings", ...}`. A dead, blocked or empty page returns the structured
-    error `{"ok": False, "error": {"code", "message", "hint"}}` suggesting pasted text or a file.
-    Fetching takes roughly 1 second per page.
+
+def pages_summary(site: str, urls: list[str]) -> str:
+    """The plain sentence for what was read: "Read 12 pages from example.com: /, /about, ..."."""
+    count = len(urls)
+    noun = "page" if count == 1 else "pages"
+    paths = [_path_of(u) for u in urls[:SUMMARY_PATHS]]
+    more = ", ..." if count > SUMMARY_PATHS else ""
+    return f"Read {count} {noun} from {site}: {', '.join(paths)}{more}"
+
+
+def ingest_url(url: str, max_pages: int = DEFAULT_PAGES, scope: str = "site") -> dict[str, Any]:
+    """Read a website or a public Google Doc into a new offer.
+
+    `scope="page"` reads only that URL (one page); `scope="site"` (the default) reads that URL
+    plus up to `max_pages` pages in all from the same site (default 15, hard cap 50). A Google
+    Doc is always one page. Returns `{"ok": True, "offer_id", "name", "total_chars", "pages",
+    "summary", "unconfirmed_snippets", "unconfirmed_count", "warnings", ...}`; `summary` is a
+    plain sentence such as "Read 12 pages from example.com: /, /about, ...". A dead, blocked or
+    empty page returns the structured error `{"ok": False, "error": {"code", "message",
+    "hint"}}` suggesting pasted text or a file. Fetching takes roughly 1 second per page.
     """
+    if scope not in SCOPES:
+        return _error("invalid_scope", f"scope must be one of: {', '.join(SCOPES)}.")
+    if scope == "page":
+        max_pages = 1
     try:
         export_url = offer_web.google_doc_export_url(url)
         if export_url is not None:
             text = offer_web.fetch_google_doc(export_url)
-            return _store(
+            result = _store(
                 _default_name(text, "Google Doc"),
                 "url",
                 url.strip(),
                 f"# {url.strip()}\n{text}",
                 pages=[{"url": url.strip(), "chars": len(text)}],
             )
+            result["summary"] = "Read 1 page: a Google Doc"
+            return result
         start = offer_web.normalize_start_url(url)
         crawled, warnings = offer_web.crawl(start, max_pages=max_pages)
     except offer_web.WebError as exc:
@@ -290,7 +322,9 @@ def ingest_url(url: str, max_pages: int = 15) -> dict[str, Any]:
     host = urlparse(start).hostname or start
     name = host[4:] if host.startswith("www.") else host
     pages = [{"url": page.url, "chars": len(page.text)} for page in crawled]
-    return _store(name, "url", start, raw, pages=pages, warnings=warnings)
+    result = _store(name, "url", start, raw, pages=pages, warnings=warnings)
+    result["summary"] = pages_summary(name, [page.url for page in crawled])
+    return result
 
 
 def ingest_text(text: str, name: str | None = None) -> dict[str, Any]:
@@ -299,7 +333,9 @@ def ingest_text(text: str, name: str | None = None) -> dict[str, Any]:
     if not cleaned:
         return _error("empty_text", "There is no text to read.", _PASTE_HINT)
     label = normalize_whitespace(name or "") or _default_name(cleaned, "Pasted text")
-    return _store(truncate(label, 80), "text", "", cleaned)
+    result = _store(truncate(label, 80), "text", "", cleaned)
+    result["summary"] = f"Read the pasted text ({len(cleaned):,} characters)"
+    return result
 
 
 def ingest_file(path: str | Path) -> dict[str, Any]:
@@ -309,7 +345,9 @@ def ingest_file(path: str | Path) -> dict[str, Any]:
     except offer_files.FileSourceError as exc:
         return _error(exc.code, exc.message, _PASTE_HINT)
     file = Path(path).expanduser()
-    return _store(truncate(file.stem, 80) or "File", "file", str(file.resolve()), text)
+    result = _store(truncate(file.stem, 80) or "File", "file", str(file.resolve()), text)
+    result["summary"] = f"Read the file {file.name}"
+    return result
 
 
 # --- reading --------------------------------------------------------------------------------
@@ -428,6 +466,9 @@ def ingest_source(
     offer_id: int | None = None,
     cursor: str | int | None = None,
     file_root: Path | None = None,
+    scope: str | None = None,
+    max_pages: int | None = None,
+    project_id: int | None = None,
 ) -> dict[str, Any]:
     """The entry point of the `ingest_offer_source` tool: read a new source, or read on.
 
@@ -435,6 +476,12 @@ def ingest_source(
     `ingest_*` result plus the first chunk (`text`, `next_cursor`). Give `offer_id` and the
     `cursor` of the previous reply to read the next chunk of an offer already stored. With
     `file_root` set (remote mode) a file must lie inside that folder.
+
+    For a `url`, `scope` is `page` (only that page) or `site` (that page plus pages of the same
+    site, `max_pages` in all: default 15, at most 50); `site` is the default. With `project_id`
+    the new source becomes that project's one source and replaces the old one (campaigns already
+    made keep theirs); the reply then has `project_id`, `replaced_offer_id` and
+    `old_offer_deleted`. Without `project_id` nothing is attached yet.
     """
     if offer_id is not None:
         if any((url, text, file_path)):
@@ -448,6 +495,24 @@ def ingest_source(
         except (TypeError, ValueError):
             raise OfferError("invalid_cursor", "cursor must be a number.") from None
         return {"ok": True, "offer_id": int(offer_id), **read_offer_text(int(offer_id), start)}
+    if scope is not None and scope not in SCOPES:
+        return _error(
+            "invalid_scope",
+            f"scope must be one of: {', '.join(SCOPES)}.",
+            "page reads only the given address; site reads that page and more of the same site.",
+        )
+    if max_pages is not None and (
+        isinstance(max_pages, bool)
+        or not isinstance(max_pages, int)
+        or not 1 <= max_pages <= MAX_SITE_PAGES
+    ):
+        return _error(
+            "invalid_max_pages",
+            f"max_pages must be a whole number from 1 to {MAX_SITE_PAGES}.",
+            f"The default is {DEFAULT_PAGES}.",
+        )
+    if project_id is not None:
+        projects.get_project(project_id)  # not_found now, before anything is fetched
     given = [value for value in (url, text, file_path) if value and str(value).strip()]
     if len(given) != 1:
         return _error(
@@ -456,7 +521,7 @@ def ingest_source(
             "Ask the user for a website address, pasted text or a document path.",
         )
     if url and url.strip():
-        result = ingest_url(url)
+        result = ingest_url(url, max_pages or DEFAULT_PAGES, scope or "site")
     elif text and text.strip():
         result = ingest_text(text, name)
     else:
@@ -475,6 +540,9 @@ def ingest_source(
         result = ingest_file(path)
     if not result.get("ok"):
         return result
+    if project_id is not None:
+        swap = projects.replace_offer(project_id, result["offer_id"])
+        result = {**result, "project_id": project_id, **swap}
     first = read_offer_text(result["offer_id"], 0)
     return {**result, "text": first["text"], "next_cursor": first["next_cursor"]}
 

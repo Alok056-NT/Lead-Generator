@@ -55,13 +55,13 @@ from leadgen.services import people, sending
 LEMLIST_COLUMNS = [
     "email", "firstName", "lastName", "companyName", "jobTitle", "linkedinUrl", "greetingName",
     "designation", "linkedinMessage", "linkedinInvite", "emailSubject", "emailBody",
-    "companyDomain", "emailStatus", "evidenceOrigin",
+    "companyDomain", "emailStatus", "unverifiedEmail", "unverifiedEmailStatus", "evidenceOrigin",
 ]  # fmt: skip
 GENERIC_COLUMNS = [
     "personId", "firstName", "lastName", "greetingName", "jobTitle", "designation", "seniority",
     "country", "companyName", "companyDomain", "website", "sector", "linkedinUrl", "email",
-    "emailStatus", "evidenceOrigin", "evidenceSnippet", "linkedinInvite", "linkedinMessage",
-    "emailSubject", "emailBody",
+    "emailStatus", "unverifiedEmail", "unverifiedEmailStatus", "evidenceOrigin",
+    "evidenceSnippet", "linkedinInvite", "linkedinMessage", "emailSubject", "emailBody",
 ]  # fmt: skip
 INSTANTLY_COLUMNS = [
     "email", "first_name", "last_name", "company_name", "personalization", "website",
@@ -70,8 +70,9 @@ INSTANTLY_COLUMNS = [
 ]  # fmt: skip
 QA_REPORT_COLUMNS = [
     "person_id", "firstName", "lastName", "companyName", "jobTitle", "linkedinUrl",
-    "evidence_origin", "spot_check", "person_status", "exported", "email", "email_status",
-    "messages", "blocking_issues", "warnings", "ai_verdict_notes", "review_reasons",
+    "evidence_origin", "spot_check", "person_status", "exported", "found_email",
+    "found_email_status", "messages", "blocking_issues", "warnings", "ai_verdict_notes",
+    "review_reasons",
 ]  # fmt: skip
 
 CONFIRMED, REVIEW = 77, 40  # what the confirmation rules make of the 117 real-looking results
@@ -250,7 +251,7 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
     for fmt, columns, expected_rows in (
         ("lemlist", LEMLIST_COLUMNS, CONFIRMED - 1),
         ("generic", GENERIC_COLUMNS, CONFIRMED - 1),
-        ("instantly", INSTANTLY_COLUMNS, 59),  # Instantly needs an address: 17 people have none
+        ("instantly", INSTANTLY_COLUMNS, 55),  # Instantly needs a verified address: 21 have none
     ):
         exported = mcp("export_campaign", campaign_id=cid, format=fmt)
         assert exported["exported"] == expected_rows and exported["not_reviewed"] == 0
@@ -273,17 +274,21 @@ def test_api_flow_end_to_end(mcp, world, monkeypatch):
             assert len(report[1]) == CONFIRMED + REVIEW  # every person is accounted for
             export_files += [Path(exported["qa_report_path"]), Path(exported["removed_path"])]
     assert "recruit" not in " ".join(r["jobTitle"].lower() for r in lemlist_rows)
-    assert {r["emailStatus"] for r in lemlist_rows} == {"verified", "guess", ""}  # no risky/invalid
-    assert sum(1 for r in lemlist_rows if not r["email"]) == 17
-    guess_rows = [r for r in lemlist_rows if r["emailStatus"] == "guess"]
-    assert len(guess_rows) == 4 and all(not r["emailBody"] for r in guess_rows)
+    # only verified addresses are in the email column (no risky, guess or invalid one)
+    assert {r["emailStatus"] for r in lemlist_rows} == {"verified", ""}
+    assert sum(1 for r in lemlist_rows if not r["email"]) == 21
+    guess_rows = [r for r in lemlist_rows if r["unverifiedEmailStatus"] == "guess"]
+    assert len(guess_rows) == 4 and all(r["unverifiedEmail"] and not r["email"] for r in guess_rows)
+    assert all(not r["emailBody"] for r in guess_rows)
     removed_csv = read_csv(Path(exported["removed_path"]))[1]
     assert len(removed_csv) == 1  # the one rejected person
 
     # 9. lemlist: a dry run only (no key, no HTTP), a preview of three payloads
     dry = mcp("push_to_lemlist", campaign_id=cid, lemlist_campaign_id="cam_e2e000001")
     assert dry["dry_run"] is True and dry["ready"] == CONFIRMED - 1
-    assert dry["to_push"] == 55 and dry["no_email_for_lemlist_api"] == 17
+    assert dry["to_push"] == 55 and dry["no_email_for_lemlist_api"] == 21
+    assert dry["found_not_verified"] == 16  # 4 guesses and 12 risky (catch-all) addresses
+    assert dry["messages_incomplete"] == 0
     assert len(dry["preview"]) == 3
     assert not [c for c in world.router.calls if "lemlist" in str(c.request.url)]
 

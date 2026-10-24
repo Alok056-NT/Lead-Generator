@@ -57,11 +57,11 @@ def test_connect_pragmas(conn):
 
 
 def test_init_db_creates_database_in_workspace_and_is_idempotent():
-    assert db.init_db() == db.SCHEMA_VERSION == 3
+    assert db.init_db() == db.SCHEMA_VERSION == 4
     assert paths.db_path().exists()
     assert db.init_db() == db.SCHEMA_VERSION
     with db.session() as conn:
-        assert count(conn, "schema_version") == 3
+        assert count(conn, "schema_version") == 4
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert db.TABLES <= names
 
@@ -124,7 +124,7 @@ def test_failed_migration_rolls_back(monkeypatch):
     monkeypatch.setattr(
         db,
         "MIGRATIONS",
-        [(4, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
+        [(5, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
     )
     with pytest.raises(sqlite3.Error):
         db.init_db()

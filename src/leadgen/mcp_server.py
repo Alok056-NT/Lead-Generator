@@ -314,12 +314,16 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
     @tool(
         "Read the offer source",
         """Learns the product or service. Give exactly ONE of url (a website or a public Google
-        Doc; reads up to 15 pages, about a second each), text (pasted text) or file_path (a
-        .pdf, .docx, .txt or .md file on this computer). Returns offer_id, the first chunk of
-        the text (up to 40,000 characters) and next_cursor; to read the rest call it again with
-        offer_id and cursor until next_cursor is empty. Also lists lines marked as unconfirmed
-        (to confirm, TBC, placeholders). Free. Ask the user for the source first. If the page
-        is blocked or empty the error says what to ask for instead.""",
+        Doc), text (pasted text) or file_path (a .pdf, .docx, .txt or .md file on this
+        computer). For a website, scope says what to read: "page" (only that address) or "site"
+        (that page plus others on the same site, max_pages in all: default 15, at most 50, about
+        a second each); ask the user which they want. Pass project_id to make this the project's
+        one source: a new source replaces the old one. Returns offer_id, a plain summary ("Read
+        12 pages from example.com: /, /about, ..."), the first chunk of the text (up to 40,000
+        characters) and next_cursor; to read the rest call it again with offer_id and cursor
+        until next_cursor is empty. Also lists lines marked as unconfirmed (to confirm, TBC,
+        placeholders). Free. Ask the user for the source first. If the page is blocked or empty
+        the error says what to ask for instead.""",
         WRITE | {"open_world": True},
         keep=("text",),
     )
@@ -334,10 +338,21 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             int | None, Field(description="To read more of an offer already stored, with cursor.")
         ] = None,
         cursor: Cursor = None,
+        scope: Annotated[
+            Literal["page", "site"] | None,
+            Field(description="For a url: page (just that page) or site (default)."),
+        ] = None,
+        max_pages: Annotated[
+            int | None, Field(description="For scope site: pages in all (default 15, max 50).")
+        ] = None,
+        project_id: Annotated[
+            int | None, Field(description="Make this the project's source, replacing the old one.")
+        ] = None,
     ) -> dict[str, Any]:
         return offer.ingest_source(
             url=url, text=text, file_path=file_path, name=name, offer_id=offer_id,
-            cursor=cursor, file_root=file_root,
+            cursor=cursor, file_root=file_root, scope=scope, max_pages=max_pages,
+            project_id=project_id,
         )  # fmt: skip
 
     @tool(
@@ -375,7 +390,9 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         offer and many campaigns, and it remembers every person found or contacted in it so
         nobody is offered twice until cooldown_days have passed (default 90; 0 = never block
         repeats; at most 3650). Ask the user what the project is and what to call it. Set the
-        offer now (offer_id from ingest_offer_source) or later with update_project. Free.""",
+        offer now (offer_id from ingest_offer_source) or later with update_project. email_policy
+        is verified_only (default: only verified emails are exported or sent) or allow_risky
+        (also catch-all addresses); a guessed address is never used. Free.""",
         WRITE,
     )
     def create_project(
@@ -385,8 +402,12 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             int, Field(description="Days before someone can be offered again (0 to 3650).")
         ] = 90,
         offer_id: Annotated[int | None, Field(description="Offer id, if already read.")] = None,
+        email_policy: Annotated[
+            Literal["verified_only", "allow_risky"],
+            Field(description="verified_only (default) or allow_risky."),
+        ] = "verified_only",
     ) -> dict[str, Any]:
-        return projects_svc.create_project(name, description, cooldown_days, offer_id)
+        return projects_svc.create_project(name, description, cooldown_days, offer_id, email_policy)
 
     @tool(
         "List projects",
@@ -415,9 +436,10 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Update a project",
-        """Changes a project; only the fields you pass change: name, description,
+        """Changes a project. Only the fields you pass change: name, description,
         cooldown_days (0 to 3650), offer_id (the project's offer; campaigns already made keep
-        theirs) or status (active or archived). Free.""",
+        theirs), email_policy (verified_only or allow_risky; applies to campaigns made from now
+        on, existing campaigns keep their setting) or status (active or archived). Free.""",
         WRITE | {"idempotent": True},
     )
     def update_project(
@@ -431,10 +453,14 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         status: Annotated[
             Literal["active", "archived"] | None, Field(description="Status.")
         ] = None,
+        email_policy: Annotated[
+            Literal["verified_only", "allow_risky"] | None,
+            Field(description="verified_only or allow_risky (for new campaigns)."),
+        ] = None,
     ) -> dict[str, Any]:
         given = {
             "name": name, "description": description, "cooldown_days": cooldown_days,
-            "offer_id": offer_id, "status": status,
+            "offer_id": offer_id, "status": status, "email_policy": email_policy,
         }  # fmt: skip
         return projects_svc.update_project(
             project_id, **{k: v for k, v in given.items() if v is not None}

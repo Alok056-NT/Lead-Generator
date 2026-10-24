@@ -119,7 +119,7 @@ const PERSON_TONE = { confirmed: 'ok', reserve: 'none', review: 'warn', rejected
 const COMPANY_STATUS = { candidate: 'Candidate', approved: 'Approved', excluded: 'Excluded' };
 const COMPANY_TONE = { candidate: 'info', approved: 'ok', excluded: 'none' };
 const EMAIL_STATUS = {
-  verified: 'Verified', risky: 'Risky', guess: 'Guess (unverified)', unknown: 'Unknown',
+  verified: 'Verified', risky: 'Risky (catch-all domain)', guess: 'Not verified (not used)', unknown: 'Unknown',
   invalid: 'Invalid', none: 'No email',
 };
 const EMAIL_TONE = { verified: 'ok', risky: 'warn', guess: 'warn', unknown: 'info', invalid: 'bad', none: 'none' };
@@ -580,6 +580,8 @@ async function pageOverview(ctx) {
         h('dt', { text: 'Companies' }), h('dd', null, h('a', { href: `#/c/${c.id}/companies`, text: countLine(counts.companies, COMPANY_STATUS) })),
         h('dt', { text: 'Leads' }), h('dd', null, h('a', { href: `#/c/${c.id}/leads`, text: countLine(counts.people, PERSON_STATUS) })),
         h('dt', { text: 'Emails' }), h('dd', { text: countLine(counts.emails, EMAIL_STATUS) }),
+        h('dt', { text: 'Verified emails' }), h('dd', { text: `${(c.email_summary || {}).verified_emails || 0} people (these are exported and can be sent)` }),
+        h('dt', { text: 'Found but not verified' }), h('dd', { text: `${(c.email_summary || {}).found_not_verified || 0} people (not exported or sent; add a free Reoon key to check them)` }),
         h('dt', { text: 'Messages' }), h('dd', null, h('a', { href: `#/c/${c.id}/messages`, text: countLine(counts.messages, MESSAGE_STATUS) })),
       )),
   );

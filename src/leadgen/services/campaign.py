@@ -353,13 +353,68 @@ def _counts(conn, campaign_id: int) -> dict[str, dict[str, int]]:
     return out
 
 
+_EMAIL_RANK = {"verified": 0, "risky": 1, "guess": 2, "unknown": 3, "invalid": 4}
+
+
+def exportable_email_statuses(campaign: Mapping[str, Any]) -> tuple[str, ...]:
+    """Email statuses that may reach the `email` column of an export or a lemlist push: only
+    `verified`, plus `risky` when the campaign has `options.allow_risky_emails`. A `guess` is
+    never one of them, whatever the options say."""
+    options = campaign.get("options") or {}
+    return ("verified", "risky") if options.get("allow_risky_emails") else ("verified",)
+
+
+def _email_summary(
+    conn, campaign_id: int, options: Mapping[str, Any]
+) -> dict[str, int]:
+    """People of the campaign counted by their best email: `verified_emails` (may be exported),
+    `found_not_verified` (an address exists but is a guess, unchecked or not allowed: not
+    exported), `invalid_emails` (checked and bad) and `no_email` (nothing found yet)."""
+    allowed = exportable_email_statuses({"options": options})
+    rows = db.query(
+        conn,
+        "SELECT p.id AS pid, e.status AS status FROM people p "
+        "LEFT JOIN emails e ON e.person_id = p.id "
+        "WHERE p.campaign_id = ? AND p.status = 'confirmed'",
+        (campaign_id,),
+    )
+    best: dict[int, str] = {}
+    for r in rows:
+        status = r["status"] or ""
+        cur = best.setdefault(r["pid"], status)
+        if status and (not cur or _EMAIL_RANK.get(status, 9) < _EMAIL_RANK.get(cur, 9)):
+            best[r["pid"]] = status
+    summary = {"verified_emails": 0, "found_not_verified": 0, "invalid_emails": 0, "no_email": 0}
+    for status in best.values():
+        if not status:
+            summary["no_email"] += 1
+        elif status in allowed:
+            summary["verified_emails"] += 1
+        elif status == "invalid":
+            summary["invalid_emails"] += 1
+        else:
+            summary["found_not_verified"] += 1
+    return summary
+
+
+def email_summary(campaign_id: int) -> dict[str, int]:
+    """Confirmed people by what their email allows (see `get_campaign`). Raises `CampaignError`."""
+    with db.session() as conn:
+        row = _row(conn, campaign_id)
+        options = {**DEFAULT_OPTIONS, **(row["options_json"] or {})}
+        return _email_summary(conn, row["id"], options)
+
+
 def get_campaign(campaign_id: int) -> dict[str, Any]:
-    """One campaign with its settings and `counts`: companies, people, emails and messages
-    by status. Raises `CampaignError` (`not_found`)."""
+    """One campaign with its settings, `counts` (companies, people, emails and messages by
+    status) and `email_summary` (confirmed people by what their email allows: `verified_emails`,
+    `found_not_verified`, `invalid_emails`, `no_email`). Raises `CampaignError` (`not_found`)."""
     with db.session() as conn:
         row = _row(conn, campaign_id)
         counts = _counts(conn, row["id"])
-    return {**_shape(row), "counts": counts}
+        options = {**DEFAULT_OPTIONS, **(row["options_json"] or {})}
+        summary = _email_summary(conn, row["id"], options)
+    return {**_shape(row), "counts": counts, "email_summary": summary}
 
 
 def list_campaigns(
@@ -466,8 +521,10 @@ def create_campaign(
     has none yet; a project without an offer adopts the one given). `countries` accepts codes,
     names or aliases and stores ISO codes. `designations` is a list of 1-8 template keys (see
     `designations.TEMPLATES`) or full group objects. `options` is merged over the defaults and
-    may hold the size limits `max_people`, `max_companies` and `max_per_company`. `locale`
-    defaults to the offer profile's language, then the settings.
+    may hold the size limits `max_people`, `max_companies` and `max_per_company`. When it does
+    not say `allow_risky_emails`, the project's `email_policy` sets it (`allow_risky` gives true,
+    `verified_only` false); the value is then stored on the campaign and never follows later
+    changes of the project. `locale` defaults to the offer profile's language, then the settings.
     Raises `CampaignError` with a stable `code` for each invalid input.
     """
     values = {
@@ -480,11 +537,15 @@ def create_campaign(
         "seniority_min": _seniority_min(seniority_min),
         "exclusions_json": _exclusions(exclusions or {}),
         "budget_json": _budget(budget),
-        "options_json": _options(options or {}),
     }
+    values["options_json"] = _options(options or {})  # validated now, completed below
+    says_risky = "allow_risky_emails" in (options or {})
     with db.session() as conn:
         values["project_id"], offer_id = _project_offer(conn, project_id, offer_id)
         values["offer_id"] = offer_id
+        if not says_risky:  # the project's email policy decides
+            policy = db.get(conn, "projects", values["project_id"])["email_policy"]
+            values["options_json"]["allow_risky_emails"] = policy == "allow_risky"
         _check_unique_name(conn, values["name"], None)
         values["locale"] = _locale(locale) if locale else _default_locale(conn, offer_id)
         values["status"] = "draft"

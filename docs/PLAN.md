@@ -225,7 +225,7 @@ How it works:
    - the same URL submitted for two different names → both go to review;
    - a submission whose results all fail the URL check is rejected with a message telling the AI to copy results verbatim.
 5. **Spot check**: for AI-search campaigns, before export the tool picks a random sample (5 people or 5%, whichever is larger, max 15) with `spot_check = pending`; the AI asks the user to click each LinkedIn link and say if it's the right person and job. Any `wrong` answer moves that person to review and, if ≥ 2 are wrong, flags the whole AI-search batch for a second look (warn on every AI-search lead until the user re-confirms).
-6. **Emails in AI mode**: the AI searches for published addresses at the company's domain; the tool also scrapes the company's own contact/about pages itself (free, no key) and infers the pattern from any real addresses found. Without a verifier key, emails stay `guess`: exportable with a clear `guess` label, **never** sent by the built-in sender unless the user explicitly enables `allow_guess_emails` for that campaign after a warning.
+6. **Emails in AI mode**: the AI searches for published addresses at the company's domain; the tool also scrapes the company's own contact/about pages itself (free, no key) and infers the pattern from any real addresses found. Without a verifier key, emails stay `guess` (v1.1, T25): not put in the `email` column of any export (only in `unverifiedEmail`) and **never** sent by the built-in sender, unless the expert flag `allow_guess_emails` is set for that campaign from the command line or by the AI after a warning (never from the dashboard).
 7. Speed and limits: each AI search is one tool call in the conversation, so AI mode suits ~20–40 companies per session (the guide tells the AI to work in batches of 10 tasks and report progress). For bigger runs the guide recommends a search key.
 8. Capability check: before starting AI mode, the AI must confirm it has a web search tool in this conversation. If not, it tells the user how to enable it (Claude: turn on web search in the chat's tools menu; ChatGPT: make sure search is available alongside the connector; verify exact steps in T21) or to add a key instead.
 
@@ -243,7 +243,7 @@ Shipped as `guides/workflow.md`, exposed as MCP prompt `lead_generation` and too
 3. **Companies**: AI proposes companies from its own knowledge, *plus* uses `search_web` for "largest X companies in Y" style research → `add_companies` (verifies domains) → show list → user removes/adds → `approve_companies`.
 4. **Keys**: when a step needs a provider, call `list_providers`; ask the user to add the key (dashboard link preferred). If they have no credits left or don't want to pay, offer **AI search mode** (section 7a) and set it with `update_campaign(search_mode=...)`.
 5. **People**: `estimate_people_search` → tell the user the credit cost → `find_people(confirm=true)` in chunks → report confirmed vs review counts → optionally walk the review list. In AI search mode instead: `get_search_tasks` → run each query with the AI's own web search → `submit_search_results` verbatim → repeat in batches of 10 → spot check before export.
-6. **Emails** (if email channel): `estimate_email_search` → `find_emails` in chunks → report verified/risky/guess.
+6. **Emails** (if email channel): `estimate_email_search` → `find_emails` in chunks → report verified emails and found-but-not-verified ones (only verified go out; the project's `email_policy` decides whether `risky` counts).
 7. **Drafting**: loop `get_drafting_batch` → write messages following `guides/messaging_style.md` and the offer's confirmed claims → `save_drafts` (instant deterministic QA; fix and resave failures).
 8. **QA**: `run_qa` → fix blockers → `get_review_batch` → the AI *reads every message with its lead details* and records `pass/fix/reject` via `record_review` → repeat until every message is reviewed.
 9. **Deliver**: ask how: CSV (`export_campaign`), lemlist API (`push_to_lemlist`, dry-run first), or send emails (`check_send_readiness` → `send_emails(dry_run)` → `send_emails(confirm=true)`).
@@ -383,7 +383,7 @@ Deterministic checks run on save and on `run_qa`. `block` issues prevent export/
 | L20 | Profile language/location hint mismatch (e.g. Spanish profile, overseas city) | warn |
 | L21 | Evidence came from AI web search (lower confidence) | warn; **block** if the campaign's spot check is incomplete or failed |
 | L22 | LinkedIn URL slug inconsistent with the person's name (possible fabricated or mismatched URL) | block for AI-search leads, warn for API leads |
-| L23 | Email is a `guess` (unverified) | warn for export; block for sending unless `allow_guess_emails` |
+| L23 | Email is a `guess` (unverified) | never in the export `email` column (v1.1); block for sending unless `allow_guess_emails` |
 
 **Message checks (M)**
 | Code | Check | Severity |

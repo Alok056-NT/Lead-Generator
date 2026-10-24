@@ -31,7 +31,9 @@ PEOPLE_STATUSES = ("confirmed", "reserve", "review", "rejected", "removed")
 DEFAULT_COOLDOWN_DAYS = 90
 MAX_COOLDOWN_DAYS = 3650
 MAX_NAME = 120
-_FIELDS = ("name", "description", "cooldown_days", "offer_id", "status")
+EMAIL_POLICIES = ("verified_only", "allow_risky")
+DEFAULT_EMAIL_POLICY = "verified_only"
+_FIELDS = ("name", "description", "cooldown_days", "offer_id", "status", "email_policy")
 
 
 class ProjectError(Exception):
@@ -85,6 +87,17 @@ def _cooldown(value: Any) -> int:
     return value
 
 
+def _email_policy(value: Any) -> str:
+    if value not in EMAIL_POLICIES:
+        raise ProjectError(
+            "invalid_email_policy",
+            f"email_policy must be one of: {', '.join(EMAIL_POLICIES)}.",
+            "verified_only: only checked addresses are exported or sent (recommended). "
+            "allow_risky: also addresses on catch-all domains. Guessed addresses are never used.",
+        )
+    return str(value)
+
+
 def _description(value: Any) -> str:
     if not isinstance(value, str):
         raise ProjectError("invalid_value", "description must be text.")
@@ -128,6 +141,7 @@ def _shape(row: Mapping[str, Any], offer_name: str = "") -> dict[str, Any]:
         "offer_id": row["offer_id"],
         "offer_name": offer_name,
         "cooldown_days": row["cooldown_days"],
+        "email_policy": row["email_policy"],
         "status": row["status"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -251,17 +265,21 @@ def create_project(
     description: str = "",
     cooldown_days: int = DEFAULT_COOLDOWN_DAYS,
     offer_id: int | None = None,
+    email_policy: str = DEFAULT_EMAIL_POLICY,
 ) -> dict[str, Any]:
     """Create an active project and return it (see `get_project`).
 
     `cooldown_days` (0 to 3650, default 90) is how long a person who was found or contacted is
     not offered again; 0 turns the memory off. `offer_id` may be set later (`update_project`).
-    Raises `ProjectError`.
+    `email_policy` is `verified_only` (default: only verified addresses are exported or sent) or
+    `allow_risky` (also addresses on catch-all domains); it sets `allow_risky_emails` for the
+    campaigns made afterwards. Raises `ProjectError`.
     """
     values: dict[str, Any] = {
         "name": _name(name),
         "description": _description(description),
         "cooldown_days": _cooldown(cooldown_days),
+        "email_policy": _email_policy(email_policy),
         "status": "active",
     }
     with db.session() as conn:
@@ -273,9 +291,11 @@ def create_project(
 
 
 def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
-    """Change `name`, `description`, `cooldown_days`, `offer_id` or `status` and return the project.
+    """Change `name`, `description`, `cooldown_days`, `offer_id`, `email_policy` or `status`
+    and return the project.
 
-    Existing campaigns keep the offer they were made with when `offer_id` changes.
+    Existing campaigns keep the offer they were made with when `offer_id` changes, and keep their
+    stored `allow_risky_emails` when `email_policy` changes (it applies to new campaigns).
     Raises `ProjectError`.
     """
     unknown = set(changes) - set(_FIELDS)
@@ -296,6 +316,8 @@ def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
             values["cooldown_days"] = _cooldown(changes["cooldown_days"])
         if "offer_id" in changes:
             values["offer_id"] = _check_offer(conn, changes["offer_id"])
+        if "email_policy" in changes:
+            values["email_policy"] = _email_policy(changes["email_policy"])
         if "status" in changes:
             if changes["status"] not in STATUSES:
                 raise ProjectError(
@@ -310,6 +332,34 @@ def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
 def set_project_offer(project_id: int, offer_id: int) -> dict[str, Any]:
     """Set the project's offer (the product, service or page its campaigns promote)."""
     return update_project(project_id, offer_id=offer_id)
+
+
+def replace_offer(project_id: int, offer_id: int) -> dict[str, Any]:
+    """Make `offer_id` the project's one source, replacing the old one (owner decision 24 Oct).
+
+    Campaigns already made keep the offer they were created with. The old offer is deleted when
+    nothing refers to it any more (no campaign, no other project), so a project never piles up
+    old sources. Returns `{"replaced_offer_id": id or None, "old_offer_deleted": bool}`.
+    Raises `ProjectError`.
+    """
+    with db.session() as conn:
+        row = _row(conn, project_id)
+        new = _check_offer(conn, offer_id)
+        old = row["offer_id"]
+        if old == new:
+            return {"replaced_offer_id": None, "old_offer_deleted": False}
+        db.update(conn, "projects", row["id"], offer_id=new)
+        deleted = False
+        if old is not None:
+            used = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM campaigns WHERE offer_id = ?) "
+                "+ (SELECT COUNT(*) FROM projects WHERE offer_id = ?)",
+                (old, old),
+            ).fetchone()[0]
+            if not used:
+                conn.execute("DELETE FROM offers WHERE id = ?", (old,))
+                deleted = True
+    return {"replaced_offer_id": old, "old_offer_deleted": deleted}
 
 
 def archive_project(project_id: int) -> dict[str, Any]:

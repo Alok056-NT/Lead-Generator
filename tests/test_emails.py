@@ -879,7 +879,7 @@ def test_find_emails_without_verifier_gives_guess_and_needs_key(cid, isolated):
     out = run_find(cid, verifiers=[])
     assert out["this_call"]["guess"] == 1
     assert out["verifier_needs_key"]["needs_key"]["provider"] == "reoon"
-    assert any("guess" in n for n in out["notes"])
+    assert any("NOT verified" in n and "Reoon key: 20 checks a day" in n for n in out["notes"])
     assert [h for h, _ in isolated.smtp] == ["mail.small.example"]  # SMTP is tried for `other`
 
 
@@ -1441,3 +1441,43 @@ def test_addresses_on_domain_reads_text():
         "bob.lee@northwind.example",
         "info@northwind.example",
     ]
+
+
+# --- T25: only verified addresses count, whatever the source of the pattern -----------------------
+
+
+def test_no_verifier_means_unverified_and_the_note_says_how_to_fix_it(cid, isolated):
+    add_person(cid, add_company(cid))
+    out = run_find(cid, verifiers=[])
+    assert out["email_summary"]["verified_emails"] == 0
+    assert out["email_summary"]["found_not_verified"] == 1
+    assert emails.NO_VERIFIER_NOTE in out["notes"]
+    assert "Add a free Reoon key: 20 checks a day" in emails.NO_VERIFIER_NOTE
+    assert "will not be exported or sent" in emails.NO_VERIFIER_NOTE
+    assert [r["status"] for r in email_rows()] == ["guess"]
+
+
+@pytest.mark.parametrize("source", ["hunter", "ai_search", "default"])
+def test_a_pattern_from_any_source_is_verified_before_it_counts(cid, isolated, source):
+    company = add_company(cid)
+    add_person(cid, company)
+    hunter = FakeHunter(None)
+    if source == "hunter":
+        hunter = FakeHunter("{first}.{last}")
+    elif source == "ai_search":  # real addresses the AI found by web search
+        emails.learn_pattern_from_examples(
+            "northwind.example", [("bob.lee@northwind.example", "Bob", "Lee")]
+        )
+    out = run_find(cid, verifiers=[], hunter=hunter)  # no verifier: nothing can count
+    assert out["this_call"]["verified"] == 0 and out["this_call"]["guess"] == 1
+    assert [r["status"] for r in email_rows()] == ["guess"]
+    assert out["email_summary"]["verified_emails"] == 0
+
+
+def test_an_inconclusive_check_leaves_the_address_unverified(cid, isolated):
+    add_person(cid, add_company(cid))
+    verifier = FakeVerifier("reoon", default=Verdict("unknown", "unknown", "reoon"))
+    out = run_find(cid, verifiers=[verifier])
+    assert out["this_call"]["verified"] == 0
+    assert out["email_summary"]["found_not_verified"] == 1
+    assert any("could not be checked" in n for n in out["notes"])

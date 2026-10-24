@@ -162,7 +162,7 @@ Claude reads each message and records pass, fix or reject. If it cannot pass a m
 
 > **You:** Export for lemlist.
 
-> **Claude:** Exported 14 leads (23 messages) to `exports\brightpath-sg-logistics\lemlist-20261021-0930.csv` in your LeadGenerator folder. I also wrote `qa_report.csv` (every person, with the reasons) and `removed.csv`. 3 emails are labelled "guess". Next steps for lemlist are below.
+> **Claude:** Exported 14 leads (23 messages) to `exports\brightpath-sg-logistics\lemlist-20261021-0930.csv` in your LeadGenerator folder. I also wrote `qa_report.csv` (every person, with the reasons) and `removed.csv`. 3 more addresses were found but not verified, so they are in the separate `unverifiedEmail` column and not in `email`. Next steps for lemlist are below.
 
 Open the CSV in Excel and look at it. Then follow [Delivery](DELIVERY.md) to import it into lemlist or Instantly, push it with the lemlist API, or send the emails from your own mailbox.
 

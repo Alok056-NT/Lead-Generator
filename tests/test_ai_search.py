@@ -654,7 +654,7 @@ def test_guide_tells_the_ai_the_rules():
     text = ai_search.guide_text()
     for needle in (
         "batches of 10", "verbatim", "Do not open LinkedIn", "empty list", "get_spot_check",
-        "record_spot_check", "web search tool in this conversation", "allow_guess_emails",
+        "record_spot_check", "web search tool in this conversation", "unverifiedEmail",
         "search key", "report progress",
     ):
         assert needle.lower() in text.lower(), needle
