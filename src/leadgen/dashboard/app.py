@@ -35,6 +35,7 @@ from leadgen.services import (
     designations,
     export,
     mailbox,
+    mailbox_connect,
     offer_files,
     people,
     preferences,
@@ -142,6 +143,19 @@ class SuppressionBody(_Body):
     kind: Literal["email", "domain", "linkedin"]
     values: list[str] = Field(max_length=200)
     reason: str = Field(default="", max_length=200)
+
+
+class GmailBody(_Body):
+    address: str = Field(max_length=300)
+    app_password: str = Field(max_length=300)
+
+
+class MailboxBody(_Body):
+    host: str = Field(max_length=300)
+    port: str = Field(max_length=10)
+    address: str = Field(max_length=300)
+    password: str = Field(max_length=500)
+    imap_host: str = Field(default="", max_length=300)
 
 
 class SettingsBody(_Body):
@@ -649,6 +663,26 @@ def _register_routes(app: FastAPI) -> None:
     @app.post("/api/mailbox/sync")
     def sync_mailbox() -> JSONResponse:
         return _reply(mailbox.sync_mailbox())
+
+    @app.get("/api/mailbox")
+    def mailbox_state() -> JSONResponse:
+        return _reply({"ok": True, **mailbox_connect.get_state()})
+
+    @app.post("/api/mailbox/gmail")
+    def connect_gmail(body: GmailBody) -> JSONResponse:
+        return _reply(mailbox_connect.connect_gmail(body.address, body.app_password))
+
+    @app.post("/api/mailbox/other")
+    def connect_other(body: MailboxBody) -> JSONResponse:
+        return _reply(
+            mailbox_connect.connect_other(
+                body.host, body.port, body.address, body.password, body.imap_host
+            )
+        )
+
+    @app.post("/api/mailbox/test")
+    def test_mailbox() -> JSONResponse:
+        return _reply(mailbox_connect.test_saved())
 
     @app.get("/api/suppression")
     def list_suppression(kind: str | None = None) -> JSONResponse:

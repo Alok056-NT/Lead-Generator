@@ -493,6 +493,7 @@ async function pageHome(ctx) {
   } else {
     kids.push(h('div', { class: 'cards' }, ...list.projects.map(projectCard)));
   }
+  kids.push(h('p', { class: 'small' }, 'Want Lead Generator to send emails from your own mailbox? It is optional. ', h('a', { href: '#/mailbox', text: 'Connect your mailbox' }), '.'));
   if (st.ok) kids.push(h('p', { class: 'muted small', text: `Version ${st.version}. Your data is in ${st.workspace}` }));
   setMain(...kids);
 }
@@ -1014,15 +1015,119 @@ async function pageNewCampaign(ctx) {
   );
 }
 
-// ---- Connect your mailbox (the step-by-step help is added in the next update) ----------------
+// ---- Connect your mailbox ---------------------------------------------------------------------
 
-async function pageMailbox() {
+const GOOGLE_2SV_URL = 'https://myaccount.google.com/signinoptions/two-step-verification';
+const GOOGLE_APP_PASSWORDS_URL = 'https://myaccount.google.com/apppasswords';
+
+function googleButton(href, text) {
+  return h('a', { class: 'button', href, target: '_blank', rel: 'noopener noreferrer', text });
+}
+
+function mailboxStatusCard(state) {
+  const out = h('div', { role: 'status', class: 'small' });
+  if (!state.configured) {
+    return h('section', { class: 'card stack', 'aria-label': 'Your mailbox' },
+      h('div', { class: 'row' }, h('h3', { class: 'grow', text: 'Your mailbox' }), badge('Not connected yet', 'none')),
+      h('p', { class: 'small muted', text: 'Nothing is saved yet. Follow the steps below.' }));
+  }
+  const test = h('button', { type: 'button', text: 'Test it again (sends nothing)' });
+  test.addEventListener('click', async () => {
+    test.disabled = true;
+    setStatus(out, 'info', 'Logging in to your mailbox...');
+    const res = await api('/api/mailbox/test', { method: 'POST' });
+    test.disabled = false;
+    setStatus(out, res.ok ? 'ok' : 'bad', res.ok ? res.message : errorText(res));
+  });
+  return h('section', { class: 'card stack', 'aria-label': 'Your mailbox' },
+    h('div', { class: 'row' }, h('h3', { class: 'grow', text: 'Your mailbox' }), badge('Connected', 'ok')),
+    h('dl', { class: 'kv' },
+      h('dt', { text: 'Email address' }), h('dd', { text: state.address }),
+      h('dt', { text: 'Password' }), h('dd', { text: 'Saved on this computer, ending ' + (state.password || '') })),
+    h('p', { class: 'small muted', text: 'The password is never shown again. Saving new details replaces these ones.' }),
+    h('div', { class: 'row' }, test), out);
+}
+
+async function pageMailbox(ctx) {
+  const state = await api('/api/mailbox');
+  if (ctx.token !== routeToken) return;
+  if (!state.ok) return setMain(h('h2', { text: 'Connect your mailbox (optional)' }), notice('bad', errorText(state)));
+
+  const gmailStatus = h('div', { role: 'status', class: 'small' });
+  const address = h('input', { type: 'email', id: 'mb-address', autocomplete: 'off', spellcheck: 'false', placeholder: 'you@gmail.com', name: 'mb-address' });
+  const appPassword = h('input', { type: 'password', id: 'mb-app-password', autocomplete: 'off', spellcheck: 'false', placeholder: 'abcd efgh ijkl mnop', name: 'mb-app-password' });
+  const saveGmail = h('button', { type: 'button', class: 'primary', text: 'Save and test' });
+  saveGmail.addEventListener('click', async () => {
+    if (!address.value.trim() || !appPassword.value.trim()) return setStatus(gmailStatus, 'bad', 'Type your email address and paste the app password first.');
+    saveGmail.disabled = true;
+    setStatus(gmailStatus, 'info', 'Logging in to Google to check it. Nothing is sent...');
+    const res = await api('/api/mailbox/gmail', { method: 'POST', body: { address: address.value, app_password: appPassword.value } });
+    appPassword.value = '';
+    saveGmail.disabled = false;
+    if (res.ok) {
+      toast(res.message);
+      route();
+    } else setStatus(gmailStatus, 'bad', errorText(res));
+  });
+
+  const otherStatus = h('div', { role: 'status', class: 'small' });
+  const o = {
+    host: h('input', { type: 'text', id: 'mb-host', autocomplete: 'off', spellcheck: 'false', placeholder: 'smtp.example.com', name: 'mb-host' }),
+    port: h('input', { type: 'text', id: 'mb-port', autocomplete: 'off', inputmode: 'numeric', value: '587', name: 'mb-port' }),
+    address: h('input', { type: 'text', id: 'mb-o-address', autocomplete: 'off', spellcheck: 'false', name: 'mb-o-address' }),
+    password: h('input', { type: 'password', id: 'mb-o-password', autocomplete: 'off', spellcheck: 'false', name: 'mb-o-password' }),
+    imap: h('input', { type: 'text', id: 'mb-imap', autocomplete: 'off', spellcheck: 'false', placeholder: 'Usually filled in for you', name: 'mb-imap' }),
+  };
+  const saveOther = h('button', { type: 'button', class: 'primary', text: 'Save and test' });
+  saveOther.addEventListener('click', async () => {
+    saveOther.disabled = true;
+    setStatus(otherStatus, 'info', 'Logging in to check it. Nothing is sent...');
+    const res = await api('/api/mailbox/other', {
+      method: 'POST',
+      body: { host: o.host.value, port: o.port.value, address: o.address.value, password: o.password.value, imap_host: o.imap.value },
+    });
+    o.password.value = '';
+    saveOther.disabled = false;
+    if (res.ok) {
+      toast(res.message);
+      route();
+    } else setStatus(otherStatus, 'bad', errorText(res));
+  });
+
   setMain(
-    h('h2', { text: 'Connect your mailbox (optional)' }),
-    whatsThis('You only need this if you want Lead Generator to send the emails for you. You can always export a file and send from your own email program instead.'),
-    h('section', { class: 'card stack' },
-      h('p', { text: 'Step-by-step help for connecting your mailbox is coming soon. Until then, ask your AI assistant to help you connect it.' }),
-      h('p', null, h('a', { href: '#/home', text: 'Back to your projects' }))),
+    h('div', { class: 'row' }, h('h2', { class: 'grow', text: 'Connect your mailbox (optional)' }), h('a', { href: '#/home', text: 'Back to your projects' })),
+    whatsThis('You only need this if you want Lead Generator to send emails from your own mailbox. Exporting your people to lemlist, or sending from your own email program, does not need it.'),
+    mailboxStatusCard(state),
+    h('section', { class: 'card stack', 'aria-labelledby': 'mb-gmail-h' },
+      h('h3', { id: 'mb-gmail-h', text: 'Gmail or Google Workspace' }),
+      h('p', { class: 'small muted', text: 'Google asks for a special one-time password (an "app password") for programs like this one. It takes about two minutes.' }),
+      h('ol', { class: 'steps stack' },
+        h('li', { class: 'stack' },
+          h('strong', { text: 'Turn on 2-Step Verification' }),
+          h('p', { class: 'small', text: 'Google only makes app passwords for accounts that use 2-Step Verification. If it is already on, go to step 2.' }),
+          h('div', null, googleButton(GOOGLE_2SV_URL, 'Open Google 2-Step Verification'))),
+        h('li', { class: 'stack' },
+          h('strong', { text: 'Make an app password called "Lead Generator"' }),
+          h('p', { class: 'small', text: 'On the Google page, type Lead Generator as the name and press Create. Google shows 16 letters in four groups. Copy them.' }),
+          h('p', { class: 'small', text: 'No place to make one? Some work or school accounts, and accounts with Advanced Protection, do not allow app passwords. Ask your administrator, or use the other mailbox section below.' }),
+          h('div', null, googleButton(GOOGLE_APP_PASSWORDS_URL, 'Open Google app passwords'))),
+        h('li', { class: 'stack' },
+          h('strong', { text: 'Paste your email address and the 16 letters here' }),
+          h('p', { class: 'small', text: 'Spaces are removed for you, and the mail servers are filled in for you. The password is kept on this computer only and is never shown again.' }),
+          field('mb-address', 'Your Gmail or Google Workspace address', address),
+          field('mb-app-password', 'App password (16 letters)', appPassword),
+          h('div', { class: 'row' }, saveGmail),
+          gmailStatus))),
+    h('section', { class: 'card stack', 'aria-labelledby': 'mb-other-h' },
+      h('h3', { id: 'mb-other-h', text: 'Outlook or another mailbox' }),
+      h('p', { class: 'small muted', text: "Your email provider's help page lists the mail server names and the port. Outlook and Microsoft 365 may need an administrator to allow sending from other programs, and Microsoft is phasing that kind of sign-in out, so Gmail is the easier choice." }),
+      field('mb-host', 'Outgoing mail server (SMTP)', o.host),
+      field('mb-port', 'Port (587 for most providers, 465 for some)', o.port),
+      field('mb-o-address', 'Your email address', o.address),
+      field('mb-o-password', 'Password or app password', o.password),
+      field('mb-imap', 'Incoming mail server (IMAP), optional', o.imap),
+      h('div', { class: 'row' }, saveOther),
+      otherStatus),
   );
 }
 
@@ -1805,7 +1910,11 @@ async function pageSettings(ctx) {
     save.disabled = false;
     if (out.ok) { setStatus(status, 'ok', 'Settings saved.'); toast('Settings saved.'); } else setStatus(status, 'bad', errorText(out));
   });
-  setMain(h('h2', { text: 'Settings' }), whatsThis('Who your messages come from, your postal address, your spelling, and how much a campaign may spend.'), form);
+  const mailboxCard = h('section', { class: 'card stack', 'aria-labelledby': 's-mailbox-h' },
+    h('h3', { id: 's-mailbox-h', text: 'Your mailbox (optional)' }),
+    h('p', { class: 'small', text: 'Only needed if you want Lead Generator to send emails from your own mailbox.' }),
+    h('a', { class: 'button', href: '#/mailbox', text: 'Connect your mailbox' }));
+  setMain(h('h2', { text: 'Settings' }), whatsThis('Who your messages come from, your postal address, your spelling, and how much a campaign may spend.'), form, mailboxCard);
 }
 
 // ---- start ------------------------------------------------------------------------------------

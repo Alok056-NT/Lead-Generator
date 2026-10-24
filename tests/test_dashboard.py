@@ -109,6 +109,9 @@ POSTS = [
     ("POST", "/api/sending/pause", None),
     ("POST", "/api/sending/resume", None),
     ("POST", "/api/mailbox/sync", None),
+    ("POST", "/api/mailbox/gmail", {"address": "a@example.com", "app_password": "x"}),
+    ("POST", "/api/mailbox/other", {"host": "h", "port": "25", "address": "a", "password": "p"}),
+    ("POST", "/api/mailbox/test", None),
     ("POST", "/api/suppression", {"kind": "email", "values": ["a@example.com"]}),
     ("POST", "/api/settings", {"locale": "en-US"}),
 ]
