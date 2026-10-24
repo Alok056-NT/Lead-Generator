@@ -7,6 +7,7 @@ Nothing here sends a real email or a LinkedIn message. Where a check needs a rea
 ## Before you start (10 minutes)
 
 1. **Make a backup.** Open your LeadGenerator folder. If you do not know where it is, open a terminal and type `leadgen paths`. Copy the whole folder somewhere safe (for example, paste it on the Desktop and name it `LeadGenerator backup`).
+   - Before you upgrade, also write down your numbers so you can compare them later. Open the dashboard (`leadgen dashboard --open`) and note how many campaigns you have and how many people each campaign shows on its **2 People** page. Write them on paper or in a note. You will compare them in Check 1 and Check 20.
 2. **Update the program.** Run the same install command you used the first time (it is in the README). Wait until it says it is finished.
    - Installed by hand from the source folder instead? Open a terminal in that folder and run `pip install -e .`
 3. **Check the version.** In a terminal type `leadgen version`.
@@ -79,7 +80,7 @@ Nothing here sends a real email or a LinkedIn message. Where a check needs a rea
 
 **Check 9. Export, then try again.**
 1. Ask Claude to write and check the messages for Wave 1, then export it as a CSV file (this is just a file; nothing is sent).
-2. Make a third campaign `Wave 3` in the same project and ask Claude to find people again for the same companies.
+2. Make a third campaign `Wave 3` in the same project. Companies are **not** carried over from Wave 1, so you must add the companies again for Wave 3 and approve them. Then ask Claude to find people again for the same companies.
 - You should see: people from Wave 1's export are **not** offered again. In **2 People** they appear under **Needs a look**, with a reason saying they were already found or contacted. The project page shows them under **Who we will not contact again yet**, with a date.
 
 **Check 10. Change the cooldown.**
@@ -153,7 +154,7 @@ Nothing here sends a real email or a LinkedIn message. Where a check needs a rea
 - You should see: all your projects, campaigns and people exactly as before.
 
 **Check 20. Final look at the backup.**
-1. Compare the old campaigns' people counts with your note from Check 1.
+1. Compare the old campaigns' people counts with the numbers you wrote down in "Before you start".
 - You should see: the same numbers.
 
 ---
