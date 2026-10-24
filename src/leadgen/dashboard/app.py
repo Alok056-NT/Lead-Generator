@@ -36,6 +36,7 @@ from leadgen.services import (
     dashboard_ctl,
     designations,
     export,
+    lemlist,
     mailbox,
     mailbox_connect,
     offer_files,
@@ -122,6 +123,7 @@ class ProjectChangeBody(_Body):
     description: str | None = Field(default=None, max_length=1000)
     cooldown_days: int | None = Field(default=None, ge=0, le=3650)
     email_policy: Literal["verified_only", "allow_risky"] | None = None
+    sender_name: str | None = Field(default=None, max_length=120)
 
 
 class CampaignBody(_Body):
@@ -182,6 +184,23 @@ class AiKeyBody(_Body):
 class ChatBody(_Body):
     message: str = ""
     attachments: list[str] = Field(default=[], max_length=10)
+
+
+class DeleteProjectBody(_Body):
+    confirm_name: str = Field(max_length=200)
+
+
+class SendBody(_Body):
+    limit: int = Field(default=10, ge=1, le=50)
+    dry_run: bool = True
+    confirm: bool = False
+
+
+class LemlistPushBody(_Body):
+    lemlist_campaign_id: str = Field(max_length=100)
+    dry_run: bool = True
+    confirm: bool = False
+    cursor: str | None = Field(default=None, max_length=40)
 
 
 # --- replies ------------------------------------------------------------------------------------
@@ -430,6 +449,30 @@ def _register_routes(app: FastAPI) -> None:
             )}
         )  # fmt: skip
 
+    @app.delete("/api/projects/{project_id}")
+    def remove_project(project_id: int, body: DeleteProjectBody) -> JSONResponse:
+        chat.cancel_turn(project_id)
+        chat.wait(project_id, 10.0)
+        return _reply({"ok": True, **projects.delete_project(project_id, body.confirm_name)})
+
+    @app.get("/api/projects/{project_id}/studio")
+    def project_studio(project_id: int) -> JSONResponse:
+        progress = status_svc.project_progress(project_id)
+        project = projects.get_project(project_id)
+        ai = ai_setup.get_status()
+        return _json({
+            **progress,
+            "project": {k: project[k] for k in ("id", "name", "sender_name", "cooldown_days")},
+            "ai": {"ready": ai["ready"], "mode": ai["mode"]},
+            "turn": chat.turn_state(project_id),
+        })  # fmt: skip
+
+    @app.get("/api/projects/{project_id}/results")
+    def project_results(
+        project_id: int, campaign_id: int | None = None, page: int = 1, page_size: int = 25
+    ) -> JSONResponse:
+        return _reply(browse.studio_results(project_id, campaign_id, page, page_size))
+
     # ---- project source -----------------------------------------------------------------------
 
     @app.get("/api/offer-source-help")
@@ -653,6 +696,19 @@ def _register_routes(app: FastAPI) -> None:
     @app.post("/api/campaigns/{campaign_id}/exports/open-folder")
     def open_folder(campaign_id: int) -> JSONResponse:
         return _reply(browse.open_exports_folder(campaign_id))
+
+    @app.post("/api/campaigns/{campaign_id}/send")
+    def send_by_email(campaign_id: int, body: SendBody) -> JSONResponse:
+        return _reply(sending.send_emails(campaign_id, body.limit, body.dry_run, body.confirm))
+
+    @app.get("/api/lemlist/campaigns")
+    def lemlist_campaigns() -> JSONResponse:
+        return _reply({"ok": True, "campaigns": lemlist.list_lemlist_campaigns()})
+
+    @app.post("/api/campaigns/{campaign_id}/lemlist")
+    def push_lemlist(campaign_id: int, body: LemlistPushBody) -> JSONResponse:
+        return _reply(lemlist.push_to_lemlist(
+            campaign_id, body.lemlist_campaign_id, body.dry_run, body.confirm, body.cursor))
 
     # ---- analytics, replies, sending ----------------------------------------------------------
 

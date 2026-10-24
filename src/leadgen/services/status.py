@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from leadgen import __version__, db
-from leadgen.core import config, paths, secrets
+from leadgen.core import config, countries, paths, secrets
 from leadgen.providers import base, registry
 from leadgen.providers.base import ProviderError
 from leadgen.services import campaign as campaign_mod
@@ -387,4 +387,100 @@ def save_key(provider_key: str, key: str) -> dict[str, Any]:
             "hint": "Check the key and try again, or add it with `leadgen keys set "
             f"{provider_key}` in a terminal.",
         },
+    }
+
+
+# --- the Studio stepper (V12 C4) ----------------------------------------------------------------
+
+STUDIO_STEPS = (
+    ("product", "Your product"), ("reach", "Who to reach"), ("companies", "Companies"),
+    ("people", "People"), ("emails", "Emails"), ("messages", "Messages"), ("checks", "Checks"),
+    ("export", "Export or send"),
+)  # fmt: skip
+_STEP_OF = {  # next-step names (next_step_for / _project_step) -> stepper key
+    "project": "product", "offer": "product", "offer_profile": "product", "campaign": "reach",
+    "companies": "companies", "approve_companies": "companies",
+    "people_ai": "people", "keys": "people", "people": "people", "people_reserve": "people",
+    "people_review": "people", "emails": "emails", "drafting": "messages", "fix_drafts": "messages",
+    "review": "checks", "spot_check": "checks", "run_qa": "checks",
+    "deliver": "export", "analytics": "export",
+}  # fmt: skip
+_CHANNEL_WORDS = {"email": "email", "linkedin": "LinkedIn"}
+
+
+def _has_profile(offer_id: int | None) -> bool:
+    return offer_id is not None and bool(offer_mod.get_offer(offer_id)["has_profile"])
+
+
+def _step_details(
+    key: str, proj: dict[str, Any], camp: dict[str, Any] | None, current: str
+) -> str:
+    """The grey line under a step of the Studio stepper (plain English, "" when nothing yet)."""
+    if key == "product":
+        return proj["offer_name"] or ("Not added yet" if current == "product" else "")
+    if camp is None:
+        return ""
+    counts = camp["counts"]
+    if key == "reach":
+        names = [(countries.get(c).name if countries.get(c) else c) for c in camp["countries"]]
+        words = " and ".join(_CHANNEL_WORDS.get(c, c) for c in camp["channels"])
+        return " - ".join(part for part in (", ".join(names), words) if part)
+    if key == "companies":
+        return f"{counts['companies']['approved']} approved"
+    if key == "people":
+        text = f"{counts['people']['confirmed']} ready"
+        reserve = counts["people"]["reserve"]
+        return text + (f", {reserve} saved for later" if reserve else "")
+    if key == "emails":
+        if "email" not in camp["channels"]:
+            return "Not using email"
+        return f"{camp['email_summary']['verified_emails']} verified"
+    if key == "messages":
+        total = sum(counts["messages"].values())
+        return f"{total} written" if total else ""
+    if key == "checks":
+        passed = counts["messages"]["qa_pass"] + counts["messages"]["approved"]
+        return f"{passed} passed" if passed else ""
+    return "Ready to export or send" if current == "export" else ""
+
+
+def project_progress(project_id: int) -> dict[str, Any]:
+    """The Studio stepper for one project, filled in from real data (same rules as `get_status`):
+    `campaign` (the newest open search or None), `current` (the step in progress), `steps` and a
+    `summary` over all the project's open campaigns. Raises `ProjectError` (`not_found`)."""
+    proj = projects_mod.get_project(project_id)
+    shorts = campaign_mod.list_campaigns(include_archived=False, project_id=project_id)
+    camps = [campaign_mod.get_campaign(s["id"]) for s in shorts]
+    camp = max(camps, key=lambda c: c["id"]) if camps else None
+    if camp is None:
+        by_offer = {proj["offer_id"]: _has_profile(proj["offer_id"])} if proj["offer_id"] else {}
+        step = _project_step([proj], [], by_offer)
+    else:
+        step = next_step_for(
+            camp, has_profile=_has_profile(camp["offer_id"]), has_search_key=_has_search_key(),
+            spot=spot_check.spot_state(_ai_people(camp["id"]), camp["options"]),
+        )
+    current = _STEP_OF.get(step["step"], "export")
+    keys = [k for k, _ in STUDIO_STEPS]
+    steps = []
+    for index, (key, label) in enumerate(STUDIO_STEPS):
+        no_email = camp is not None and "email" not in camp["channels"]
+        if key == "emails" and no_email and current != key:
+            state = "skipped"
+        elif index < keys.index(current):
+            state = "done"
+        else:
+            state = "active" if key == current else "todo"
+        steps.append({"key": key, "label": label, "state": state,
+                      "detail": _step_details(key, proj, camp, current)})
+    summary = {
+        "ready_contacts": sum(c["counts"]["people"]["confirmed"] for c in camps),
+        "verified_emails": sum(c["email_summary"]["verified_emails"] for c in camps),
+        "messages": sum(sum(c["counts"]["messages"].values()) for c in camps),
+        "approved": sum(c["counts"]["messages"]["approved"] for c in camps),
+    }
+    return {
+        "ok": True, "project_id": proj["id"],
+        "campaign": {"id": camp["id"], "name": camp["name"]} if camp else None,
+        "current": current, "steps": steps, "summary": summary,
     }

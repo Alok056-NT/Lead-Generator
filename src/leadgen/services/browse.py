@@ -720,3 +720,52 @@ def project_page(project_id: int) -> dict[str, Any]:
         "memory": projects.contact_memory(proj["id"]),
         "known": contacts_import.known_summary(proj["id"]),
     }
+
+
+def studio_results(
+    project_id: int, campaign_id: int | None = None, page: int = 1, page_size: int = 25
+) -> dict[str, Any]:
+    """The ready contacts of one of a project's searches, for the Studio table: name, job,
+    company, LinkedIn link, the verified email (only verified ones) and the message texts.
+    Without `campaign_id` the newest open search is used. Raises `ProjectError` (project) or
+    `BrowseError` (`not_found`: the search is not part of the project)."""
+    projects.get_project(project_id)
+    shorts = campaign_mod.list_campaigns(include_archived=False, project_id=project_id)
+    newest_first = sorted(shorts, key=lambda c: -c["id"])
+    campaigns = [{"id": c["id"], "name": c["name"]} for c in newest_first]
+    chosen = campaign_id if campaign_id is not None else (campaigns[0]["id"] if campaigns else None)
+    if chosen is not None and chosen not in {c["id"] for c in campaigns}:
+        raise BrowseError("not_found", "That search is not part of this project.")
+    if chosen is None:
+        return {"ok": True, "campaigns": [], "campaign_id": None, "leads": [], "page": 1,
+                "page_size": page_size, "total": 0, "has_more": False}  # fmt: skip
+    base = list_leads(chosen, status="confirmed", page=page, page_size=page_size)
+    ids = [lead["id"] for lead in base["leads"]]
+    texts: dict[int, dict[str, dict[str, Any]]] = {}
+    if ids:
+        with db.session() as conn:
+            rows = db.query(
+                conn,
+                "SELECT person_id, channel, subject, body FROM messages WHERE person_id IN "
+                f"({', '.join('?' for _ in ids)})", ids,
+            )  # fmt: skip
+        for row in rows:
+            texts.setdefault(row["person_id"], {})[row["channel"]] = row
+    leads = []
+    for lead in base["leads"]:
+        mine = texts.get(lead["id"], {})
+        linkedin = mine.get("linkedin_message") or mine.get("linkedin_invite") or {}
+        email = mine.get("email") or {}
+        leads.append({
+            "id": lead["id"],
+            "name": lead["raw_name"] or f"{lead['first_name']} {lead['last_name']}".strip(),
+            "title": lead["title"], "company": lead["company"],
+            "linkedin_url": lead["linkedin_url"],
+            "email": lead["email"] if lead["email_status"] == "verified" else "",
+            "linkedin_message": linkedin.get("body", ""),
+            "email_subject": email.get("subject", ""), "email_body": email.get("body", ""),
+            "checked": lead["ai_verdict"] == "pass" and lead["qa_block"] == 0,
+        })  # fmt: skip
+    return {"ok": True, "campaigns": campaigns, "campaign_id": chosen, "leads": leads,
+            "page": base["page"], "page_size": base["page_size"], "total": base["total"],
+            "has_more": base["has_more"]}  # fmt: skip
