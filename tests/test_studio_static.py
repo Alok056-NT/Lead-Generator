@@ -5,6 +5,7 @@ Everything is offline; the script check uses node only when it is installed.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -72,6 +73,24 @@ def test_the_labels_of_the_connect_and_home_screens():
         "Type the project name to confirm", "Keep it", "Your projects",
     ):  # fmt: skip
         assert expected in js, expected
+
+
+def test_the_project_page_labels_and_pieces():
+    js = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    for expected in (
+        "EventSource", "/chat/stream", "'Stop'", "'Attach a file'", "'Ready contacts'",
+        "'Export and send'", "'Download for Excel (CSV)'", "'Download for lemlist (CSV)'",
+        "'Send by email...'", "'Send to lemlist...'", "'Connect lemlist'", "'Not ready yet:'",
+        "'Progress and results'",
+    ):  # fmt: skip
+        assert expected in js, expected
+
+
+def test_every_send_asks_first_and_is_confirmed():
+    js = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    sends = re.findall(r"dry_run: false([^}]*)", js)
+    assert sends and all("confirm: true" in tail for tail in sends), sends
+    assert js.index("Studio.confirmDialog") < js.index("dry_run: false")
 
 
 def test_app_js_routes_the_new_pages():

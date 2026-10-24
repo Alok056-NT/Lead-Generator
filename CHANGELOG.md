@@ -3,6 +3,20 @@
 All notable changes to Lead Generator are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] - 2026-10-26
+
+Lead Generator Studio: a chat with your AI inside each project, a button that opens the app, and a new look.
+
+### Added
+- **Lead Generator Studio.** One desktop (and Start menu) button opens a web app. Each project has a chat with the AI you connect (your Claude plan or an API key), a live progress list and a table of ready contacts with their LinkedIn link, verified email and the messages written for them. Export and sending stay behind buttons that ask you to confirm; the AI cannot send.
+- **Connect your AI** screen: checks Claude Code, signs you in, tests the connection.
+- **Edit and delete projects**, and a sign-off name per project that the messages use.
+- `leadgen app`.
+- An Apple-style look with light and dark.
+
+### Changed
+- The earlier pages are under **Advanced**.
+
 ## [1.1.0] - 2026-10-26
 
 Owner feedback after the first demo. Everything from 1.0 keeps working: your existing workspace is upgraded in place the first time you open it (nothing is deleted).

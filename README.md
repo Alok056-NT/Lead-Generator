@@ -46,6 +46,8 @@ If Windows says scripts are blocked, run `powershell -ExecutionPolicy Bypass -Fi
 - Only **verified** email addresses are exported or sent.
 
 ## Your first campaign in 7 steps
+After installing, click the **Lead Generator** button on your Desktop. The first time it asks you to connect your AI; then create a project and chat with it.
+
 1. **Create a project.** Open the dashboard (`leadgen dashboard --open`) and choose **New project**, or tell Claude: "Set up a project for my product". Give it a name and say where your product or service is described: a website address (just that page, or the whole site), a file, or pasted text.
 2. **Open a new chat** with Claude. Ask: "What is my Lead Generator status?" It should answer using the Lead Generator tools.
 3. **Check what Claude read.** Claude shows the facts it will use and the claims it will avoid. Correct them.
