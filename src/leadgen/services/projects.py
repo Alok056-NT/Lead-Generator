@@ -451,22 +451,43 @@ def log_contacts(
     """Remember people in a project. `rows` are mappings read by `make_keys` (plus an optional
     `person_id`); `channel` is one of found, exported_csv, lemlist, email_sent, imported.
     `at` (ISO date or time, UTC) defaults to now; an import may pass the real contact date.
-    Rows with no usable key, and rows already logged identically, are skipped.
+    A row may carry its own `at`, which wins over the call's. Rows with no usable key, and rows
+    already logged identically, are skipped.
     Returns `{"logged", "skipped"}`. Raises `ProjectError`."""
+    with db.session() as conn:
+        return log_contacts_in(conn, project_id, rows, channel, campaign_id, source, at)
+
+
+def _at_stamp(at: Any) -> str:
+    moment = _parse(at) if isinstance(at, str) and at.strip() else None
+    if moment is None:
+        raise ProjectError("invalid_value", "at must be an ISO date such as 2026-09-01.")
+    return _stamp(moment)
+
+
+def log_contacts_in(
+    conn: sqlite3.Connection,
+    project_id: int,
+    rows: Iterable[Mapping[str, Any]],
+    channel: str,
+    campaign_id: int | None = None,
+    source: str = "",
+    at: str | None = None,
+) -> dict[str, int]:
+    """`log_contacts` inside the caller's transaction (the caller commits or rolls back)."""
     if channel not in CHANNELS:
         raise ProjectError("invalid_channel", f"channel must be one of: {', '.join(CHANNELS)}.")
-    stamp = db.now()
-    if at is not None:
-        moment = _parse(at)
-        if moment is None:
-            raise ProjectError("invalid_value", "at must be an ISO date such as 2026-09-01.")
-        stamp = _stamp(moment)
-    entries = [(make_keys(r), r.get("person_id")) for r in rows]
-    with db.session() as conn:
-        _row(conn, project_id)
-        logged, skipped = _insert_log(
-            conn, project_id, entries, channel, campaign_id, source, stamp
-        )
+    default = db.now() if at is None else _at_stamp(at)
+    _row(conn, project_id)
+    logged = skipped = 0
+    for row in rows:
+        stamp = _at_stamp(row["at"]) if row.get("at") else default
+        n_logged, n_skipped = _insert_log(
+            conn, project_id, [(make_keys(row), row.get("person_id"))], channel, campaign_id,
+            source, stamp,
+        )  # fmt: skip
+        logged += n_logged
+        skipped += n_skipped
     return {"logged": logged, "skipped": skipped}
 
 

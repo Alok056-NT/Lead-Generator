@@ -100,6 +100,16 @@ sells to that kind of firm (the batch's `campaign.sectors` and `campaign.target_
 show who the campaign is for). If a flag looks wrong for the evidence (for example `recruiter` on
 someone who works in-house), use your judgement and write the normal message.
 
+### Known contacts
+
+A person may carry `known_contact` (`relationship`, `last_contacted`): the owner imported them
+from their own contact list. It is the **only** reason you may refer to an earlier relationship.
+With `relationship` `replied`, `customer` or `partner` you may say, in one plain sentence, that
+you have been in touch before (use `last_contacted` only if it is not empty, and no more than the
+month and year). With `contacted` the owner only knows they were contacted, or are connected on
+LinkedIn: do not say "we spoke" or "as discussed". Without `known_contact`, never imply a
+previous conversation. Do not mention that a list was imported.
+
 ## 6. Redrafting
 
 If a person has `previous_issues` or `review_notes`, they were drafted before. Read the

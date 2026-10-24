@@ -38,7 +38,7 @@ from leadgen.core import http
 from leadgen.core.text import normalize_whitespace
 from leadgen.providers import registry, search
 from leadgen.providers.base import ProviderError
-from leadgen.services import budget, campaign, offer_web
+from leadgen.services import budget, campaign, contacts_import, offer_web
 
 logger = logging.getLogger("leadgen.companies")
 
@@ -808,7 +808,7 @@ def list_companies(
     Returns `companies`, `page`, `page_size` (at most 50), `total`, `has_more` and
     `counts` (every status).
     """
-    _campaign(campaign_id)
+    camp = _campaign(campaign_id)
     if status is not None:
         _check_status(status)
     page = max(1, int(page))
@@ -831,9 +831,14 @@ def list_companies(
             (campaign_id,),
         ):
             counts[r["status"]] = r["n"]
+    shapes = [_shape(r) for r in rows]
+    warm = contacts_import.warm_counts(camp.get("project_id"), shapes)
+    for shape in shapes:
+        if shape["id"] in warm:  # companies with contacts the owner imported (T24)
+            shape["warm_contacts"] = warm[shape["id"]]
     return {
         "ok": True,
-        "companies": [_shape(r) for r in rows],
+        "companies": shapes,
         "page": page,
         "page_size": page_size,
         "total": total,

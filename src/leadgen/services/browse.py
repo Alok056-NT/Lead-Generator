@@ -17,7 +17,7 @@ from leadgen import db
 from leadgen.core import paths
 from leadgen.core.text import slugify
 from leadgen.services import campaign as campaign_mod
-from leadgen.services import qa_leads, qa_messages, spot_check
+from leadgen.services import contacts_import, qa_leads, qa_messages, spot_check
 from leadgen.services.people import person_shape
 
 PAGE_SIZE_MAX = 50
@@ -152,7 +152,7 @@ def list_leads(
     matches name, title, company and LinkedIn link. Returns `leads`, `page`, `page_size`, `total`,
     `has_more`. Raises `BrowseError` / `CampaignError` (not found).
     """
-    campaign_mod.get_campaign(campaign_id)
+    camp = campaign_mod.get_campaign(campaign_id)
     page_no, size = _page(page, page_size)
     email_status = _choice(email_status, EMAIL_STATUSES, "email_status")
     qa = _choice(qa, QA_FILTERS, "qa")
@@ -203,9 +203,14 @@ def list_leads(
         rows = db.query(
             conn, f"{inner} ORDER BY id LIMIT ? OFFSET ?", [*params, size, (page_no - 1) * size]
         )
+    leads = [_lead_shape(r) for r in rows]
+    known = contacts_import.known_for_people(camp.get("project_id"), [r["id"] for r in rows])
+    for lead in leads:
+        if lead["id"] in known:  # imported contact (T24)
+            lead["known_contact"] = known[lead["id"]]
     return {
         "ok": True,
-        "leads": [_lead_shape(r) for r in rows],
+        "leads": leads,
         "page": page_no,
         "page_size": size,
         "total": total,
@@ -285,6 +290,7 @@ def get_person(person_id: int) -> dict[str, Any]:
         if row is None:
             raise BrowseError("not_found", f"There is no lead with id {person_id}.")
         company = db.get(conn, "companies", row["company_id"]) or {}
+        project_id = (db.get(conn, "campaigns", row["campaign_id"]) or {}).get("project_id")
         emails = db.query(
             conn,
             "SELECT email, status, method, verifier, checked_at FROM emails WHERE person_id = ? "
@@ -297,6 +303,9 @@ def get_person(person_id: int) -> dict[str, Any]:
         person_issues = _issues_for(conn, "person", [row["id"]])[row["id"]]
         msg_issues = _issues_for(conn, "message", [m["id"] for m in msg_rows])
     shape = person_shape(row, company.get("name", ""))
+    known = contacts_import.known_for_people(project_id, [row["id"]]).get(row["id"])
+    if known:  # imported contact (T24)
+        shape["known_contact"] = known
     return {
         "ok": True,
         "campaign_id": row["campaign_id"],

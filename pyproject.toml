@@ -20,6 +20,7 @@ dependencies = [
     "beautifulsoup4>=4.12,<5",
     "pypdf>=4,<7",
     "python-docx>=1.1,<2",
+    "openpyxl>=3.1,<4",
     "mcp>=2,<3",
     "fastapi>=0.149,<1",
     "uvicorn>=0.30,<1",
@@ -42,7 +43,7 @@ leadgen = "leadgen.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-leadgen = ["guides/*.md", "schema.sql", "dashboard/static/*"]
+leadgen = ["guides/*.md", "schema.sql", "dashboard/static/*", "templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

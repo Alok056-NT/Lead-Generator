@@ -56,6 +56,8 @@ EXTRA_TOOLS = {
     "get_project",
     "update_project",
     "move_reserve_people",
+    "get_contacts_template",
+    "import_contacts",
 }
 COMPANY = "Northwind Logistics"
 
@@ -770,6 +772,59 @@ def test_remote_mode_reads_files_only_inside_the_workspace(tmp_path, workspace):
             assert error_code(call(file_path=str(outside))) == "file_outside_workspace"
             assert "Secret" not in json.dumps(call(file_path=str(outside)))
             assert call(file_path=str(inside))["ok"] is True
+
+
+def test_contacts_template_and_import_tools(mcp, tmp_path):
+    info = mcp("get_contacts_template")
+    assert info["ok"] and info["csv_path"].endswith("contacts_template.csv")
+    assert info["xlsx_path"].endswith("contacts_template.xlsx")
+    assert [c["name"] for c in info["columns"]][:2] == ["first_name", "last_name"]
+    project = mcp("create_project", name="Training courses")
+    filled = tmp_path / "old.csv"
+    filled.write_text(
+        "first_name,last_name,email,relationship\n"
+        "Aria,Tan,aria@northwind.example,customer\n"
+        "Ines,Costa,ines@fabrikam.example,do_not_contact\n",
+        encoding="utf-8",
+    )
+    preview = mcp("import_contacts", project_id=project["id"], file_path=str(filled))
+    assert preview["dry_run"] is True and preview["would_exclude"] == 2
+    assert preview["do_not_contact"] == 1 and preview["rows_read"] == 2
+    assert mcp("get_project", project_id=project["id"])["counts"]["contacted_in_cooldown"] == 0
+    done = mcp("import_contacts", project_id=project["id"], file_path=str(filled),
+               mode="both", dry_run=False)  # fmt: skip
+    assert done["excluded"] == 2 and done["signalled"] == 1 and done["suppressed"] == 1
+    assert mcp("get_project", project_id=project["id"])["counts"]["contacted_in_cooldown"] == 2
+    missing = mcp("import_contacts", project_id=project["id"], file_path=str(tmp_path / "x.csv"))
+    assert error_code(missing) == "unreadable_file"
+    assert error_code(mcp("import_contacts", project_id=999, file_path=str(filled))) == "not_found"
+    tool = tools_by_name(mcp)["import_contacts"]
+    assert "dry_run=true" in tool.description and tool.annotations.read_only_hint is False
+
+
+def test_remote_mode_imports_contacts_only_from_inside_the_workspace(tmp_path, workspace):
+    from leadgen.core import paths
+
+    paths.ensure_workspace()
+    body = "first_name,last_name,email\nAria,Tan,aria@northwind.example\n"
+    outside = tmp_path / "outside.csv"
+    outside.write_text(body, encoding="utf-8")
+    inside = workspace / "templates" / "mine.csv"
+    inside.parent.mkdir(exist_ok=True)
+    inside.write_text(body, encoding="utf-8")
+    with anyio.from_thread.start_blocking_portal() as portal:
+        with portal.wrap_async_context_manager(Client(mcp_server.build_server(remote=True))) as c:
+
+            def call(tool, **args):
+                res = portal.call(c.call_tool, tool, args)
+                return json.loads(res.content[0].text)
+
+            project = call("create_project", name="Training courses")
+            args = {"project_id": project["id"]}
+            assert error_code(call("import_contacts", file_path=str(outside), **args)) == (
+                "file_outside_workspace"
+            )
+            assert call("import_contacts", file_path=str(inside), **args)["ok"] is True
 
 
 # --- keys and secrets ---------------------------------------------------------------------------

@@ -58,6 +58,17 @@ LinkedIn; sending is optional and always needs the user's yes.
    never blocks repeats).
 2. If the project already has campaigns, ask whether to continue one or start a new one.
 
+Old contacts: if the user has people they already know (old LinkedIn connections, past email
+lists, customers, people who asked not to be contacted), offer to import them into the project.
+Call `get_contacts_template` and give them the file path (they can also use LinkedIn's own
+`Connections.csv` export unchanged). When they have the file, **always** call `import_contacts`
+with `dry_run=true` first, show the counts and the first errors in plain words, and only after a
+clear yes call it again with `dry_run=false`. Choose the mode with them: `exclude` holds those
+people back during the cooldown (and anyone marked `do_not_contact` is never contacted),
+`signal` marks them (and their companies) as known and warm without holding them back, `both`
+does both. A known contact appears as `known_contact` in drafting batches and in `list_people`;
+companies show `warm_contacts`. Do not add warm companies to a campaign on your own.
+
 ## 2. Learn the offer (step 1)
 
 0. If the project already has an offer with a saved profile, skip to section 3. Otherwise

@@ -123,6 +123,7 @@ const EMAIL_STATUS = {
   invalid: 'Invalid', none: 'No email',
 };
 const EMAIL_TONE = { verified: 'ok', risky: 'warn', guess: 'warn', unknown: 'info', invalid: 'bad', none: 'none' };
+const KNOWN = { contacted: 'Known contact', replied: 'Replied before', customer: 'Customer', partner: 'Partner' };
 const ORIGIN = { api: 'Search API', ai_web_search: 'AI web search', user: 'Pasted by the user' };
 const AI_VERDICT = {
   pass: 'Passed', fix: 'Needs a fix', reject: 'Rejected', pending: 'Not reviewed yet',
@@ -670,7 +671,9 @@ async function pageCompanies(ctx) {
       : co.domain_ok === false ? badge('Domain not verified', 'warn') : badge('Not checked', 'none');
     return h('tr', null,
       h('td', null, box),
-      h('td', null, h('strong', { text: co.name }), co.aliases && co.aliases.length ? h('div', { class: 'small muted', text: 'Also: ' + co.aliases.join(', ') }) : null),
+      h('td', null, h('strong', { text: co.name }),
+        co.warm_contacts ? [' ', badge(`Warm: ${co.warm_contacts} known contact${co.warm_contacts === 1 ? '' : 's'}`, 'info')] : null,
+        co.aliases && co.aliases.length ? h('div', { class: 'small muted', text: 'Also: ' + co.aliases.join(', ') }) : null),
       h('td', { class: 'mono', text: co.domain || '-' }),
       h('td', null, domainState),
       h('td', { text: co.sector || '' }),
@@ -739,7 +742,8 @@ async function pageLeads(ctx) {
 
   const rows = reply.leads.map((p) =>
     h('tr', { class: 'clickable', onclick: (ev) => { if (ev.target.closest('a,button')) return; openLead(p.id); } },
-      h('td', null, h('button', { type: 'button', class: 'link', text: p.raw_name || '(no name)', onclick: () => openLead(p.id) })),
+      h('td', null, h('button', { type: 'button', class: 'link', text: p.raw_name || '(no name)', onclick: () => openLead(p.id) }),
+        p.known_contact ? [' ', badge(label(KNOWN, p.known_contact.relationship), 'info')] : null),
       h('td', { text: p.title }),
       h('td', { text: p.company }),
       h('td', { text: p.designation }),
@@ -768,7 +772,8 @@ async function openLead(personId) {
   const kids = [];
   kids.push(h('p', null, badge(label(PERSON_STATUS, p.status), PERSON_TONE[p.status]), ' ',
     badge(label(ORIGIN, p.evidence_origin), p.evidence_origin === 'ai_web_search' ? 'warn' : 'info'),
-    p.spot_check ? [' ', badge('Spot check: ' + p.spot_check, p.spot_check === 'ok' ? 'ok' : p.spot_check === 'wrong' ? 'bad' : 'warn')] : null));
+    p.spot_check ? [' ', badge('Spot check: ' + p.spot_check, p.spot_check === 'ok' ? 'ok' : p.spot_check === 'wrong' ? 'bad' : 'warn')] : null,
+    p.known_contact ? [' ', badge(label(KNOWN, p.known_contact.relationship) + ' (imported)', 'info')] : null));
   kids.push(h('dl', { class: 'kv' },
     h('dt', { text: 'Title' }), h('dd', { text: p.title }),
     h('dt', { text: 'Company' }), h('dd', { text: res.company.name + (res.company.domain ? ` (${res.company.domain})` : '') }),

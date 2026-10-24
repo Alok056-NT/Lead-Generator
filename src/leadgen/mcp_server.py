@@ -29,6 +29,7 @@ from leadgen.providers.base import ProviderError
 from leadgen.services import (
     ai_search,
     analytics,
+    contacts_import,
     dashboard_ctl,
     drafting,
     emails,
@@ -1147,6 +1148,44 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         reason: Annotated[str, Field(description="Why, in a few words.")] = "",
     ) -> dict[str, Any]:
         return suppression.add(values, kind, reason)
+
+    @tool(
+        "Get the contacts template",
+        """Writes the empty contacts template (CSV and Excel) into the Lead Generator folder and
+        returns both paths with a guide to each column. Give the user the path of the Excel (or
+        CSV) file so they can fill in contacts they already have: old LinkedIn connections, past
+        email lists, customers, do-not-contact people. LinkedIn's own Connections.csv export
+        also works unchanged. Free.""",
+        {"idempotent": True},
+    )
+    def get_contacts_template() -> dict[str, Any]:
+        return contacts_import.template_info()
+
+    @tool(
+        "Import old contacts",
+        """Reads a contacts file (.csv or .xlsx from the template, or LinkedIn's Connections.csv)
+        and uses it. mode exclude: those people are held back (L24) for the project's cooldown,
+        and anyone marked do_not_contact goes on the do-not-contact list for good. mode signal:
+        they are stored as known contacts, their companies count as warm and drafting batches
+        carry known_contact. mode both does both. ALWAYS call it first with dry_run=true, show
+        the user the counts and the first errors, and only after a clear yes call it again with
+        dry_run=false. A dry run writes nothing. Bad rows are listed, never fatal. Free.""",
+        WRITE,
+    )
+    def import_contacts(
+        project_id: ProjectId,
+        file_path: Annotated[str, Field(description="Path of the .csv or .xlsx file.")],
+        mode: Annotated[
+            Literal["exclude", "signal", "both"],
+            Field(description="exclude, signal or both (see the tool description)."),
+        ] = "exclude",
+        dry_run: Annotated[
+            bool, Field(description="true (default) only previews; false writes.")
+        ] = True,
+    ) -> dict[str, Any]:
+        return contacts_import.import_contacts(
+            project_id, file_path, mode, dry_run, file_root=file_root
+        )
 
     @tool(
         "Open the dashboard",

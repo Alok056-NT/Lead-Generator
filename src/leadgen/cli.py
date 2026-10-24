@@ -407,6 +407,47 @@ def cmd_suppression_remove(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_contacts_template(args: argparse.Namespace) -> int:
+    """Write the empty contacts template (CSV, or Excel with --xlsx)."""
+    from leadgen.services import contacts_import
+
+    fmt = "xlsx" if args.xlsx else "csv"
+    if args.out:
+        target = contacts_import.export_template(args.out, fmt)
+    else:
+        name = contacts_import.TEMPLATE_XLSX if args.xlsx else contacts_import.TEMPLATE_CSV
+        target = contacts_import.export_template(contacts_import.template_dir() / name, fmt)
+    print(f"Template written to {target}")
+    print("Fill it in, then run: leadgen contacts import <file> --project <id> --mode exclude")
+    return 0
+
+
+def cmd_contacts_import(args: argparse.Namespace) -> int:
+    """Preview (default) or apply an import of old contacts."""
+    from leadgen.services import contacts_import, projects
+
+    db.init_db()
+    try:
+        result = contacts_import.import_contacts(
+            args.project, args.path, args.mode, dry_run=not args.apply
+        )
+    except (contacts_import.ContactsImportError, projects.ProjectError) as exc:
+        print(exc.message)
+        return 1
+    print(result["message"])
+    for key, text in (("errors", "Problems"), ("warnings", "Warnings")):
+        items = result[key]
+        if items:
+            print(f"{text} (first {len(items)} of {result[key[:-1] + '_count']}):")
+            for item in items:
+                print(f"  row {item['row']}, {item['column']}: {item['problem']}")
+    if result["unknown_columns"]:
+        print("Ignored columns: " + ", ".join(result["unknown_columns"]))
+    if result["dry_run"]:
+        print("Nothing was written. Add --apply to import for real.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(prog="leadgen", description="Lead Generator")
@@ -489,6 +530,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp_remove.add_argument("kind", choices=("email", "domain", "linkedin"))
     sp_remove.add_argument("value")
     sp_remove.set_defaults(func=cmd_suppression_remove)
+    contacts = sub.add_parser("contacts", help="import contacts you already have").add_subparsers(
+        dest="contacts_command", required=True
+    )
+    ct = contacts.add_parser("template", help="write the empty contacts template")
+    ct.add_argument("--xlsx", action="store_true", help="Excel file instead of CSV")
+    ct.add_argument("--out", default=None, help="file or folder to write to")
+    ct.set_defaults(func=cmd_contacts_template)
+    ci = contacts.add_parser("import", help="preview or import a contacts file")
+    ci.add_argument("path", help=".csv or .xlsx file (the template or LinkedIn's Connections.csv)")
+    ci.add_argument("--project", type=int, required=True, help="project number")
+    ci.add_argument("--mode", choices=("exclude", "signal", "both"), default="exclude")
+    ci.add_argument("--apply", action="store_true", help="write it (without this: preview only)")
+    ci.set_defaults(func=cmd_contacts_import)
     keys = sub.add_parser("keys", help="manage API keys").add_subparsers(
         dest="keys_command", required=True
     )

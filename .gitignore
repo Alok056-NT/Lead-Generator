@@ -27,6 +27,7 @@ cache/
 LeadGenerator/
 *.csv
 !tests/fixtures/**/*.csv
+!src/leadgen/templates/*.csv
 
 # OS / editors
 .DS_Store

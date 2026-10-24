@@ -77,6 +77,34 @@ BEGIN
 END;
 """
 
+_V3_SQL = """
+CREATE TABLE known_contacts (
+    id               INTEGER PRIMARY KEY,
+    project_id       INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    key_linkedin     TEXT NOT NULL DEFAULT '',
+    key_email        TEXT NOT NULL DEFAULT '',
+    key_name_company TEXT NOT NULL DEFAULT '',
+    key_company      TEXT NOT NULL DEFAULT '',
+    first_name       TEXT NOT NULL DEFAULT '',
+    last_name        TEXT NOT NULL DEFAULT '',
+    company          TEXT NOT NULL DEFAULT '',
+    company_domain   TEXT NOT NULL DEFAULT '',
+    title            TEXT NOT NULL DEFAULT '',
+    country          TEXT NOT NULL DEFAULT '',
+    relationship     TEXT NOT NULL DEFAULT 'contacted',
+    channel          TEXT NOT NULL DEFAULT '',
+    last_contacted   TEXT NOT NULL DEFAULT '',   -- YYYY-MM-DD, or '' when the file gave none
+    notes            TEXT NOT NULL DEFAULT '',
+    source           TEXT NOT NULL DEFAULT '',
+    imported_at      TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+CREATE INDEX idx_known_linkedin ON known_contacts(project_id, key_linkedin);
+CREATE INDEX idx_known_email ON known_contacts(project_id, key_email);
+CREATE INDEX idx_known_name ON known_contacts(project_id, key_name_company);
+CREATE INDEX idx_known_company ON known_contacts(project_id, key_company);
+"""
+
 
 def _unique_project_name(name: str, used: set[str]) -> str:
     base = " ".join(name.split())[:120].strip() or "Project"
@@ -122,9 +150,9 @@ def _v2_assign_projects(conn: sqlite3.Connection) -> None:
 # Versions must be greater than BASE_VERSION and strictly increasing. Each runs in one
 # transaction, so the SQL must not contain BEGIN/COMMIT; `after(conn)` (optional) runs in the
 # same transaction once the SQL has run, for data changes that plain SQL cannot express.
-# v2 (T23): projects, contact memory, campaigns.project_id.
+# v2 (T23): projects, contact memory, campaigns.project_id. v3 (T24): known_contacts.
 Migration = tuple[int, str] | tuple[int, str, Callable[[sqlite3.Connection], None]]
-MIGRATIONS: list[Migration] = [(2, _V2_SQL, _v2_assign_projects)]
+MIGRATIONS: list[Migration] = [(2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL)]
 SCHEMA_VERSION = max([BASE_VERSION, *(m[0] for m in MIGRATIONS)])
 
 TABLES = frozenset(
@@ -134,6 +162,7 @@ TABLES = frozenset(
         "projects",
         "campaigns",
         "contact_log",
+        "known_contacts",
         "companies",
         "people",
         "search_tasks",

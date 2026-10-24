@@ -30,7 +30,7 @@ from leadgen.core.text import normalize_whitespace
 from leadgen.providers import registry, search
 from leadgen.providers.base import ProviderError
 from leadgen.providers.search import SearchResult
-from leadgen.services import budget, projects
+from leadgen.services import budget, contacts_import, projects
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import confirm as rules
 from leadgen.services.seniority import LEVELS
@@ -759,7 +759,7 @@ def list_people(
 
     Returns `people`, `page`, `page_size` (at most 50), `total`, `has_more` and `counts` by status.
     """
-    _campaign(campaign_id)
+    camp = _campaign(campaign_id)
     if status is not None and status not in STATUSES:
         raise PeopleError("invalid_value", f"status must be one of: {', '.join(STATUSES)}.")
     page = max(1, int(page))
@@ -788,9 +788,14 @@ def list_people(
             f"WHERE {clause} ORDER BY p.id LIMIT ? OFFSET ?",
             [*params, page_size, (page - 1) * page_size],
         )
+    shapes = [_person_shape(r, r["company_name"]) for r in rows]
+    known = contacts_import.known_for_people(camp.get("project_id"), [r["id"] for r in rows])
+    for shape in shapes:
+        if shape["id"] in known:
+            shape["known_contact"] = known[shape["id"]]
     return {
         "ok": True,
-        "people": [_person_shape(r, r["company_name"]) for r in rows],
+        "people": shapes,
         "page": page,
         "page_size": page_size,
         "total": total,

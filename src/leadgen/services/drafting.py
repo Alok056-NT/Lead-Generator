@@ -23,6 +23,7 @@ from leadgen import db
 from leadgen.core.text import normalize_whitespace, truncate
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import confirm as rules
+from leadgen.services import contacts_import
 from leadgen.services import offer as offer_mod
 
 PAGE_SIZE_MAX = 50
@@ -329,7 +330,9 @@ def _offer_payload(profile: Mapping[str, Any]) -> dict[str, Any]:
     return {k: profile.get(k) for k in keys}
 
 
-def _person_payload(row: Mapping[str, Any], camp: Mapping[str, Any]) -> dict[str, Any]:
+def _person_payload(
+    row: Mapping[str, Any], camp: Mapping[str, Any], known: Mapping[str, str] | None = None
+) -> dict[str, Any]:
     out: dict[str, Any] = {
         "person_id": row["id"],
         "greeting_name": row["greeting_name"] or row["first_name"],
@@ -346,6 +349,11 @@ def _person_payload(row: Mapping[str, Any], camp: Mapping[str, Any]) -> dict[str
         "evidence": _clean_evidence(row["evidence_snippet"], row["evidence_title"]),
         "flags": _flags(row, camp),
     }
+    if known:  # an imported contact (T24): the AI may only say "we spoke before" because of this
+        out["known_contact"] = {
+            "relationship": known["relationship"],
+            "last_contacted": known["last_contacted"],
+        }
     if row["m_id"] is not None:  # a redraft: show what was wrong
         qa = row["m_qa_json"] if isinstance(row["m_qa_json"], dict) else {}
         out["previous_draft"] = {"subject": row["m_subject"], "body": row["m_body"]}
@@ -397,6 +405,7 @@ def get_drafting_batch(
             f"{base} AND p.id > ? ORDER BY p.id LIMIT ?",
             [*params, after, size],
         )
+    known = contacts_import.known_for_people(camp.get("project_id"), [r["id"] for r in rows])
     remaining = max(0, total - len(rows))
     last_id = rows[-1]["id"] if rows else after
     reply: dict[str, Any] = {
@@ -412,7 +421,7 @@ def get_drafting_batch(
         },
         "channel_spec": CHANNEL_SPECS[channel].as_dict(),
         "offer": _offer_payload(profile),
-        "people": [_person_payload(r, camp) for r in rows],
+        "people": [_person_payload(r, camp, known.get(r["id"])) for r in rows],
         "count": len(rows),
         "remaining": remaining,
         "done": remaining == 0,
