@@ -47,6 +47,7 @@ from leadgen.services import (
     sending,
     seniority,
     suppression,
+    templates,
 )
 from leadgen.services import campaign as campaign_svc
 from leadgen.services import companies as companies_svc
@@ -190,6 +191,19 @@ class ChatBody(_Body):
 
 class DeleteProjectBody(_Body):
     confirm_name: str = Field(max_length=200)
+
+
+class TemplateBody(_Body):
+    name: str = Field(max_length=80)
+    level: Literal["csuite", "director", "manager", "any"] = "any"
+    depth: Literal["short", "standard", "detailed"] = "standard"
+    use_case: str = Field(default="", max_length=200)
+    subject: str = Field(default="", max_length=120)
+    body: str = Field(max_length=3000)
+
+
+class TemplateChoiceBody(_Body):
+    template_key: str = Field(max_length=40)
 
 
 class SendBody(_Body):
@@ -543,6 +557,28 @@ def _register_routes(app: FastAPI) -> None:
         result.pop("next_step", None)  # that line is written for the AI, not for this page
         return _reply(result)
 
+    # ---- message templates --------------------------------------------------------------------
+
+    @app.get("/api/projects/{project_id}/templates")
+    def project_templates(project_id: int) -> JSONResponse:
+        return _reply(templates.list_templates(project_id))
+
+    @app.post("/api/projects/{project_id}/templates")
+    def add_template(project_id: int, body: TemplateBody) -> JSONResponse:
+        return _reply(templates.save_template(project_id, body.model_dump()))
+
+    @app.put("/api/projects/{project_id}/templates/{template_id}")
+    def change_template(project_id: int, template_id: int, body: TemplateBody) -> JSONResponse:
+        return _reply(templates.save_template(project_id, body.model_dump(), template_id))
+
+    @app.delete("/api/projects/{project_id}/templates/{template_id}")
+    def remove_template(project_id: int, template_id: int) -> JSONResponse:
+        return _reply(templates.delete_template(project_id, template_id))
+
+    @app.post("/api/campaigns/{campaign_id}/template")
+    def set_campaign_template(campaign_id: int, body: TemplateChoiceBody) -> JSONResponse:
+        return _reply(templates.set_campaign_template(campaign_id, body.template_key))
+
     # ---- campaigns, companies -----------------------------------------------------------------
 
     @app.get("/api/campaigns")
@@ -558,6 +594,7 @@ def _register_routes(app: FastAPI) -> None:
                     **short, "counts": full["counts"], "sectors": full["sectors"],
                     "email_summary": full["email_summary"],
                     "project": names.get(short["project_id"], ""),
+                    "template_key": full["options"].get("template_key", "auto-standard"),
                 }
             )
         return _json({"ok": True, "campaigns": rows})

@@ -23,7 +23,7 @@ from leadgen import db
 from leadgen.core.text import normalize_whitespace, truncate
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import confirm as rules
-from leadgen.services import contacts_import, projects
+from leadgen.services import contacts_import, projects, templates
 from leadgen.services import offer as offer_mod
 
 PAGE_SIZE_MAX = 50
@@ -432,6 +432,16 @@ def get_drafting_batch(
     known = contacts_import.known_for_people(camp.get("project_id"), [r["id"] for r in rows])
     remaining = max(0, total - len(rows))
     last_id = rows[-1]["id"] if rows else after
+    people = [_person_payload(r, camp, known.get(r["id"])) for r in rows]
+    # The message style applies to email and LinkedIn messages, not to connection notes.
+    styled = channel != "linkedin_invite"
+    used: dict[str, dict[str, str]] = {}
+    if styled:
+        key = str((camp.get("options") or {}).get("template_key") or templates.DEFAULT_KEY)
+        for r, person in zip(rows, people, strict=True):
+            tkey, tpl = templates.resolve(camp.get("project_id"), key, r["seniority"])
+            person["template"] = tkey
+            used[tkey] = {k: tpl[k] for k in ("name", "use_case", "notes", "subject", "body")}
     reply: dict[str, Any] = {
         "ok": True,
         "campaign_id": camp["id"],
@@ -448,7 +458,7 @@ def get_drafting_batch(
         "sender_name": shown["name"],                         # kept for older callers
         "sign_off": {**shown, "block": "\n".join(sign_off_lines(shown)),
                      "required": bool(sender["name"])},
-        "people": [_person_payload(r, camp, known.get(r["id"])) for r in rows],
+        "people": people,
         "count": len(rows),
         "remaining": remaining,
         "done": remaining == 0,
@@ -456,8 +466,12 @@ def get_drafting_batch(
     }
     if show_guide:
         reply["guide"] = guide_text()
+    if styled:
+        reply["templates"] = used
+        reply["placeholders"] = templates.PLACEHOLDERS
     if not rows and after == 0:
         reply["message"] = (
+
             "Nobody needs a draft for this channel. "
             + (
                 "People need a verified email first (run find_emails)."

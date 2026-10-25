@@ -28,6 +28,24 @@ examples below end with a first name because their batch had no job title or com
 a footer, postal address, unsubscribe line or links to the sender's website: the tool adds the
 required footer when an email is sent.
 
+## 1a. Templates
+
+Each person in the batch names a `template`; its text is in the batch's `templates`. Follow it:
+
+- Keep its order of paragraphs and its length (`notes` gives the word target).
+- Replace every `{placeholder}` using `placeholders` for what each one means. Where they come
+  from: `{evidence_line}` from the person's `evidence`, `title` and `company`; `{offer_line}` from
+  `offer.services`; `{outcome_line}` from `offer.confirmed_claims`; `{proof_line}` from
+  `offer.proof_points` (or a confirmed claim); `{sender_line}` from `offer.sender` and
+  `sign_off`; `{cta}` from `offer.ctas`. A sentence whose data is missing (for example no proof
+  point for `{proof_line}`) is left out, never invented.
+- Plain-text lines in a template are suggestions: keep their meaning, word them for this person.
+- Email: use the template's `subject` as the pattern for the subject line (60 characters at most).
+- LinkedIn message (after they accept): use the body without the subject, within 700 characters;
+  a detailed template is written at standard length. LinkedIn connection notes ignore templates.
+- `{sign_off}` is the batch's `sign_off.block`, each part on its own line.
+- The rules in sections 2 to 5 always win over a template.
+
 ## 2. What you may state
 
 - Only facts in `offer.confirmed_claims`, and numbers or case studies in `offer.proof_points`.

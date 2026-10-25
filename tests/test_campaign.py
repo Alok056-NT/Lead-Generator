@@ -105,6 +105,7 @@ def test_create_stores_everything(offer_id):
         "max_people": None,
         "max_companies": None,
         "max_per_company": None,
+        "template_key": "auto-standard",
     }
     assert got["locale"] == "en-SG"  # from the offer profile
     assert got["counts"]["people"] == {
@@ -305,6 +306,7 @@ def test_update_search_mode_directly_and_merge_options(offer_id):
         "max_people": None,
         "max_companies": None,
         "max_per_company": None,
+        "template_key": "auto-standard",
     }
     got = c.update_campaign(created["id"], ai_search_needs_recheck=True)
     assert got["options"]["ai_search_needs_recheck"] is True

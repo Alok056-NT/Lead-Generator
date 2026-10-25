@@ -36,6 +36,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "max_people": None,  # n: confirmed people the campaign keeps (None = no limit)
     "max_companies": None,  # c: companies searched (the first c approved ones)
     "max_per_company": None,  # p: confirmed people per company; more go to `reserve`
+    "template_key": "auto-standard",  # message style: services/templates.py
 }
 LIMIT_OPTIONS = ("max_people", "max_companies", "max_per_company")
 MAX_LIMIT = 10_000
@@ -47,6 +48,10 @@ _STATUS_VALUES = {
     "emails": ("verified", "risky", "guess", "invalid", "unknown"),
     "messages": ("draft", "qa_fail", "qa_pass", "approved", "sent"),
 }
+KEY_RE = re.compile(
+    r"^(?:auto-(?:short|standard|detailed)|(?:csuite|director|manager)-"
+    r"(?:short|standard|detailed)|custom-[1-9][0-9]{0,8})$"
+)
 _LOCALE_RE = re.compile(r"([A-Za-z]{2,3})(?:[-_]([A-Za-z]{2}))?")
 _FIELDS = (
     "name", "offer_id", "countries", "sectors", "company_size", "channels", "designations",
@@ -231,6 +236,12 @@ def _options(value: Any, base: Mapping[str, Any] | None = None) -> dict[str, Any
         raise CampaignError(
             "invalid_value",
             f"search_mode must be one of: {', '.join(SEARCH_MODES)}.",
+        )
+    if not isinstance(out["template_key"], str) or not KEY_RE.match(out["template_key"]):
+        raise CampaignError(
+            "invalid_value",
+            "option template_key must be auto-standard, auto-short, auto-detailed, "
+            "a built-in template key or custom-<id>.",
         )
     return out
 

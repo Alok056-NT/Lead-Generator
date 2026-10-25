@@ -18,7 +18,7 @@ import pytest
 import respx
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters
-from qa_world import PROFILE
+from qa_world import PROFILE, add_company, add_email, add_person
 from qa_world import make_campaign as make_email_campaign
 from starlette.testclient import TestClient
 
@@ -31,6 +31,7 @@ from leadgen.providers.search import SearchResult
 from leadgen.services import companies as companies_svc
 from leadgen.services import guide
 from leadgen.services import lemlist as lemlist_svc
+from leadgen.services import templates as tpl
 
 # Tools in PLAN section 10 (1-40), plus the extra tools the follow-ups asked for.
 PLAN_TOOLS = {
@@ -1090,3 +1091,17 @@ def test_module_runs_as_a_script_help():
         timeout=60,
     )
     assert out.returncode == 0 and "--http" in out.stdout
+
+
+def test_drafting_batch_keeps_a_long_custom_template(mcp):
+    camp = make_email_campaign(channels=("email",))
+    cid = camp["id"]
+    person = add_person(cid, add_company(cid), "Aria", "Tan")
+    add_email(person, "verified", "aria.tan@northwind.example")
+    body = "Hi {first_name},\n\n" + "Plain words about the work. " * 90 + "\n\n{sign_off}"
+    made = tpl.save_template(camp["project_id"], {"name": "Long one", "body": body})["template"]
+    mcp("update_campaign", campaign_id=cid, template_key=made["key"])
+    batch = mcp("get_drafting_batch", campaign_id=cid, channel="email")
+    assert batch["people"][0]["template"] == made["key"]
+    assert len(made["body"]) > 2000  # longer than the shortening limit
+    assert batch["templates"][made["key"]]["body"] == made["body"]

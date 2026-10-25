@@ -613,7 +613,9 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         user explicitly asks, after warning that guessed addresses will bounce, and they are
         still never exported as the email. After changing countries,
         designations or seniority, call recheck_people so people already found are judged by
-        the new rules. status: draft, active or archived. Free.""",
+        the new rules. template_key sets the message style the drafts follow; change it only when
+        the user asks for shorter, longer or a named template. status: draft, active or archived.
+        Free.""",
         WRITE | {"idempotent": True},
     )
     def update_campaign(
@@ -654,6 +656,10 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         max_per_company: Annotated[
             int | None, Field(description="p: people per company; 0 removes the limit.")
         ] = None,
+        template_key: Annotated[
+            str | None, Field(description="Message style: auto-standard (default), auto-short, "
+                              "auto-detailed, csuite-short ... manager-detailed, or custom-<id>.")
+        ] = None,
     ) -> dict[str, Any]:
         limits = {
             key: (None if value == 0 else value)
@@ -669,6 +675,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             "seniority_min": seniority_min, "exclusions": exclusions, "locale": locale,
             "budget": budget, "status": status, "search_mode": search_mode,
             "invite_note": invite_note, "allow_guess_emails": allow_guess_emails,
+            "template_key": template_key,
         }  # fmt: skip
         return campaign_svc.update_campaign(
             campaign_id, **{k: v for k, v in given.items() if v is not None}, **limits
@@ -918,9 +925,10 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         linkedin_message), each with cleaned evidence, flags and (when redrafting) the earlier
         draft and its issues, plus the offer profile, the channel limits and, on the first call,
         the writing guide. Write one message per person using only that data, then call
-        save_drafts. Loop with next_cursor until done. Free, changes nothing.""",
+        save_drafts. Each person names the template to follow (templates). Loop with next_cursor
+        until done. Free, changes nothing.""",
         READ,
-        keep=("guide",),
+        keep=("guide", "templates"),
     )
     def get_drafting_batch(
         campaign_id: CampaignId,
