@@ -235,10 +235,12 @@
     name.focus();
   }
 
-  // project: {id, name, sender_name, cooldown_days}; onSaved runs after a successful save.
+  // project: {id, name, sender_name, sender_title, sender_company, cooldown_days}; onSaved runs after a successful save.
   function openEditDialog(project, onSaved) {
     const name = h('input', { type: 'text', id: 'ep-name', value: project.name, autocomplete: 'off', maxlength: '120' });
     const sender = h('input', { type: 'text', id: 'ep-sender', value: project.sender_name || '', autocomplete: 'off', maxlength: '120' });
+    const title = h('input', { type: 'text', id: 'ep-title', value: project.sender_title || '', autocomplete: 'off', maxlength: '120' });
+    const company = h('input', { type: 'text', id: 'ep-company', value: project.sender_company || '', autocomplete: 'off', maxlength: '120' });
     const days = h('input', { type: 'number', id: 'ep-days', value: String(project.cooldown_days), min: '0', max: '3650' });
     const status = h('div', { role: 'status' });
     const save = h('button', { type: 'button', class: 'primary', text: 'Save' });
@@ -246,14 +248,16 @@
     const dlg = dialog('Edit project', [
       field('ep-name', 'Project name', name),
       field('ep-sender', 'Your name for the sign-off', sender),
-      h('p', { class: 'small muted', text: 'Messages end with this name. Your first name is enough.' }),
+      field('ep-title', 'Your job title', title),
+      field('ep-company', 'Your company', company),
+      h('p', { class: 'small muted', text: 'Messages end with your name, job title and company, each on its own line.' }),
       field('ep-days', 'Do not contact the same person again for (days)', days),
       h('p', { class: 'small muted', text: 'Set 0 to turn this off.' }),
       status], [cancel, save]);
     cancel.addEventListener('click', () => dlg.close());
     save.addEventListener('click', async () => {
       save.disabled = true;
-      const res = await api('/api/projects/' + project.id, { method: 'PATCH', body: { name: name.value, sender_name: sender.value, cooldown_days: Number(days.value) } });
+      const res = await api('/api/projects/' + project.id, { method: 'PATCH', body: { name: name.value, sender_name: sender.value, sender_title: title.value, sender_company: company.value, cooldown_days: Number(days.value) } });
       save.disabled = false;
       if (res.ok) { dlg.close(); toast('Saved.'); if (onSaved) onSaved(res.project); } else setStatus(status, 'bad', errorText(res));
     });
