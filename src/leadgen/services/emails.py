@@ -1,10 +1,11 @@
 # Adapted from Harvey (MIT, Ethan Rogers): reference/harvey/integrations/email_finder.py
 """Email finder: one best-guess work email per confirmed person, graded honestly.
 
-Flow per person (PLAN section 12): MX lookup (google / microsoft / gateway / other) -> the
-domain's email pattern (cache, known examples, Hunter, the company website, default
-`{first}.{last}`) -> one candidate address -> verify it (Reoon, ZeroBounce, Hunter, then an SMTP
-probe only for small self-hosted mail servers) -> status `verified`, `risky` (catch-all domain),
+Flow per person (PLAN section 12): a LinkedIn finder first when a key is set and the person has a
+profile (V13), then MX lookup (google / microsoft / gateway / other) -> the domain's email pattern
+(cache, known examples, Hunter, the company website, default `{first}.{last}`) -> one candidate
+address -> verify it (Reoon, ZeroBounce, Hunter, then an SMTP probe only for small self-hosted
+mail servers) -> status `verified`, `risky` (catch-all domain),
 `guess` (nothing could check it), `invalid` or `unknown`. Only `verified` (and `risky` when the
 project allows it) is ever exported or sent; every address, whatever its source, has to pass
 a verifier here first. Role addresses (info@, hr@ ...) and
@@ -36,7 +37,8 @@ import httpx
 from leadgen import db
 from leadgen.core.config import load_settings
 from leadgen.providers import registry
-from leadgen.providers.base import ProviderError, RateLimiter
+from leadgen.providers.apollo import PHONE_CREDITS, ApolloProvider
+from leadgen.providers.base import Found, ProviderError, RateLimiter
 from leadgen.providers.emailable import EmailableProvider
 from leadgen.providers.hunter import HunterProvider
 from leadgen.providers.reoon import ReoonProvider
@@ -89,6 +91,11 @@ HTTP_FAILURES_BEFORE_SKIP = 2  # a provider failing this often in one call is sk
 SMTP_TIMEOUT_S = 10
 SMTP_PROBE = True  # the SMTP RCPT probe (only ever used for `other` mail servers)
 REAL_SOURCES = ("known_email", "hunter", "website", "ai_search")  # patterns seen on real addresses
+# Most a LinkedIn finder can charge for one person: (email only, email and phone).
+FINDER_MAX_CREDITS: dict[str, tuple[float, float]] = {
+    "apollo": (1, 9), "prospeo": (1, 10), "getprospect": (1, 2),
+}  # fmt: skip
+PHONE_POLLS_PER_CALL = 10
 
 _mx_cache: dict[str, tuple[str | None, bool]] = {}
 _site_cache: dict[str, list[tuple[str, str]]] = {}
@@ -102,6 +109,7 @@ _TOKEN_RE = re.compile(r"\{(first|last|f|l)\}")
 _POLICY_CODE_RE = re.compile(rb"\s*5\.7\.\d+")
 _MAILTO_RE = re.compile(r"mailto:([^\"'<>\s?#]+)", re.IGNORECASE)
 _ADDRESS_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_PHONE_RE = re.compile(r"^\+?[0-9][0-9 ()\-.]{5,28}$")
 
 
 class EmailError(Exception):
@@ -854,7 +862,8 @@ def _people(
 ) -> list[dict[str, Any]]:
     """Confirmed people of the campaign (id above `after`) with company domain and email rows."""
     sql = (
-        "SELECT p.id, p.first_name, p.last_name, p.company_id, c.domain AS domain "
+        "SELECT p.id, p.first_name, p.last_name, p.company_id, p.linkedin_url, "
+        "c.domain AS domain "
         "FROM people p JOIN companies c ON c.id = p.company_id "
         "WHERE p.campaign_id = ? AND p.status = 'confirmed' AND p.id > ?"
     )
@@ -896,17 +905,30 @@ def _verifier_state() -> tuple[bool, bool]:
 
 
 def estimate_email_search(
-    campaign_id: int, person_ids: Sequence[int] | None = None
+    campaign_id: int,
+    person_ids: Sequence[int] | None = None,
+    use_finders: bool = True,
+    want_phone: bool = False,
 ) -> dict[str, Any]:
     """What an email search would use: `people`, `domains`, `hunter_credits` (one pattern lookup
-    per domain without a saved pattern, when Hunter is set), `verify_credits` (one per person,
-    when a verifier is set) and `budget_left` for the campaign."""
+    per domain without a saved pattern, when Hunter is set), `finder_credits` (at most, for the
+    first configured LinkedIn finder), `verify_credits` (one per person, when a verifier is set)
+    and `budget_left` for the campaign."""
     any_verifier, has_hunter = _verifier_state()
-    return _estimate(campaign_id, _int_list(person_ids), has_hunter, any_verifier)
+    chosen = registry.finders() if use_finders else []
+    finder_key = chosen[0].info.key if chosen else ""
+    return _estimate(
+        campaign_id, _int_list(person_ids), has_hunter, any_verifier, finder_key, want_phone
+    )
 
 
 def _estimate(
-    campaign_id: int, ids: Sequence[int], has_hunter: bool, any_verifier: bool
+    campaign_id: int,
+    ids: Sequence[int],
+    has_hunter: bool,
+    any_verifier: bool,
+    finder_key: str = "",
+    want_phone: bool = False,
 ) -> dict[str, Any]:
     camp = _campaign(campaign_id)
     todo = [r for r in _people(campaign_id, 0, ids or None) if not _skip_reason(r, bool(ids))]
@@ -917,20 +939,30 @@ def _estimate(
         else 0
     )
     verify_credits = len(todo) if any_verifier else 0
+    with_profile = [r for r in todo if r.get("linkedin_url")]
+    finder_credits = (
+        len(with_profile) * FINDER_MAX_CREDITS.get(finder_key, (1, 1))[1 if want_phone else 0]
+        if finder_key
+        else 0
+    )
     threshold = load_settings().confirm_threshold_credits
     return {
         "ok": True,
         "people": len(todo),
         "domains": len(domains),
         "hunter_credits": hunter_credits,
+        "finder": finder_key or None,
+        "finder_credits": finder_credits,  # at most
+        "phones_wanted": want_phone,
         "verify_credits": verify_credits,
         "budget_left": {
             "hunter": budget.limit(camp["budget"], "hunter") - budget.used(campaign_id, "hunter"),
             "verify": budget.limit(camp["budget"], "verify") - budget.used(campaign_id, "verify"),
+            "finder": budget.limit(camp["budget"], "finder") - budget.used(campaign_id, "finder"),
         },
         "verifier_configured": any_verifier,
         "confirm_threshold": threshold,
-        "needs_confirmation": hunter_credits + verify_credits > threshold,
+        "needs_confirmation": hunter_credits + verify_credits + finder_credits > threshold,
     }
 
 
@@ -946,6 +978,109 @@ def _email_counts(campaign_id: int) -> dict[str, int]:
     return {s: found.get(s, 0) for s in STATUSES}
 
 
+# --- LinkedIn finders and phones ------------------------------------------------------------
+
+
+def _store_phone(person_id: int, found: Found) -> None:
+    """Keep a phone from a finder (status found_not_verified) or Apollo's waiting request."""
+    with db.session() as conn:
+        if found.phone and _PHONE_RE.match(found.phone.strip()):
+            db.upsert(
+                conn, "phones", ("person_id", "number"), person_id=person_id,
+                number=found.phone.strip(), kind=found.phone_kind, source=found.source,
+                status="found_not_verified", request_id="",
+            )  # fmt: skip
+        elif found.phone_request:
+            db.upsert(
+                conn, "phones", ("person_id", "number"), person_id=person_id, number="",
+                kind="", source=found.source, status="requested", request_id=found.phone_request,
+            )  # fmt: skip
+
+
+def _find_by_profile(
+    camp: Mapping[str, Any],
+    row: Mapping[str, Any],
+    finders: Sequence[Any],
+    confirm: bool,
+    run: _Run,
+    want_phone: bool,
+) -> tuple[str, str] | dict[str, Any]:
+    """(email, finder key) of the first finder that has one (("", "") when none), or a budget
+    reply (the run must stop)."""
+    for finder in finders:
+        key = finder.info.key
+        if key in run.dead:
+            continue
+        most = FINDER_MAX_CREDITS.get(key, (1, 1))[1 if want_phone else 0]
+        blocked = _budget_gate(camp["id"], camp["budget"], "finder", most, confirm)
+        if blocked is not None:
+            return blocked
+        try:
+            found = finder.find(row["linkedin_url"], want_phone)
+        except ProviderError as exc:
+            run.failed(key, exc)
+            continue
+        if found.credits:
+            budget.charge(camp["id"], "finder", found.credits)
+            run.spent["finder"] += found.credits
+        _store_phone(row["id"], found)
+        if found.email and "@" in found.email:
+            return found.email.strip().lower(), key
+    return "", ""
+
+
+def poll_phone_requests(campaign_id: int, limit: int = PHONE_POLLS_PER_CALL) -> dict[str, int]:
+    """Collect waiting Apollo phone numbers of the campaign. Returns `ready` (number stored),
+    `gone` (no number or unknown request: marked failed) and `waiting` (still pending)."""
+    with db.session() as conn:
+        rows = db.query(
+            conn,
+            "SELECT ph.id, ph.person_id, ph.request_id FROM phones ph "
+            "JOIN people p ON p.id = ph.person_id "
+            "WHERE p.campaign_id = ? AND ph.status = 'requested' AND ph.source = 'apollo' "
+            "ORDER BY ph.id LIMIT ?",
+            (campaign_id, limit),
+        )
+    counts = {"ready": 0, "waiting": 0, "gone": 0}
+    apollo = ApolloProvider()
+    if not rows or not apollo.configured():
+        counts["waiting"] = len(rows)
+        return counts
+    for index, row in enumerate(rows):
+        try:
+            state, number, kind = apollo.collect_phone(row["request_id"])
+        except ProviderError:
+            counts["waiting"] += len(rows) - index
+            break
+        if state == "pending":
+            counts["waiting"] += 1
+        elif state == "ready" and number:
+            with db.session() as conn:
+                clash = db.query(
+                    conn, "SELECT id FROM phones WHERE person_id = ? AND number = ?",
+                    (row["person_id"], number),
+                )  # fmt: skip
+                if clash:
+                    conn.execute("DELETE FROM phones WHERE id = ?", (row["id"],))
+                else:
+                    conn.execute(
+                        "UPDATE phones SET number = ?, kind = ?, status = 'found_not_verified', "
+                        "request_id = '', updated_at = ? WHERE id = ?",
+                        (number, kind, db.now(), row["id"]),
+                    )
+            budget.charge(campaign_id, "finder", PHONE_CREDITS)
+            counts["ready"] += 1
+        else:
+            with db.session() as conn:
+                conn.execute(
+                    "UPDATE phones SET status = 'failed', request_id = '', updated_at = ? "
+                    "WHERE id = ?",
+                    (db.now(), row["id"]),
+                )
+            counts["gone"] += 1
+    return counts
+
+
 # --- find_emails ----------------------------------------------------------------------------
 
 
@@ -957,8 +1092,15 @@ def find_emails(
     max_people_per_call: int = PAGE_SIZE_MAX,
     hunter: Any = None,
     verifiers: Sequence[Any] | None = None,
+    use_finders: bool = True,
+    want_phone: bool = False,
+    finders: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """Find and grade one email for each confirmed person of an email-channel campaign.
+
+    With a LinkedIn finder key (Apollo, Prospeo, GetProspect) a person's profile is looked up
+    first; every address it gives is still verified. `want_phone` also looks up phone numbers
+    (found, not checked). Waiting Apollo phones are collected at the start of each call.
 
     Searches people without an email yet (with `person_ids`, also those whose row is only a
     `guess`/`unknown`). Pass `confirm=true` after telling the user the cost: without it a run
@@ -967,11 +1109,12 @@ def find_emails(
     `budget_reached` reply. Each call handles at most `max_people_per_call` people (25) and
     stops starting new people after about 25 seconds (a slow check can add up to 25 more),
     returning `next_cursor` until done. Missing or exhausted verifier keys never stop the run:
-    those addresses stay `guess`, and the reply says why. `hunter` and
-    `verifiers` let tests pass fakes.
+    those addresses stay `guess`, and the reply says why. `hunter`, `verifiers` and `finders`
+    let tests pass fakes.
     """
     camp = _campaign(campaign_id)
     _check_channel(camp)
+    phones = poll_phone_requests(campaign_id)
     ids = _int_list(person_ids)
     start = _cursor(cursor)
     limit = min(max(1, int(max_people_per_call)), PAGE_SIZE_MAX)
@@ -979,15 +1122,20 @@ def find_emails(
     if hunter is None:
         candidate = HunterProvider()
         hunter = candidate if candidate.configured() else None
+    chosen = list(finders) if finders is not None else (registry.finders() if use_finders else [])
+    finder_key = chosen[0].info.key if chosen else ""
 
     if start == 0 and not confirm:
-        est = _estimate(campaign_id, ids, hunter is not None and hunter.configured(), bool(chain))
+        est = _estimate(
+            campaign_id, ids, hunter is not None and hunter.configured(), bool(chain),
+            finder_key, want_phone,
+        )  # fmt: skip
         if est["needs_confirmation"]:
-            credits = est["hunter_credits"] + est["verify_credits"]
+            credits = est["hunter_credits"] + est["verify_credits"] + est["finder_credits"]
             return {
                 **est,
-                "message": f"This needs about {credits:g} credits (Hunter and email checks). "
-                "Ask the user, then repeat the call with confirm=true.",
+                "message": f"This needs at most {credits:g} credits (finding and checking "
+                "emails). Ask the user, then repeat the call with confirm=true.",
             }
 
     rows = _people(campaign_id, start, ids or None)
@@ -1018,8 +1166,9 @@ def find_emails(
         # pattern step took (it is never deferred); the deadline only guards later people.
         run.deadline = began + VERIFY_DEADLINE_S if done > 0 else None
         outcome = _process_person(
-            camp, row, bool(ids), confirm, hunter, chain, run, patterns, can_defer=done > 0
-        )
+            camp, row, bool(ids), confirm, hunter, chain, run, patterns, can_defer=done > 0,
+            finders=chosen, want_phone=want_phone,
+        )  # fmt: skip
         if outcome == _DEFERRED:  # out of time mid-person: nothing stored, redo it next call
             remaining = True
             last_id = row["id"] - 1
@@ -1044,10 +1193,13 @@ def find_emails(
         "email_summary": campaign_mod.email_summary(campaign_id),
         "patterns_used": dict(list(patterns.items())[:5]),
         "credits_used": {k: float(v) for k, v in run.spent.items()},
+        "phones": phones,
         "done": finished,
         "next_cursor": None if finished else str(last_id),
     }
     notes = _notes(chain, run, totals["guess"] + totals["unknown"])
+    if want_phone and not chosen:
+        notes.append("No finder key is set, so no phone numbers were looked up.")
     if notes:
         reply["notes"] = notes
     if run.issues:
@@ -1095,11 +1247,34 @@ def _process_person(
     run: _Run,
     patterns: dict[str, dict[str, str]],
     can_defer: bool = False,
+    finders: Sequence[Any] = (),
+    want_phone: bool = False,
 ) -> str | dict[str, Any]:
     """Find, grade and store one person's email. Returns the stored status, a skip word, or a
     budget reply (the run must stop and this person is not stored). With `can_defer`, running
     out of time before a check could be made returns `_DEFERRED` (nothing is stored)."""
     domain = clean_domain(row["domain"])
+    if finders and row.get("linkedin_url"):
+        hit = _find_by_profile(camp, row, finders, confirm, run, want_phone)
+        if isinstance(hit, dict):
+            return hit
+        email, finder_key = hit
+        if email:
+            verdict = verify(
+                email, mx_type(clean_domain(email)), verifiers=chain, campaign_id=camp["id"],
+                budget_map=camp["budget"], confirm=confirm, run=run,
+            )  # fmt: skip
+            if verdict.blocked is not None:
+                return verdict.blocked
+            if verdict.status != "invalid":
+                # shortcut: a finder guess is looked up again on an explicit re-run (the finder
+                # charges again); re-verify it instead if that costs too much.
+                result = store_email(
+                    row["id"], email, verdict.status, method=f"finder:{finder_key}",
+                    verifier=verdict.verifier,
+                )  # fmt: skip
+                return verdict.status if result == "stored" else result
+        # no finder email, or one that is invalid: the pattern path below
     mx_host, definitive = _mx_lookup(domain)
     pattern_info = _derive(
         domain, None, hunter, True, camp["id"], camp["budget"], confirm, run
@@ -1163,6 +1338,7 @@ __all__ = [
     "known_pattern",
     "learn_pattern_from_examples",
     "mx_type",
+    "poll_phone_requests",
     "scrape_site_emails",
     "scrape_site_sources",
     "store_email",

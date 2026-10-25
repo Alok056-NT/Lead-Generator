@@ -14,7 +14,7 @@ from leadgen.core import config
 SENDER_FIELDS = ("name", "company", "role", "email", "website")
 AI_MODES = ("claude_plan", "api_key")
 AI_MODE_KEY = "ai_mode"
-BUDGET_FIELDS = ("search", "hunter", "verify")
+BUDGET_FIELDS = ("search", "hunter", "verify", "finder")
 MAX_LINE = 200
 MAX_ADDRESS = 500
 MAX_BUDGET = 1_000_000
@@ -133,7 +133,9 @@ def update_preferences(changes: dict[str, Any]) -> dict[str, Any]:
     if "budgets" in changes:
         budgets = changes["budgets"]
         if not isinstance(budgets, dict) or set(budgets) - set(BUDGET_FIELDS):
-            raise PreferencesError("invalid_value", "budgets must hold search, hunter, verify.")
+            raise PreferencesError(
+                "invalid_value", "budgets must hold search, hunter, verify, finder."
+            )
         for field, value in budgets.items():
             data["budgets"][field] = _budget(value, field)
     if "strict_review" in changes:

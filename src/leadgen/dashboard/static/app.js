@@ -1897,7 +1897,8 @@ async function pageSettings(ctx) {
     h('fieldset', null, h('legend', { text: 'Spending limits per campaign (in credits)' }),
       h('p', { class: 'small muted', text: 'The tool asks before going over these.' }),
       text('s-b-search', 'Searches', res.budgets.search, 'number'), text('s-b-hunter', 'Hunter email lookups', res.budgets.hunter, 'number'),
-      text('s-b-verify', 'Email verifications', res.budgets.verify, 'number')),
+      text('s-b-verify', 'Email verifications', res.budgets.verify, 'number'),
+      text('s-b-finder', 'Email and phone lookups from LinkedIn profiles', res.budgets.finder, 'number')),
     h('fieldset', null, h('legend', { text: 'Checking messages' }),
       h('label', { class: 'check', for: 's-strict' }, inputs.strict, 'Strict: every message must be passed by the AI check before it is exported or sent')),
     h('div', { class: 'row' }, save), status);
@@ -1912,7 +1913,7 @@ async function pageSettings(ctx) {
       postal_address: inputs.postal.value, locale: inputs['s-locale'].value,
       budgets: {
         search: Number(inputs['s-b-search'].value), hunter: Number(inputs['s-b-hunter'].value),
-        verify: Number(inputs['s-b-verify'].value),
+        verify: Number(inputs['s-b-verify'].value), finder: Number(inputs['s-b-finder'].value),
       },
       strict_review: inputs.strict.checked,
     };

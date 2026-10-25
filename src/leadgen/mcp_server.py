@@ -171,6 +171,14 @@ Cursor = Annotated[
     str | int | None,
     Field(description="The next_cursor from the previous reply; leave out on the first call."),
 ]
+FINDERS_HELP = (
+    "Look up emails from LinkedIn profiles first with Apollo, Prospeo or GetProspect when a "
+    "key is set."
+)
+PHONE_HELP = (
+    "Also look up phone numbers (much more expensive). Only when the user asked for phone "
+    "numbers."
+)
 Page = Annotated[int, Field(description="Page number, starting at 1.")]
 PageSize = Annotated[int, Field(description="Rows per page, at most 50.")]
 Ids = Annotated[list[int], Field(description="Row ids (from the matching list tool).")]
@@ -895,8 +903,10 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
     def estimate_email_search(
         campaign_id: CampaignId,
         person_ids: Annotated[list[int] | None, Field(description="Only these people.")] = None,
+        use_finders: Annotated[bool, Field(description=FINDERS_HELP)] = True,
+        want_phone: Annotated[bool, Field(description=PHONE_HELP)] = False,
     ) -> dict[str, Any]:
-        return emails.estimate_email_search(campaign_id, person_ids)
+        return emails.estimate_email_search(campaign_id, person_ids, use_finders, want_phone)
 
     @tool(
         "Find emails",
@@ -906,7 +916,10 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         clear yes. Works in chunks of 25 people: while done is false call again with
         next_cursor. Statuses: verified, risky, guess (not verified, never sent unless the user
         allows it), invalid. Relay needs_confirmation, budget_reached, provider_issues and
-        verifier_needs_key replies to the user.""",
+        verifier_needs_key replies to the user. With a finder key (Apollo, Prospeo, GetProspect)
+        each person's LinkedIn profile is looked up first; every email found is still verified
+        before it counts. Phone numbers are stored as found, not verified, and Apollo phones
+        arrive on a later call.""",
         SPEND,
     )
     def find_emails(
@@ -914,8 +927,12 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         person_ids: Annotated[list[int] | None, Field(description="Only these people.")] = None,
         confirm: Confirm = False,
         cursor: Cursor = None,
+        use_finders: Annotated[bool, Field(description=FINDERS_HELP)] = True,
+        want_phone: Annotated[bool, Field(description=PHONE_HELP)] = False,
     ) -> dict[str, Any]:
-        return emails.find_emails(campaign_id, person_ids, confirm, cursor)
+        return emails.find_emails(
+            campaign_id, person_ids, confirm, cursor, use_finders=use_finders, want_phone=want_phone
+        )
 
     # ---- 23-24: drafting ----------------------------------------------------------------------
 

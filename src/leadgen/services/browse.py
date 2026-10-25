@@ -742,6 +742,7 @@ def studio_results(
     base = list_leads(chosen, status="confirmed", page=page, page_size=page_size)
     ids = [lead["id"] for lead in base["leads"]]
     texts: dict[int, dict[str, dict[str, Any]]] = {}
+    phones: dict[int, tuple[str, str]] = {}
     if ids:
         with db.session() as conn:
             rows = db.query(
@@ -749,19 +750,32 @@ def studio_results(
                 "SELECT person_id, channel, subject, body FROM messages WHERE person_id IN "
                 f"({', '.join('?' for _ in ids)})", ids,
             )  # fmt: skip
+            phone_rows = db.query(
+                conn,
+                "SELECT person_id, number, status FROM phones WHERE status IN "
+                "('found_not_verified', 'requested') AND person_id IN "
+                f"({', '.join('?' for _ in ids)})", ids,
+            )  # fmt: skip
         for row in rows:
             texts.setdefault(row["person_id"], {})[row["channel"]] = row
+        for row in phone_rows:  # a found number beats a waiting request, whatever the order
+            if row["status"] == "found_not_verified":
+                phones[row["person_id"]] = (row["number"], "found")
+            else:
+                phones.setdefault(row["person_id"], ("", "waiting"))
     leads = []
     for lead in base["leads"]:
         mine = texts.get(lead["id"], {})
         linkedin = mine.get("linkedin_message") or mine.get("linkedin_invite") or {}
         email = mine.get("email") or {}
+        phone, phone_status = phones.get(lead["id"], ("", ""))
         leads.append({
             "id": lead["id"],
             "name": lead["raw_name"] or f"{lead['first_name']} {lead['last_name']}".strip(),
             "title": lead["title"], "company": lead["company"],
             "linkedin_url": lead["linkedin_url"],
             "email": lead["email"] if lead["email_status"] == "verified" else "",
+            "phone": phone, "phone_status": phone_status,
             "linkedin_message": linkedin.get("body", ""),
             "email_subject": email.get("subject", ""), "email_body": email.get("body", ""),
             "checked": lead["ai_verdict"] == "pass" and lead["qa_block"] == 0,

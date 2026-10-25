@@ -39,6 +39,7 @@ class Budgets(_Section):
     search: int = 300
     hunter: int = 25
     verify: int = 200
+    finder: int = 50
 
 
 class Sending(_Section):

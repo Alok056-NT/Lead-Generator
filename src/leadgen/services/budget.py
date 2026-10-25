@@ -14,7 +14,7 @@ from typing import Any
 from leadgen import db
 from leadgen.providers import registry
 
-DEFAULT_BUDGET: dict[str, float] = {"search": 300, "hunter": 25, "verify": 200}
+DEFAULT_BUDGET: dict[str, float] = {"search": 300, "hunter": 25, "verify": 200, "finder": 50}
 
 
 def _key(campaign_id: int, kind: str) -> str:

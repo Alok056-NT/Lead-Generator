@@ -1101,7 +1101,7 @@ def test_estimate_email_search(cid, monkeypatch, sleeps):
     est = emails.estimate_email_search(cid)
     assert (est["people"], est["domains"]) == (3, 2)
     assert est["hunter_credits"] == 0 and est["verify_credits"] == 0  # no keys yet
-    assert est["budget_left"] == {"hunter": 25, "verify": 200}
+    assert est["budget_left"] == {"hunter": 25, "verify": 200, "finder": 50}
     assert est["verifier_configured"] is False
     secrets.set("HUNTER_API_KEY", "hunter-key-1234")
     secrets.set("REOON_API_KEY", "reoon-key-1234")

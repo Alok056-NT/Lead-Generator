@@ -12,7 +12,7 @@ from leadgen.services.preferences import PreferencesError
 def test_defaults_are_returned():
     reply = preferences.get_preferences()
     assert reply["ok"] and reply["locale"] == "en-GB" and reply["strict_review"] is True
-    assert reply["budgets"] == {"search": 300, "hunter": 25, "verify": 200}
+    assert reply["budgets"] == {"search": 300, "hunter": 25, "verify": 200, "finder": 50}
     assert set(reply["sender"]) == set(preferences.SENDER_FIELDS)
 
 
@@ -35,7 +35,7 @@ def test_update_changes_only_what_was_sent_and_keeps_other_settings():
     )
     assert reply["sender"]["name"] == "Priya Nair"
     assert reply["sender"]["company"] == "Bright Harbour Training"  # not sent: unchanged
-    assert reply["budgets"] == {"search": 120, "hunter": 25, "verify": 200}
+    assert reply["budgets"] == {"search": 120, "hunter": 25, "verify": 200, "finder": 50}
     after = config.load_settings()
     assert after.sending.daily_cap == 33 and after.strict_review is False
     assert after.postal_address.startswith("1 Example Road\nSingapore")
