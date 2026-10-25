@@ -294,10 +294,11 @@
   }
 
   async function pageHome(ctx) {
-    const [list, ai] = await Promise.all([api('/api/projects'), api('/api/ai')]);
+    const [list, ai, providers] = await Promise.all([api('/api/projects'), api('/api/ai'), api('/api/providers')]);
     if (ctx.token !== routeToken) return;
     if (ai.ok && !ai.mode && !skipped()) { go('/connect'); return; }
     if (!list.ok) return setMain(notice('bad', errorText(list)));
+    const search = providers.ok ? (providers.segments.find((s) => s.key === 'search') || { providers: [] }).providers : [];
     const newButton = h('button', { type: 'button', class: 'primary big', text: 'New project' });
     newButton.addEventListener('click', openNewDialog);
     const kids = [h('div', { class: 'row' },
@@ -306,6 +307,10 @@
       list.projects.length ? newButton : null)];
     if (ai.ok && !ai.ready) {
       kids.push(h('div', { class: 'notice warn' }, 'Your AI is not connected yet. ', h('a', { href: '#/connect', text: 'Connect your AI' })));
+    }
+    if (providers.ok && !providers.providers.some((p) => search.includes(p.key) && p.configured)) {
+      kids.push(h('p', { class: 'small muted' }, 'Tip: add a free search key on the Connectors page so the AI can look for people. ',
+        h('a', { href: '#/keys', text: 'Open Connectors' })));
     }
     if (!list.projects.length) {
       kids.push(h('div', { class: 'empty card' },
@@ -324,7 +329,7 @@
   async function pageAdvanced(ctx) {
     const list = await api('/api/projects');
     if (ctx.token !== routeToken) return;
-    const links = [['#/campaigns', 'Campaigns'], ['#/analytics', 'Results'], ['#/mailbox', 'Connect your mailbox'], ['#/classic', 'Projects, the earlier view']];
+    const links = [['#/campaigns', 'Campaigns'], ['#/analytics', 'Results'], ['#/mailbox', 'Connect your mailbox'], ['#/settings', 'Email footer, spelling and spending limits'], ['#/classic', 'Projects, the earlier view']];
     const kids = [h('h1', { text: 'Advanced' }),
       h('p', { class: 'lead', text: 'Everything from the earlier version of Lead Generator is still here.' }),
       h('section', { class: 'card stack' }, ...links.map(([href, text]) => h('p', null, h('a', { href, text }))))];

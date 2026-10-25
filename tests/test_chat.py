@@ -107,7 +107,7 @@ def test_chip_filter_takes_a_split_marker():
 def test_chip_filter_go_buttons_and_unknown_targets():
     flt = chat.ChipFilter()
     assert flt.feed("Done [[go: keys]]") == "Done "
-    assert flt.buttons == [{"label": "Open the Keys page", "href": "#/keys"}]
+    assert flt.buttons == [{"label": "Open Connectors", "href": "#/keys"}]
     assert chat.ChipFilter().feed("x [[go: nope]] y") == "x  y"
     assert chat.ChipFilter().feed("a [[x]] b") == "a [[x]] b"
 

@@ -18,7 +18,7 @@ from leadgen.dashboard import app as dash
 
 BASE = "http://127.0.0.1:8765"
 STATIC = Path(dash.STATIC_DIR)
-SCRIPTS = ("studio.js", "studio_project.js")
+SCRIPTS = ("ui.js", "studio.js", "studio_project.js", "studio_app.js")
 
 
 @pytest.fixture
@@ -27,11 +27,11 @@ def client():
 
 
 def test_studio_files_are_served(client):
-    for path in ("/static/studio.css", "/static/studio.js", "/static/studio_project.js"):
+    for path in ("/static/studio.css", *(f"/static/{name}" for name in SCRIPTS)):
         assert client.get(path).status_code == 200, path
     assert "javascript" in client.get("/static/studio.js").headers["content-type"]
     page = client.get("/").text
-    order = [page.index(f"/static/{name}") for name in ("studio.js", "studio_project.js", "app.js")]
+    order = [page.index(f"/static/{name}") for name in (*SCRIPTS, "app.js")]
     assert order == sorted(order)
     assert page.index("/static/app.css") < page.index("/static/studio.css")
     assert 'id="ai-pill"' in page
@@ -45,6 +45,14 @@ def test_studio_css_has_the_tokens_and_dark_mode():
         "prefers-color-scheme: dark",
         "backdrop-filter",
         "prefers-reduced-motion",
+        ".ui-card",
+        ".card-body",
+        ".segmented",
+        ".orb",
+        ".bars",
+        ".shimmer",
+        ".tl-step",
+        "grid-template-rows",
     ):
         assert expected in css, expected
 
@@ -62,6 +70,15 @@ def test_studio_js_rules(name):
         if pattern != r"\bAPI keys?\b"  # the Connect screen says "API key" on purpose
     ]
     assert not problems, problems
+
+
+def test_ui_js_remembers_choices_safely():
+    js = (STATIC / "ui.js").read_text(encoding="utf-8")
+    for expected in (
+        "localStorage", "'lg.card.'", "'lg.layout.'", "aria-expanded", "inert", "try {",
+    ):
+        assert expected in js, expected
+    assert "innerHTML" not in js
 
 
 def test_the_labels_of_the_connect_and_home_screens():
@@ -101,11 +118,18 @@ def test_send_dialog_words_every_missing_item():
     assert "missingLine" in js
 
 
+def test_the_connectors_page_labels():
+    js = (STATIC / "studio_app.js").read_text(encoding="utf-8")
+    for expected in ("'Connectors'", "Every key stays on this computer", "pageConnectors"):
+        assert expected in js, expected
+
+
 def test_app_js_routes_the_new_pages():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     for expected in (
         "studio.pageHome", "studio.pageConnect", "studio.pageAdvanced", "studio.pageProject",
-        "NAV_GROUP", "['connect', 'Your AI']",
+        "studio.pageConnectors", "NAV_GROUP", "['connect', 'Your AI']", "['keys', 'Connectors']",
+        "'Costs: '", "'Connect your mailbox'",
     ):  # fmt: skip
         assert expected in js, expected
     assert "href: '#/mailbox'" in js  # pageHome keeps its mailbox link

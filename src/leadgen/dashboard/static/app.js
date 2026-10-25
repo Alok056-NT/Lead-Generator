@@ -333,14 +333,13 @@ function go(path, params) {
 const TOP_NAV = [
   ['home', 'Projects'],
   ['connect', 'Your AI'],
-  ['keys', 'Keys'],
-  ['settings', 'Settings'],
+  ['keys', 'Connectors'],
   ['advanced', 'Advanced'],
 ];
 // Pages that belong to a top-level link without being it, so that link stays highlighted.
 const NAV_GROUP = {
   p: 'home', 'new-project': 'home',
-  c: 'advanced', campaigns: 'advanced', analytics: 'advanced', mailbox: 'advanced', classic: 'advanced',
+  c: 'advanced', campaigns: 'advanced', analytics: 'advanced', mailbox: 'advanced', classic: 'advanced', settings: 'advanced',
 };
 const CAMPAIGN_NAV = [
   ['', 'Overview'],
@@ -414,7 +413,7 @@ async function route() {
   const pages = {
     home: studio.pageHome || pageHome, connect: studio.pageConnect || pageHome,
     advanced: studio.pageAdvanced || pageHome, classic: pageHome,
-    keys: pageKeys, campaigns: pageCampaigns, analytics: pageAnalytics, settings: pageSettings,
+    keys: studio.pageConnectors || pageKeys, campaigns: pageCampaigns, analytics: pageAnalytics, settings: pageSettings,
     'new-project': pageNewProject, mailbox: pageMailbox,
     p: parts[2] === 'new-campaign' ? pageNewCampaign : parts[2] === 'contacts' ? pageContacts
       : parts[2] === 'details' ? pageProject : (studio.pageProject || pageProject),
@@ -1168,6 +1167,7 @@ function providerCard(p) {
   );
   const lines = [
     h('p', { text: p.purpose }),
+    p.costs ? h('p', { class: 'small muted', text: 'Costs: ' + p.costs }) : null,
     h('p', { class: 'small muted' },
       `Free allowance: ${p.free_tier || 'none'}. Used this month: ${fmtNum(p.usage_month.credits)} credits`,
       p.remaining_free !== null ? `, about ${fmtNum(p.remaining_free)} free left.` : '.'),
@@ -1216,8 +1216,8 @@ function providerCard(p) {
       actions.push(h('div', { class: 'row' }, test, remove));
     }
   } else if (p.key === 'smtp') {
-    lines.push(h('p', { class: 'small' }, 'The mailbox password is set in a terminal so it is never shown: run ',
-      h('code', { text: 'leadgen mailbox set' }), '.'));
+    lines.push(h('p', { class: 'small' }, p.configured ? 'Connected. ' : 'Not connected yet. ',
+      h('a', { class: 'button', href: '#/mailbox', text: 'Connect your mailbox' })));
   } else if (!p.env_keys.length) {
     lines.push(h('p', { class: 'small', text: 'No key needed. It is off unless you turn it on in the settings file.' }));
   } else if (!p.implemented) {

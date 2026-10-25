@@ -563,7 +563,7 @@ def _run_turn(turn: Turn, project: dict[str, Any], text: str, files: list[Path],
 # --- the chips and buttons (5.6) -----------------------------------------------------------------
 
 GO_TARGETS = {  # marker target -> (button label, page address); anything else is dropped
-    "keys": ("Open the Keys page", "#/keys"),
+    "keys": ("Open Connectors", "#/keys"),
     "mailbox": ("Connect your email", "#/mailbox"),
     "settings": ("Open Settings", "#/settings"),
     "ai": ("Open Your AI", "#/connect"),
