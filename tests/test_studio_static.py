@@ -99,6 +99,12 @@ def test_the_project_page_labels_and_pieces():
         "'Export and send'", "'Download for Excel (CSV)'", "'Download for lemlist (CSV)'",
         "'Send by email...'", "'Send to lemlist...'", "'Connect lemlist'", "'Not ready yet:'",
         "'Progress and results'",
+        "'What the AI is doing'", "UI.timeline", "'Searches and message style'",
+        "'Message templates'", "'Your sign-off'", "'Your job title'", "'Your company'",
+        "'Your product'", "\"Don't contact again\"", "'Contacts you already have'", "'Chat wide'",
+        "'Side by side'", "'Results wide'", "'Phone (found, not checked)'", "'New template'",
+        "'Copy into my templates'",
+        "setRangeText", "/template'",
     ):  # fmt: skip
         assert expected in js, expected
 

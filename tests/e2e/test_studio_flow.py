@@ -1,4 +1,4 @@
-"""End-to-end test (V12 C7): the Studio flow through the HTTP routes, with the fake claude.
+"""End-to-end test (V13 C7): the Studio flow through the HTTP routes, with the fake claude.
 
 Everything is invented (project "Aria Training", a contacts file of three made-up people, the
 seeded campaign of `dashboard_world`). The AI is the fake `claude` program and the key check makes
@@ -90,6 +90,23 @@ def test_studio_flow_end_to_end(client, fake_claude, tmp_path):
     assert studio["steps"][0]["key"] == "product" and studio["steps"][0]["state"] == "active"
     assert studio["project"]["sender_name"] == "Sam"
     assert studio["ai"]["ready"] is True
+    titled = {"sender_title": "Head of Partnerships", "sender_company": "Harbour Training"}
+    assert client.patch(f"/api/projects/{pid}", json=titled, headers=CSRF).status_code == 200
+    studio = client.get(f"/api/projects/{pid}/studio").json()
+    assert studio["project"]["sender_title"] == "Head of Partnerships"
+    assert studio["project"]["sender_company"] == "Harbour Training"
+
+    # 5b. message templates: nine built-in, the three automatic styles first, one of its own
+    tpl = client.get(f"/api/projects/{pid}/templates").json()
+    assert len(tpl["builtin"]) == 9
+    first_three = [c["key"] for c in tpl["choices"][:3]]
+    assert first_three == ["auto-standard", "auto-short", "auto-detailed"]
+    mine = {"name": "Short warm note", "level": "any", "depth": "short", "use_case": "Warm leads",
+            "subject": "", "body": "Hi {first_name},\n\n{sign_off}"}
+    made_template = client.post(f"/api/projects/{pid}/templates", json=mine, headers=CSRF)
+    assert made_template.json()["ok"] is True
+    labels = [c["label"] for c in client.get(f"/api/projects/{pid}/templates").json()["choices"]]
+    assert "Yours: Short warm note" in labels
 
     # 6. a seeded project: ready contacts, export, and send only as a preview until confirmed
     data = seed()
@@ -98,6 +115,12 @@ def test_studio_flow_end_to_end(client, fake_claude, tmp_path):
     results = client.get(f"/api/projects/{seeded_pid}/results").json()
     aria = next(lead for lead in results["leads"] if lead["name"] == "Aria Tan")
     assert aria["email"] == "aria.tan@northwind.example" and aria["linkedin_message"]
+    style = {"template_key": "auto-short"}
+    styled = client.post(f"/api/campaigns/{campaign_id}/template", json=style, headers=CSRF)
+    assert styled.json()["ok"] is True
+    listing = client.get(f"/api/campaigns?project_id={seeded_pid}").json()["campaigns"]
+    row = next(c for c in listing if c["id"] == campaign_id)
+    assert row["template_key"] == "auto-short"
     export = {"format": "generic", "include": "approved"}
     exported = client.post(f"/api/campaigns/{campaign_id}/exports", json=export, headers=CSRF)
     assert exported.json()["ok"] is True and exported.json()["exported"] >= 1

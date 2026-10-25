@@ -1,13 +1,17 @@
-/* Lead Generator Studio, part 2: the project page (chat, progress, ready contacts, export and send).
+/* Lead Generator Studio, part 2: the project page (chat with the live timeline, progress, ready contacts,
+   searches and message style, message templates, sign-off, product, contacts, export and send).
    Plain JavaScript, no libraries. Loaded BEFORE app.js (see studio.js); it only defines functions and
    uses app.js's helpers (h, api, clear, setMain, toast, notice, errorText, badge, extLink, field,
-   selectBox, pager, copyText, query, fmtNum, setStatus, route) and its variable routeToken.
+   selectBox, pager, copyText, query, fmtNum, setStatus, route, label, KNOWN, CAMPAIGN_STATUS, memoryBox,
+   sourceKindText, setupSentence) and its variable routeToken. Card and layout memory comes from ui.js.
    Everything from the server is put on the page as text, never as HTML. */
 (function () {
   'use strict';
 
   const STATE_WORD = { done: 'Done', active: 'In progress', todo: 'Not started', skipped: 'Skipped' };
   const SIGN_IN_CODES = ['not_signed_in', 'bad_api_key', 'missing_cli'];
+  const LEVEL_NAME = { csuite: 'Top leaders', director: 'Directors and heads', manager: 'Managers', any: 'Anyone' };
+  const DEPTH_NAME = { short: 'Short', standard: 'Standard', detailed: 'Detailed' };
   let live = null; // the page now shown: { close() } stops its stream and timers
 
   function leave() {
@@ -30,7 +34,8 @@
 
   function viewDialog(lead) {
     const body = [h('p', { class: 'muted small' }, lead.title, lead.title && lead.company ? ' at ' : '', lead.company),
-      h('p', null, badge(lead.checked ? 'Checked' : 'Not checked yet', lead.checked ? 'ok' : 'none'))];
+      h('p', null, badge(lead.checked ? 'Checked' : 'Not checked yet', lead.checked ? 'ok' : 'none')),
+      lead.phone ? h('p', { class: 'small', text: 'Phone: ' + lead.phone + ' (found, not checked)' }) : null];
     const actions = [];
     const close = h('button', { type: 'button', text: 'Close' });
     if (lead.linkedin_message) {
@@ -64,7 +69,7 @@
       kids.push(h('p', { class: 'muted', text: 'Contacts will appear here as the AI finds and checks them.' }));
       return kids;
     }
-    const heads = ['Name', 'Job', 'Company', 'LinkedIn', 'Email (verified)', 'Messages'];
+    const heads = ['Name', 'Job', 'Company', 'LinkedIn', 'Email (verified)', 'Phone (found, not checked)', 'Messages'];
     kids.push(h('div', { class: 'table-wrap' }, h('table', null,
       h('thead', null, h('tr', null, ...heads.map((t) => h('th', { scope: 'col', text: t })))),
       h('tbody', null, ...r.leads.map((lead) => {
@@ -74,10 +79,193 @@
           h('td', { text: lead.name }), h('td', { text: lead.title }), h('td', { text: lead.company }),
           h('td', null, lead.linkedin_url ? extLink(lead.linkedin_url, 'Open profile') : ''),
           h('td', { text: lead.email }),
+          h('td', { text: lead.phone_status === 'waiting' ? 'Requested, waiting' : lead.phone }),
           h('td', null, view1));
       })))));
     kids.push(pager(r, (page) => { view.page = page; again(); }));
     return kids;
+  }
+
+  // ---- searches and message style -----------------------------------------------------------------
+
+  function searchesBody(projectId, campaigns, choices) {
+    const link = h('p', { class: 'row' }, h('a', { class: 'button', href: '#/p/' + projectId + '/new-campaign', text: 'New search (form)' }));
+    const intro = h('p', { class: 'muted small', text: 'Or tell the AI who you want to reach.' });
+    if (!campaigns.length) return [h('p', { class: 'muted', text: 'No searches yet. Tell the AI who you want to reach.' }), link];
+    const rows = campaigns.map((c) => {
+      const pick = selectBox('ms-' + c.id, choices.map((x) => [x.key, x.label]), c.template_key, async (ev) => {
+        const res = await api('/api/campaigns/' + c.id + '/template', { method: 'POST', body: { template_key: ev.target.value } });
+        if (res.ok) toast('Saved. New messages for this search follow it.');
+        else { toast(errorText(res), 'bad'); ev.target.value = c.template_key; }
+      });
+      pick.setAttribute('aria-label', 'Message style for ' + c.name);
+      return h('tr', null, h('td', { text: c.name }),
+        h('td', null, badge(label(CAMPAIGN_STATUS, c.status), c.status === 'active' ? 'ok' : 'none')),
+        h('td', { class: 'num', text: fmtNum(c.counts.people.confirmed || 0) }),
+        h('td', null, pick));
+    });
+    return [intro, h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ...['Search', 'Status', 'Ready', 'Message style'].map((t) => h('th', { scope: 'col', text: t })))),
+      h('tbody', null, ...rows))), link];
+  }
+
+  // ---- message templates --------------------------------------------------------------------------
+
+  // The editor: initial is a template (with id to update it) or null for a new one.
+  function templateEditor(projectId, initial, onSaved, placeholders) {
+    const t = initial || {};
+    const name = h('input', { type: 'text', id: 'tp-name', value: t.name || '', autocomplete: 'off', maxlength: '80' });
+    const level = selectBox('tp-level', Object.entries(LEVEL_NAME), t.level || 'any');
+    const depth = selectBox('tp-depth', Object.entries(DEPTH_NAME), t.depth || 'standard');
+    const useCase = h('input', { type: 'text', id: 'tp-use', value: t.use_case || '', autocomplete: 'off', maxlength: '200' });
+    const subject = h('input', { type: 'text', id: 'tp-subject', value: t.subject || '', autocomplete: 'off', maxlength: '120' });
+    const body = h('textarea', { id: 'tp-body', rows: '12', maxlength: '3000', value: t.body || '' });
+    const insertRow = h('div', { class: 'row small' }, 'Insert:', ...Object.entries(placeholders).map(([name, meaning]) => {
+      const b = h('button', { type: 'button', class: 'ghost', title: meaning, text: '{' + name + '}' });
+      b.addEventListener('click', () => {
+        body.setRangeText('{' + name + '}', body.selectionStart, body.selectionEnd, 'end');
+        body.focus();
+      });
+      return b;
+    }));
+    const help = h('p', { class: 'small muted', text: 'The AI fills in every {placeholder} for each person and words the rest naturally. Your sign-off is added at the end if you leave {sign_off} out.' });
+    const status = h('div', { role: 'status' });
+    const cancel = h('button', { type: 'button', text: 'Cancel' });
+    const save = h('button', { type: 'button', class: 'primary', text: 'Save' });
+    const dlg = Studio.dialog('Your template', [
+      field('tp-name', 'Name', name), field('tp-level', 'Who it is for', level), field('tp-depth', 'Length', depth),
+      field('tp-use', 'When to use it', useCase), field('tp-subject', 'Subject (email only)', subject),
+      field('tp-body', 'Message', body), insertRow, help, status], [cancel, save]);
+    cancel.addEventListener('click', () => dlg.close());
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      const payload = { name: name.value, level: level.value, depth: depth.value, use_case: useCase.value, subject: subject.value, body: body.value };
+      const res = t.id
+        ? await api('/api/projects/' + projectId + '/templates/' + t.id, { method: 'PUT', body: payload })
+        : await api('/api/projects/' + projectId + '/templates', { method: 'POST', body: payload });
+      save.disabled = false;
+      if (res.ok) { dlg.close(); toast('Saved.'); if (onSaved) onSaved(); } else setStatus(status, 'bad', errorText(res));
+    });
+  }
+
+  // A built-in template in full; its copy button opens the editor with the same text.
+  function templateView(t, onCopy) {
+    const copy = h('button', { type: 'button', text: 'Copy into my templates' });
+    const close = h('button', { type: 'button', text: 'Close' });
+    const dlg = Studio.dialog(t.name, [
+      h('p', { class: 'muted small', text: t.use_case || '' }),
+      t.subject ? h('p', { class: 'small', text: 'Subject: ' + t.subject }) : null,
+      h('pre', { class: 'msg', text: t.body })], [copy, close]);
+    close.addEventListener('click', () => dlg.close());
+    copy.addEventListener('click', () => { dlg.close(); onCopy(); });
+  }
+
+  // data: the reply of GET /api/projects/<id>/templates; reload runs after a save or a delete.
+  function templatesBody(projectId, data, reload) {
+    const placeholders = data.placeholders || {};
+    const view = (t) => {
+      const b = h('button', { type: 'button', text: 'View' });
+      b.addEventListener('click', () => templateView(t, () => templateEditor(projectId, {
+        name: t.name + ' (my copy)', level: t.level, depth: t.depth, use_case: t.use_case, subject: t.subject, body: t.body,
+      }, reload, placeholders)));
+      return b;
+    };
+    const builtin = h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, h('th', { scope: 'col', text: 'Template' }), h('th', { scope: 'col', text: 'When to use it' }), h('th', { scope: 'col', text: '' }))),
+      h('tbody', null, ...data.builtin.map((t) => h('tr', null, h('td', { text: t.name }), h('td', { text: t.use_case }), h('td', null, view(t)))))));
+
+    const edit = (t) => {
+      const b = h('button', { type: 'button', text: 'Edit' });
+      b.addEventListener('click', () => templateEditor(projectId, t, reload, placeholders));
+      return b;
+    };
+    const remove = (t) => {
+      const b = h('button', { type: 'button', text: 'Delete' });
+      b.addEventListener('click', async () => {
+        const yes = await Studio.confirmDialog({
+          title: 'Delete this template?',
+          body: [h('p', { text: "Searches that use it go back to matching each person's level." })],
+          yes: 'Delete', no: 'Keep it',
+        });
+        if (!yes) return;
+        const res = await api('/api/projects/' + projectId + '/templates/' + t.id, { method: 'DELETE' });
+        if (res.ok) { toast('Deleted.'); reload(); } else toast(errorText(res), 'bad');
+      });
+      return b;
+    };
+    const newButton = h('button', { type: 'button', class: 'primary', text: 'New template' });
+    newButton.addEventListener('click', () => templateEditor(projectId, null, reload, placeholders));
+    const yours = data.custom.length
+      ? h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null, ...['Template', 'For', 'Length', 'When to use it', ''].map((x) => h('th', { scope: 'col', text: x })))),
+        h('tbody', null, ...data.custom.map((t) => h('tr', null, h('td', { text: t.name }), h('td', { text: LEVEL_NAME[t.level] || '' }),
+          h('td', { text: DEPTH_NAME[t.depth] || '' }), h('td', { text: t.use_case }), h('td', null, h('div', { class: 'row' }, edit(t), remove(t))))))))
+      : h('p', { class: 'muted', text: 'You have not written your own yet.' });
+    return [
+      h('p', { class: 'muted small', text: 'Messages follow the style chosen for each search (see Searches and message style). You can read the built-in templates and write your own.' }),
+      h('h4', { text: 'Built-in' }), builtin,
+      h('div', { class: 'row' }, h('h4', { class: 'grow', text: 'Yours' }), newButton),
+      yours,
+    ];
+  }
+
+  // ---- your sign-off, product, contacts ----------------------------------------------------------
+
+  function signOffBody(project, onSaved) {
+    const name = h('input', { type: 'text', id: 'so-name', value: project.sender_name || '', autocomplete: 'off', maxlength: '120' });
+    const title = h('input', { type: 'text', id: 'so-title', value: project.sender_title || '', autocomplete: 'off', maxlength: '120' });
+    const company = h('input', { type: 'text', id: 'so-company', value: project.sender_company || '', autocomplete: 'off', maxlength: '120' });
+    const preview = h('pre', { class: 'msg' });
+    const status = h('div', { role: 'status' });
+    const save = h('button', { type: 'button', class: 'primary', text: 'Save' });
+    const show = () => {
+      const lines = [name, title, company].map((i) => i.value.trim()).filter(Boolean);
+      preview.textContent = ['Kind regards,', ...lines].join('\n');
+    };
+    for (const input of [name, title, company]) input.addEventListener('input', show);
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      const res = await api('/api/projects/' + project.id, { method: 'PATCH', body: { sender_name: name.value, sender_title: title.value, sender_company: company.value } });
+      save.disabled = false;
+      if (res.ok) { toast('Saved. New messages will end with this.'); if (onSaved) onSaved(res.project); } else setStatus(status, 'bad', errorText(res));
+    });
+    show();
+    return [
+      h('p', { class: 'muted small', text: 'Every email and LinkedIn message ends with these lines.' }),
+      field('so-name', 'Your name', name), field('so-title', 'Your job title', title), field('so-company', 'Your company', company),
+      preview,
+      h('p', { class: 'small muted', text: 'Messages already written keep their old ending. Ask the AI to rewrite them if you want.' }),
+      h('div', { class: 'row' }, save), status,
+    ];
+  }
+
+  function productBody(page) {
+    const pr = page.project;
+    const src = page.source;
+    const more = h('p', { class: 'small' }, h('a', { href: '#/p/' + pr.id + '/details', text: 'Change it or other project settings' }));
+    if (!src) {
+      return [notice('warn', 'No product is attached yet. Send your website address or a file in the chat.'), more];
+    }
+    return [h('dl', { class: 'kv' },
+      h('dt', { text: 'What it is about' }),
+      h('dd', { text: src.about || 'Not written down yet. Open your AI assistant and say: ' + setupSentence(pr.name) }),
+      h('dt', { text: 'What we read' }), h('dd', { text: sourceKindText(src) })), more];
+  }
+
+  function contactsBody(page) {
+    const known = page.known;
+    const knownText = known.total
+      ? 'You have added ' + fmtNum(known.total) + ' known contact' + (known.total === 1 ? '' : 's') + ': '
+        + Object.entries(known.by_relationship).map(([k, v]) => v + ' ' + label(KNOWN, k).toLowerCase()).join(', ') + '.'
+      : 'You have not added any yet.';
+    return [
+      h('p', { text: 'Upload people you have already spoken to, so the AI can skip them or treat them as warm leads.' }),
+      h('p', { class: 'muted', text: knownText }),
+      h('div', { class: 'row' },
+        h('a', { class: 'button', href: '/api/contacts-template/xlsx', download: '', text: 'Download the Excel template' }),
+        h('a', { class: 'button', href: '/api/contacts-template/csv', download: '', text: 'Download the CSV template' }),
+        h('a', { class: 'button primary', href: '#/p/' + page.project.id + '/contacts', text: 'Upload your contacts' })),
+    ];
   }
 
   // ---- export and send ----------------------------------------------------------------------------
@@ -214,8 +402,7 @@
     const connectLem = h('button', { type: 'button', class: 'link', text: 'Connect lemlist' });
     connectLem.addEventListener('click', () => { lemBox.hidden = !lemBox.hidden; });
 
-    return h('section', { class: 'card stack', 'aria-labelledby': 'act-h' },
-      h('h3', { id: 'act-h', text: 'Export and send' }),
+    return h('div', { class: 'stack' },
       h('p', { class: 'muted small', text: 'Nothing is sent until you click and confirm.' }),
       h('div', { class: 'row' }, ...exportButtons), note, folderRow,
       h('div', { class: 'row' }, sendMail, sendLem),
@@ -225,6 +412,7 @@
 
   // ---- the chat -----------------------------------------------------------------------------------
 
+  // hooks: { refresh(now), timeline } where timeline is UI.timeline() (the agent strip and its steps).
   function chatPane(projectId, first, hooks) {
     const log = h('div', { class: 'chat-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
     const chips = h('div', { class: 'chips' });
@@ -233,16 +421,14 @@
     const send = h('button', { type: 'button', class: 'primary', text: 'Send' });
     const attach = h('button', { type: 'button', text: 'Attach a file' });
     const picker = h('input', { type: 'file', class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true', accept: '.pdf,.docx,.txt,.md,.csv,.xlsx', multiple: true });
-    const typing = h('div', { class: 'tool-line running', hidden: true }, h('span', { class: 'dot' }), 'Thinking...');
-    log.appendChild(typing); // always the last thing in the list; everything else goes in before it
+    const down = h('button', { type: 'button', class: 'round to-bottom', 'aria-label': 'Scroll to the latest message', text: '↓', hidden: true });
     const files = [];
-    let toolLines = {};
     let stream = null;
     let bubble = null;
     let running = false;
 
     function toBottom() { log.scrollTop = log.scrollHeight; }
-    function put(el) { log.insertBefore(el, typing); toBottom(); return el; }
+    function put(el) { log.appendChild(el); toBottom(); return el; }
     function addBubble(role, text) { return put(h('div', { class: 'bubble ' + role, text })); }
     function addNote(text, tone) { put(notice(tone || 'ok', text)); }
     function showError(err) {
@@ -268,8 +454,7 @@
       running = on;
       send.textContent = on ? 'Stop' : 'Send';
       send.className = on ? 'danger solid' : 'primary';
-      typing.hidden = !on;
-      if (on) clear(chips); else toolLines = {};
+      if (on) clear(chips);
     }
     function renderFiles() {
       clear(pills);
@@ -287,6 +472,7 @@
       closeStream();
       setRunning(true);
       bubble = null;
+      hooks.timeline.start();
       stream = new EventSource('/api/projects/' + projectId + '/chat/stream?turn=' + encodeURIComponent(turnId));
       const on = (name, fn) => stream && stream.addEventListener(name, (ev) => {
         let data = {};
@@ -294,23 +480,20 @@
         fn(data);
       });
       on('text', (d) => {
+        hooks.timeline.text();
         if (!bubble) bubble = addBubble('assistant', '');
         bubble.textContent += d.delta;
         toBottom();
       });
       on('tool', (d) => {
         bubble = null;
-        if (d.state === 'started') {
-          toolLines[d.id] = toolLine(d.label, 'running');
-          put(toolLines[d.id]);
-        } else if (toolLines[d.id]) {
-          toolLines[d.id].className = 'tool-line ' + (d.ok ? 'ok' : 'bad');
-        }
+        hooks.timeline.tool(d);
       });
-      on('refresh', () => hooks.refresh(false));
+      on('refresh', () => { hooks.timeline.refreshed(); hooks.refresh(false); });
       on('chips', showChips);
-      on('error', showError);
+      on('error', (d) => { showError(d); hooks.timeline.error(d); });
       on('done', (d) => {
+        hooks.timeline.done(d);
         closeStream();
         setRunning(false);
         if (d.cancelled) addNote('Stopped.');
@@ -346,11 +529,15 @@
       const text = input.value.trim();
       if (!text && !files.length) return;
       input.value = '';
+      input.style.height = '';
       await sendMessage(text);
     });
     input.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); send.click(); }
     });
+    input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 160) + 'px'; });
+    log.addEventListener('scroll', () => { down.hidden = log.scrollHeight - log.scrollTop - log.clientHeight < 40; });
+    down.addEventListener('click', toBottom);
     attach.addEventListener('click', () => picker.click());
     picker.addEventListener('change', async () => {
       for (const file of Array.from(picker.files)) {
@@ -371,7 +558,7 @@
     }
     const last = first.messages[first.messages.length - 1];
     if (last && last.role === 'assistant') showChips({ options: last.chips, buttons: last.buttons });
-    if (first.turn.running) follow(first.turn.turn_id);
+    if (first.turn.running) follow(first.turn.turn_id); else hooks.timeline.idle();
     toBottom();
 
     const ready = first.ai.ready;
@@ -380,7 +567,8 @@
       h('h3', { id: 'chat-h', text: 'Chat with your AI' }),
       ready ? null : h('div', { class: 'notice warn' }, 'Connect your AI to start chatting. ', h('a', { class: 'button', href: '#/connect', text: 'Connect your AI' })),
       log, chips, pills,
-      h('div', { class: 'chat-box' }, input, h('div', { class: 'row' }, attach, picker, h('span', { class: 'grow' }), send)));
+      h('div', { class: 'chat-box' }, input, h('div', { class: 'row' }, attach, picker, h('span', { class: 'grow' }), send)),
+      down);
     return { node, close: closeStream };
   }
 
@@ -389,26 +577,45 @@
   async function pageProject(ctx) {
     leave();
     const id = ctx.projectId;
-    const [studio, chat] = await Promise.all([api('/api/projects/' + id + '/studio'), api('/api/projects/' + id + '/chat')]);
+    const [studio, chat, page, list, tpl, camps] = await Promise.all([
+      api('/api/projects/' + id + '/studio'), api('/api/projects/' + id + '/chat'), api('/api/projects/' + id),
+      api('/api/projects'), api('/api/projects/' + id + '/templates'), api('/api/campaigns' + query({ project_id: id })),
+    ]);
     if (ctx.token !== routeToken) return;
     if (!studio.ok) return setMain(notice('bad', errorText(studio)), h('a', { href: '#/home', text: 'Back to your projects' }));
-    if (!chat.ok) return setMain(notice('bad', errorText(chat)));
+    if (!chat.ok || !page.ok) return setMain(notice('bad', errorText(chat.ok ? page : chat)));
 
     const view = { campaignId: null, page: 1 };
-    const progress = h('section', { class: 'card stack', 'aria-labelledby': 'prog-h' });
-    const results = h('section', { class: 'card stack', 'aria-labelledby': 'res-h' });
+    const tl = UI.timeline();
     let timer = null;
     let dead = false;
-
-    function drawProgress(s) {
-      clear(progress);
-      progress.append(h('h3', { id: 'prog-h', text: 'Progress' }), stepper(s.steps));
+    const memory = memoryBox(page.project, page.memory);
+    memory.querySelector('h3').hidden = true; // the card's own title says it
+    const cards = {
+      activity: UI.card('p.activity', 'What the AI is doing', { open: true }, tl.node),
+      progress: UI.card('p.progress', 'Progress', { open: true }),
+      results: UI.card('p.results', 'Ready contacts', { open: true }),
+      send: UI.card('p.send', 'Export and send', {}, actionsCard({ campaignId: () => view.campaignId, refresh: () => refresh(true) })),
+      searches: UI.card('p.searches', 'Searches and message style', {}),
+      templates: UI.card('p.templates', 'Message templates', {}),
+      signoff: UI.card('p.signoff', 'Your sign-off', {}, signOffBody(studio.project, () => route())),
+      product: UI.card('p.product', 'Your product', {}, ...productBody(page)),
+      memory: UI.card('p.memory', "Don't contact again", {}, memory),
+      contacts: UI.card('p.contacts', 'Contacts you already have', {}, ...contactsBody(page)),
+    };
+    const drawSearches = (rows, choices) => { clear(cards.searches.inner); cards.searches.inner.append(...searchesBody(id, rows, choices)); };
+    const drawTemplates = (data) => { clear(cards.templates.inner); cards.templates.inner.append(...templatesBody(id, data, reloadTemplates)); };
+    async function reloadTemplates() {
+      const [t, c] = await Promise.all([api('/api/projects/' + id + '/templates'), api('/api/campaigns' + query({ project_id: id }))]);
+      if (t.ok) drawTemplates(t);
+      if (t.ok && c.ok) drawSearches(c.campaigns, t.choices);
     }
+    function drawProgress(s) { clear(cards.progress.inner); cards.progress.inner.append(stepper(s.steps)); }
     function drawResults(r) {
       view.campaignId = r.campaign_id;
-      clear(results);
-      results.append(h('div', { class: 'row' }, h('h3', { id: 'res-h', class: 'grow', text: 'Ready contacts' }), h('span', { class: 'muted', text: fmtNum(r.total) })),
-        ...resultsBody(r, view, () => refresh(true)));
+      clear(cards.results.inner);
+      cards.results.setCount(fmtNum(r.total));
+      cards.results.inner.append(...resultsBody(r, view, () => refresh(true)));
     }
     async function refresh(now) {
       clearTimeout(timer);
@@ -425,13 +632,12 @@
       if (now) await run(); else timer = setTimeout(run, 1200); // many tool events in a row make one refresh
     }
 
-    const pane = chatPane(id, chat, { refresh });
-    const actions = actionsCard({ campaignId: () => view.campaignId, refresh: () => refresh(true) });
-    drawProgress(studio);
-    const edit = h('button', { type: 'button', text: 'Edit project' });
-    edit.addEventListener('click', () => Studio.openEditDialog(studio.project, () => route()));
-    const right = h('div', { class: 'right stack' }, progress, results, actions);
+    const pane = chatPane(id, chat, { refresh, timeline: tl });
+    const right = h('div', { class: 'right' }, ...Object.values(cards));
     const grid = h('div', { class: 'studio-grid', 'data-pane': 'chat' }, pane.node, right);
+    const layout = UI.layoutSwitch(grid, 'project', [['chat', 'Chat wide'], ['split', 'Side by side'], ['results', 'Results wide']], 'split');
+    const switcher = selectBox('p-switch', (list.ok ? list.projects : []).map((p) => [p.id, p.name]), id, (ev) => go('/p/' + ev.target.value));
+    const signs = studio.project.sender_name ? 'Signs as ' + studio.project.sender_name : 'Sign-off not set yet';
     const tab = (key, text) => {
       const b = h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': key === 'chat' ? 'true' : 'false', text });
       b.addEventListener('click', () => {
@@ -441,9 +647,15 @@
       return b;
     };
     setMain(
-      h('div', { class: 'row page-head' }, h('a', { href: '#/home', text: 'All projects' }), h('h1', { class: 'grow', text: studio.project.name }), edit),
+      h('div', { class: 'row page-head' }, h('a', { href: '#/home', text: 'All projects' }), h('h1', { text: studio.project.name }),
+        h('label', { class: 'sr-only', for: 'p-switch', text: 'Switch project' }), switcher,
+        h('span', { class: 'chip-static', text: signs }),
+        layout, UI.collapseAllButton(right)),
       h('div', { class: 'studio-tabs', role: 'tablist' }, tab('chat', 'Chat'), tab('results', 'Progress and results')),
       grid);
+    drawProgress(studio);
+    if (tpl.ok) drawTemplates(tpl);
+    if (tpl.ok && camps.ok) drawSearches(camps.campaigns, tpl.choices);
     live = { close() { dead = true; clearTimeout(timer); pane.close(); } };
     refresh(true);
   }
