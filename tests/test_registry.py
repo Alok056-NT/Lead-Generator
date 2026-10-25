@@ -5,11 +5,13 @@ from __future__ import annotations
 import httpx
 import pytest
 import respx
+from fastapi.testclient import TestClient
 
 from leadgen import cli
 from leadgen.core import config, paths, secrets
-from leadgen.providers import base, brave, ddg, registry, serper
-from leadgen.providers.base import ProviderError
+from leadgen.dashboard import app as dash
+from leadgen.providers import apollo, base, brave, ddg, registry, serper, tavily
+from leadgen.providers.base import Finder, ProviderError
 from leadgen.services import status
 
 SERPER_URL = "https://google.serper.dev/search"
@@ -26,6 +28,11 @@ def test_all_providers_listed():
         "zerobounce",
         "lemlist",
         "smtp",
+        "tavily",
+        "apollo",
+        "prospeo",
+        "getprospect",
+        "emailable",
     ]
     assert registry.ALL_PROVIDERS["serper"].env_keys == ["SERPER_API_KEY"]
     assert registry.ALL_PROVIDERS["serper"].default
@@ -49,6 +56,46 @@ def test_search_provider_fallback_order():
     settings.allow_ddg_fallback = True
     config.save_settings(settings)
     assert isinstance(registry.get_search_provider(), ddg.DuckDuckGoProvider)
+
+
+def test_tavily_sits_between_serper_and_brave(ready_db):
+    secrets.set("BRAVE_API_KEY", "brave-key-0001")
+    secrets.set("TAVILY_API_KEY", "tavily-key-0001")
+    assert isinstance(registry.get_search_provider(), tavily.TavilyProvider)
+    secrets.set("SERPER_API_KEY", "serper-key-0001")
+    assert isinstance(registry.get_search_provider(), serper.SerperProvider)
+
+
+def test_every_provider_is_in_exactly_one_segment():
+    grouped = [key for _, _, keys in registry.SEGMENTS for key in keys]
+    assert sorted(grouped) == sorted(registry.ALL_PROVIDERS)
+    assert [key for key, _, _ in registry.SEGMENTS] == ["search", "finder", "verify", "sending"]
+
+
+def test_finders_lists_only_configured_in_order(ready_db):
+    assert registry.finders() == []
+    secrets.set("PROSPEO_API_KEY", "prospeo-key-0001")
+    secrets.set("APOLLO_API_KEY", "apollo-key-0001")
+    found = registry.finders()
+    assert [f.info.key for f in found] == ["apollo", "prospeo"]
+    assert all(isinstance(f, Finder) for f in found)
+    assert isinstance(found[0], apollo.ApolloProvider)
+
+
+def test_every_listed_provider_has_costs(ready_db):
+    items = {item["key"]: item for item in status.list_providers()}
+    assert all("costs" in item for item in items.values())
+    for key in ("serper", "tavily", "apollo", "prospeo", "getprospect", "emailable", "reoon"):
+        assert items[key]["costs"]
+
+
+def test_providers_api_has_segments_in_order(ready_db):
+    client = TestClient(dash.create_app(), base_url="http://127.0.0.1:8765")
+    reply = client.get("/api/providers")
+    assert reply.status_code == 200
+    body = reply.json()
+    assert [s["key"] for s in body["segments"]] == ["search", "finder", "verify", "sending"]
+    assert body["segments"][0]["providers"] == ["serper", "tavily", "brave", "ddg"]
 
 
 def test_needs_key_response_shape():

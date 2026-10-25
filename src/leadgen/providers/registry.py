@@ -6,7 +6,21 @@ from collections.abc import Callable
 from typing import Any
 
 from leadgen.core import secrets
-from leadgen.providers import brave, ddg, fake, hunter, lemlist, reoon, serper, zerobounce
+from leadgen.providers import (
+    apollo,
+    brave,
+    ddg,
+    emailable,
+    fake,
+    getprospect,
+    hunter,
+    lemlist,
+    prospeo,
+    reoon,
+    serper,
+    tavily,
+    zerobounce,
+)
 from leadgen.providers.base import Provider, ProviderError, ProviderInfo
 from leadgen.providers.search import SearchProvider
 from leadgen.send import smtp_imap
@@ -35,10 +49,14 @@ ALL_PROVIDERS: dict[str, ProviderInfo] = {
         zerobounce.INFO,
         lemlist.INFO,
         smtp_imap.INFO,
+        tavily.INFO,
+        apollo.INFO,
+        prospeo.INFO,
+        getprospect.INFO,
+        emailable.INFO,
     )
 }
 
-# Provider classes that exist so far. Later tasks add their entries here.
 _FACTORIES: dict[str, Callable[[], Provider]] = {
     "serper": serper.SerperProvider,
     "brave": brave.BraveProvider,
@@ -48,7 +66,22 @@ _FACTORIES: dict[str, Callable[[], Provider]] = {
     "zerobounce": zerobounce.ZeroBounceProvider,
     "lemlist": lemlist.LemlistProvider,
     "smtp": smtp_imap.SmtpImapMailbox.from_config,
+    "tavily": tavily.TavilyProvider,
+    "apollo": apollo.ApolloProvider,
+    "prospeo": prospeo.ProspeoProvider,
+    "getprospect": getprospect.GetProspectProvider,
+    "emailable": emailable.EmailableProvider,
 }
+
+# The Connectors page groups: (key, label, provider keys in display order).
+SEGMENTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("search", "Search", ("serper", "tavily", "brave", "ddg")),
+    ("finder", "Email and phone from a LinkedIn profile",
+     ("apollo", "prospeo", "getprospect", "hunter")),
+    ("verify", "Email checking", ("reoon", "zerobounce", "emailable")),
+    ("sending", "Sending", ("smtp", "lemlist")),
+)  # fmt: skip
+FINDER_ORDER = ("apollo", "prospeo", "getprospect")
 
 
 def get_provider(provider_key: str) -> Provider | None:
@@ -57,14 +90,24 @@ def get_provider(provider_key: str) -> Provider | None:
     return factory() if factory else None
 
 
+def finders() -> list[Any]:
+    """Configured LinkedIn-profile finders in FINDER_ORDER (the first that finds an email wins)."""
+    out = []
+    for key in FINDER_ORDER:
+        provider = get_provider(key)
+        if provider is not None and provider.configured():
+            out.append(provider)
+    return out
+
+
 def get_search_provider() -> SearchProvider:
-    """First configured of Serper, Brave; else DuckDuckGo if allowed; else not_configured.
+    """First configured of Serper, Tavily, Brave; else DuckDuckGo if allowed; else not_configured.
 
     The canned test provider is returned instead only when `fake.fakes_enabled()` (T19).
     """
     if fake.fakes_enabled():
         return fake.fake_search_from_env()
-    for provider in (serper.SerperProvider(), brave.BraveProvider()):
+    for provider in (serper.SerperProvider(), tavily.TavilyProvider(), brave.BraveProvider()):
         if provider.configured():
             return provider
     fallback = ddg.DuckDuckGoProvider()

@@ -19,6 +19,9 @@ _FREE_ALLOWANCE: dict[str, tuple[int, str]] = {
     "serper": (2500, "all"),
     "brave": (1000, "month"),
     "hunter": (50, "month"),
+    "tavily": (1000, "month"),
+    "getprospect": (50, "month"),
+    "emailable": (250, "all"),
 }
 
 
@@ -50,6 +53,7 @@ def list_providers() -> list[dict[str, Any]]:
                 "signup_url": info.signup_url,
                 "paid": info.paid,
                 "default": info.default,
+                "costs": info.costs,
                 "implemented": registry.get_provider(info.key) is not None,
                 "configured": _configured(info),
                 "masked_key": secrets.masked(info.env_keys[0]) if len(info.env_keys) == 1 else "",
@@ -58,6 +62,14 @@ def list_providers() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def segments() -> list[dict[str, Any]]:
+    """The Connectors page groups, in display order: key, label and provider keys."""
+    return [
+        {"key": key, "label": label, "providers": list(keys)}
+        for key, label, keys in registry.SEGMENTS
+    ]
 
 
 def set_key(provider_key: str, key: str) -> dict[str, Any]:

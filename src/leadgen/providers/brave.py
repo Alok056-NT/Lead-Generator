@@ -33,6 +33,7 @@ INFO = ProviderInfo(
     env_keys=[ENV_KEY],
     free_tier="About $5 of free credit each month (about 1,000 searches); a card is required",
     signup_url="https://api-dashboard.search.brave.com/register",
+    costs="About $5 per 1,000 searches after the monthly free credit",
     paid=True,
     default=False,
 )

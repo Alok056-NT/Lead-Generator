@@ -21,6 +21,7 @@ INFO = ProviderInfo(
     env_keys=[],
     free_tier="Free, no key, but often blocks automated use",
     signup_url="",
+    costs="",
     paid=False,
     default=False,
 )

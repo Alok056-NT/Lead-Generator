@@ -28,6 +28,7 @@ INFO = ProviderInfo(
     env_keys=[ENV_KEY],
     free_tier="Needs a lemlist plan (the API is used on your own lemlist account)",
     signup_url="https://www.lemlist.com/",
+    costs="",
     paid=True,
     default=False,
 )

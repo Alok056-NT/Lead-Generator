@@ -37,6 +37,7 @@ from leadgen import db
 from leadgen.core.config import load_settings
 from leadgen.providers import registry
 from leadgen.providers.base import ProviderError, RateLimiter
+from leadgen.providers.emailable import EmailableProvider
 from leadgen.providers.hunter import HunterProvider
 from leadgen.providers.reoon import ReoonProvider
 from leadgen.providers.zerobounce import ZeroBounceProvider
@@ -626,8 +627,10 @@ def derive_pattern(
 
 
 def _default_verifiers() -> list[Any]:
-    """Configured verifiers in order: Reoon, ZeroBounce, Hunter."""
-    return [p for p in (ReoonProvider(), ZeroBounceProvider(), HunterProvider()) if p.configured()]
+    """Configured verifiers in order: Reoon, ZeroBounce, Emailable, Hunter (Hunter last: it costs
+    half a Hunter credit per check)."""
+    chain = (ReoonProvider(), ZeroBounceProvider(), EmailableProvider(), HunterProvider())
+    return [p for p in chain if p.configured()]
 
 
 def _policy_rejection(message: Any) -> bool:

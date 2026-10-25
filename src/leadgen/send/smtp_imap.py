@@ -35,6 +35,7 @@ INFO = ProviderInfo(
         "default and may need an admin to switch on."
     ),
     signup_url="",
+    costs="",
     paid=False,
     default=False,
 )

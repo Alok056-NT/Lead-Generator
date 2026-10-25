@@ -25,6 +25,7 @@ INFO = ProviderInfo(
     env_keys=[ENV_KEY],
     free_tier="100 free checks per month (sign up with a business email address)",
     signup_url="https://www.zerobounce.net/members/signin/register",
+    costs="1 credit per checked address",
     paid=False,
     default=False,
 )

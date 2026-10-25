@@ -23,6 +23,7 @@ INFO = ProviderInfo(
     env_keys=[ENV_KEY],
     free_tier="2,500 free searches, no credit card",
     signup_url="https://serper.dev",
+    costs="1 credit per search",
     paid=False,
     default=True,
 )

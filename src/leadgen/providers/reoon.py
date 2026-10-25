@@ -31,6 +31,7 @@ INFO = ProviderInfo(
     env_keys=[ENV_KEY],
     free_tier="20 free checks per day (about 600 a month) plus 100 at sign-up, no card",
     signup_url="https://emailverifier.reoon.com/register/",
+    costs="1 credit per checked address (unknown answers are free)",
     paid=False,
     default=True,
 )

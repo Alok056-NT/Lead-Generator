@@ -49,6 +49,23 @@ class ProviderInfo:
     signup_url: str = ""
     paid: bool = False
     default: bool = False
+    costs: str = ""  # one plain line shown on the Connectors page ("1 credit per email found")
+
+
+@dataclass(frozen=True)
+class Found:
+    """What a finder returned for one LinkedIn profile. Empty strings mean "not found".
+
+    `credits` is what this call cost (an estimate when the provider does not say);
+    `phone_request` is an Apollo request id whose phone numbers arrive later.
+    """
+
+    source: str
+    email: str = ""
+    phone: str = ""
+    phone_kind: str = ""
+    phone_request: str = ""
+    credits: float = 0.0
 
 
 VERDICT_STATUSES = ("verified", "risky", "invalid", "unknown")
@@ -84,6 +101,14 @@ class Provider(Protocol):
 
     def test(self) -> tuple[bool, str]:
         """Cheapest possible call (never more than 1 credit). Returns (ok, plain message)."""
+
+
+@runtime_checkable
+class Finder(Provider, Protocol):
+    """A provider that looks up a work email (and optionally a phone) from a LinkedIn URL."""
+
+    def find(self, linkedin_url: str, want_phone: bool = False) -> Found:
+        """One lookup. Raises ProviderError; "not found" is an empty Found, not an error."""
 
 
 # --- usage tracking -------------------------------------------------------------------------

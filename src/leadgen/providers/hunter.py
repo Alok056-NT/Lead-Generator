@@ -29,6 +29,7 @@ INFO = ProviderInfo(
         "1 credit, an email check 0.5)"
     ),
     signup_url="https://hunter.io/users/sign_up",
+    costs="1 credit per company pattern lookup, half a credit per email check",
     paid=False,
     default=True,
 )

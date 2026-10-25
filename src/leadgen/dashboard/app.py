@@ -425,7 +425,13 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/api/providers")
     def list_providers() -> JSONResponse:
-        return _reply({"ok": True, "providers": status_svc.list_providers()})
+        return _reply(
+            {
+                "ok": True,
+                "providers": status_svc.list_providers(),
+                "segments": status_svc.segments(),
+            }
+        )
 
     @app.post("/api/providers/{provider}/key")
     def save_key(provider: str, body: KeyBody) -> JSONResponse:
