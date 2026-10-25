@@ -448,8 +448,9 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         """Changes a project. Only the fields you pass change: name, description,
         cooldown_days (0 to 3650), offer_id (the project's offer; campaigns already made keep
         theirs), email_policy (verified_only or allow_risky; applies to campaigns made from now
-        on, existing campaigns keep their setting), sender_name (the sign-off name used when
-        writing messages; an empty string clears it) or status (active or archived). Free.""",
+        on, existing campaigns keep their setting), sender_name, sender_title and sender_company
+        (the sign-off used when writing messages; an empty string clears one) or status (active
+        or archived). Free.""",
         WRITE | {"idempotent": True},
     )
     def update_project(
@@ -472,11 +473,22 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
             Field(description="The name messages are signed with (first name is enough). "
                   "An empty string clears it."),
         ] = None,
+        sender_title: Annotated[
+            str | None,
+            Field(description="The sender's job title for the sign-off. "
+                  "An empty string clears it."),
+        ] = None,
+        sender_company: Annotated[
+            str | None,
+            Field(description="The sender's company for the sign-off. "
+                  "An empty string clears it."),
+        ] = None,
     ) -> dict[str, Any]:
         given = {
             "name": name, "description": description, "cooldown_days": cooldown_days,
             "offer_id": offer_id, "status": status, "email_policy": email_policy,
-            "sender_name": sender_name,
+            "sender_name": sender_name, "sender_title": sender_title,
+            "sender_company": sender_company,
         }  # fmt: skip
         return projects_svc.update_project(
             project_id, **{k: v for k, v in given.items() if v is not None}
@@ -937,7 +949,7 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
 
     @tool(
         "Run the quality check",
-        """Re-checks every lead (L01-L25) and every message (M01-M16) of a campaign and stores
+        """Re-checks every lead (L01-L25) and every message (M01-M17) of a campaign and stores
         the issues. Returns counts per code, the top 20 issues and how much is export-ready.
         Blocking issues keep a lead or message out of exports and sending. Run it after saving
         drafts and again after fixes. Free.""",

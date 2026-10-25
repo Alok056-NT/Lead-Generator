@@ -24,7 +24,7 @@ from qa_world import (
 from leadgen import db
 from leadgen.core.config import load_settings, save_settings
 from leadgen.services import campaign as camp
-from leadgen.services import drafting, review
+from leadgen.services import drafting, projects, review
 from leadgen.services.review import ReviewError, export_gate, run_qa
 
 
@@ -184,6 +184,17 @@ def test_run_qa_needs_a_campaign_and_an_offer_profile(ready_db):
         run_qa(cid)
     assert err.value.code == "no_offer_profile"
     assert err.value.as_response()["error"]["hint"]
+
+
+def test_run_qa_reports_m17_for_drafts_saved_before_the_sign_off_changed(world):
+    cid, _, _, msgs = world
+    projects.update_project(
+        camp.get_campaign(cid)["project_id"], sender_name="Priya Nair",
+        sender_title="Head of Partnerships", sender_company="Bright Harbour Training",
+    )
+    reply = run_qa(cid)
+    assert reply["counts"]["M17"] == {"block": 3, "warn": 0}
+    assert [get_message(m)["status"] for m in msgs] == ["qa_fail"] * 3
 
 
 def test_run_qa_with_email_channel_checks_leads_and_message_blocks(world):

@@ -37,7 +37,7 @@ EMAIL_POLICIES = ("verified_only", "allow_risky")
 DEFAULT_EMAIL_POLICY = "verified_only"
 _FIELDS = (
     "name", "description", "cooldown_days", "offer_id", "status", "email_policy",
-    "sender_name",
+    "sender_name", "sender_title", "sender_company",
 )
 MAX_SENDER = 120
 
@@ -110,15 +110,14 @@ def _description(value: Any) -> str:
     return value.strip()
 
 
-def _sender_name(value: Any) -> str:
-    """The sign-off name: text, whitespace collapsed, at most 120 characters, may be empty."""
+def _sender_name(value: Any, label: str = "The sign-off name") -> str:
+    """A sign-off part (name, job title, company): text, whitespace collapsed, at most 120
+    characters, may be empty."""
     if not isinstance(value, str):
-        raise ProjectError("invalid_value", "The sign-off name must be text.")
+        raise ProjectError("invalid_value", f"{label} must be text.")
     name = normalize_whitespace(value)
     if len(name) > MAX_SENDER:
-        raise ProjectError(
-            "invalid_value", f"The sign-off name is longer than {MAX_SENDER} characters."
-        )
+        raise ProjectError("invalid_value", f"{label} is longer than {MAX_SENDER} characters.")
     return name
 
 
@@ -161,6 +160,8 @@ def _shape(row: Mapping[str, Any], offer_name: str = "") -> dict[str, Any]:
         "cooldown_days": row["cooldown_days"],
         "email_policy": row["email_policy"],
         "sender_name": row["sender_name"],
+        "sender_title": row["sender_title"],
+        "sender_company": row["sender_company"],
         "status": row["status"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -335,8 +336,8 @@ def create_project(
 
 
 def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
-    """Change `name`, `description`, `cooldown_days`, `offer_id`, `email_policy`, `sender_name`
-    or `status` and return the project.
+    """Change `name`, `description`, `cooldown_days`, `offer_id`, `email_policy`, `sender_name`,
+    `sender_title`, `sender_company` or `status` and return the project.
 
     Existing campaigns keep the offer they were made with when `offer_id` changes, and keep their
     stored `allow_risky_emails` when `email_policy` changes (it applies to new campaigns).
@@ -364,6 +365,10 @@ def update_project(project_id: int, **changes: Any) -> dict[str, Any]:
             values["email_policy"] = _email_policy(changes["email_policy"])
         if "sender_name" in changes:
             values["sender_name"] = _sender_name(changes["sender_name"])
+        if "sender_title" in changes:
+            values["sender_title"] = _sender_name(changes["sender_title"], "The job title")
+        if "sender_company" in changes:
+            values["sender_company"] = _sender_name(changes["sender_company"], "The company name")
         if "status" in changes:
             if changes["status"] not in STATUSES:
                 raise ProjectError(

@@ -71,7 +71,7 @@ def test_python_dash_m_runs(workspace):
 
 def test_doctor_creates_database_and_reports_version(capsys):
     assert main(["doctor"]) == 0
-    assert "Database      : ok (schema v5)" in capsys.readouterr().out
+    assert "Database      : ok (schema v6)" in capsys.readouterr().out
     assert paths.db_path().exists()
 
 

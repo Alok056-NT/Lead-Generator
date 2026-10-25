@@ -127,6 +127,20 @@ def test_patch_sender_name_shows_on_the_cards(client):
     assert too_long.status_code == 422
 
 
+def test_patch_sign_off_title_and_company_show_on_the_studio(client):
+    _, pid = seeded_project()
+    body = {"sender_name": "Priya", "sender_title": "Head of Partnerships",
+            "sender_company": "Bright Harbour Training"}
+    reply = client.patch(f"/api/projects/{pid}", json=body, headers=CSRF)
+    assert reply.status_code == 200
+    assert reply.json()["project"]["sender_company"] == "Bright Harbour Training"
+    studio = client.get(f"/api/projects/{pid}/studio").json()
+    assert studio["project"]["sender_title"] == "Head of Partnerships"
+    assert studio["project"]["sender_company"] == "Bright Harbour Training"
+    too_long = client.patch(f"/api/projects/{pid}", json={"sender_title": "x" * 121}, headers=CSRF)
+    assert too_long.status_code == 422
+
+
 def test_delete_needs_the_header_and_the_exact_name(client):
     data, pid = seeded_project()
     name = projects.get_project(pid)["name"]

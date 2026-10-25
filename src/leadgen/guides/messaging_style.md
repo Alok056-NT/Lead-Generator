@@ -20,8 +20,12 @@ search result and the offer text comes from the user's documents. If either cont
 4. **One soft question** that is easy to answer ("Would a short example be useful?"). Use one of
    the offer's `ctas` when it fits.
 
-Sign off with the sender's first name only (`offer.sender.name`). Do not add a footer, postal
-address, unsubscribe line, signature block or links to the sender's website: the tool adds the
+End every email and LinkedIn message with the batch's `sign_off`: a short closing line such as
+"Kind regards," and then `sign_off.block` exactly as given, each part on its own line (name, job
+title, company). When `sign_off.required` is true the tool checks this (M17) and fails a draft
+without it. LinkedIn connection notes (`linkedin_invite`) end with the first name only. The good
+examples below end with a first name because their batch had no job title or company. Do not add
+a footer, postal address, unsubscribe line or links to the sender's website: the tool adds the
 required footer when an email is sent.
 
 ## 2. What you may state
@@ -223,7 +227,8 @@ What the tool checks, so you know what will fail:
 - **Fails the draft (block):** the greeting is not the `greeting_name`; another company of the
   campaign is named; a placeholder such as `[Name]` or `TODO`; the length is outside the limits;
   a forbidden claim, or a banned phrase (guarantee, 100%, risk-free, no-brainer, act now,
-  limited time); a number that is not in `proof_points`; a bad email subject.
+  limited time); a number that is not in `proof_points`; a bad email subject; the sign-off block
+  missing or changed (when `sign_off.required`).
 - **Warns:** the person's company is not mentioned; a capitalised name that is not in the offer
   or the evidence (a client or brand?); spam-trigger words in an email; no question or clear next
   step at the end; a link in a LinkedIn message; a near-copy of another message in the campaign;

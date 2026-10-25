@@ -1,4 +1,4 @@
-"""Message checks M01-M16: one pass and one fail case per code, plus the similarity index.
+"""Message checks M01-M17: one pass and one fail case per code, plus the similarity index.
 
 All people and companies are invented. No network is used.
 """
@@ -26,7 +26,10 @@ from leadgen.services import drafting, qa_messages
 from leadgen.services.qa_messages import IndexEntry, check_message
 
 
-def run(message=None, person=None, company=None, campaign=None, offer=None, index=None, others=()):
+def run(
+    message=None, person=None, company=None, campaign=None, offer=None, index=None, others=(),
+    sender=None,
+):
     return check_message(
         message or message_row(),
         person or person_row(),
@@ -35,6 +38,7 @@ def run(message=None, person=None, company=None, campaign=None, offer=None, inde
         offer or PROFILE,
         index,
         companies=list(others),
+        sender=sender,
     )
 
 
@@ -59,7 +63,7 @@ def test_clean_messages_have_no_issues():
 
 
 def test_tables_cover_every_code_and_the_channel_specs_are_reused():
-    expected = {f"M{n:02d}" for n in range(1, 17)}
+    expected = {f"M{n:02d}" for n in range(1, 18)}
     assert set(qa_messages.MESSAGE_SEVERITY) == expected == set(qa_messages.MESSAGE_TITLES)
     assert qa_messages.drafting.CHANNEL_SPECS is drafting.CHANNEL_SPECS
     with pytest.raises(ValueError):
@@ -589,6 +593,53 @@ def test_m16_review_pending_is_a_block_in_strict_mode_only():
 
 
 # --- drafting integration ---------------------------------------------------------------------
+
+
+# --- M17 sign-off block -----------------------------------------------------------------------
+
+SENDER = {
+    "name": "Priya Nair", "title": "Head of Partnerships", "company": "Bright Harbour Training",
+}
+
+
+def signed(ending):
+    """A clean email whose closing lines are `ending` instead of the test's "Priya" sign-off."""
+    return email_message(body=email_message()["body"].replace("Kind regards,\nPriya", ending))
+
+
+def test_m17_full_sign_off_passes_and_adds_no_other_issue():
+    full = signed("Kind regards,\nPriya Nair\nHead of Partnerships\nBright Harbour Training")
+    assert not {"M17", "M07", "M14", "M10"} & set(codes(run(full, sender=SENDER)))
+
+
+def test_m17_first_name_only_is_a_block_when_the_sign_off_is_full():
+    issue = by_code(run(signed("Kind regards,\nPriya"), sender=SENDER), "M17")
+    assert issue.severity == "block"
+    assert "Priya Nair / Head of Partnerships / Bright Harbour Training" in issue.detail
+
+
+def test_m17_missing_title_line_gives_one_block():
+    issues = run(signed("Kind regards,\nPriya Nair\nBright Harbour Training"), sender=SENDER)
+    assert codes(issues).count("M17") == 1
+    assert "Priya Nair / Head of Partnerships / Bright Harbour Training" in by_code(
+        issues, "M17"
+    ).detail
+
+
+def test_m17_ignores_case_and_extra_spaces():
+    ending = "Kind regards,\n  priya   nair \nhead of partnerships\nbright harbour training"
+    assert "M17" not in codes(run(signed(ending), sender=SENDER))
+
+
+def test_m17_applies_to_linkedin_messages_but_not_invites_or_missing_names():
+    invite = message_row(
+        channel="linkedin_invite",
+        body=f"Hi Aria, I see you lead learning at {COMPANY}. Would a short outline help?\n\nPriya",
+    )
+    assert "M17" not in codes(run(invite, sender=SENDER))
+    assert "M17" in codes(run(message_row(), sender=SENDER))
+    assert "M17" not in codes(run(message_row()))
+    assert "M17" not in codes(run(email_message(), sender={**SENDER, "name": ""}))
 
 
 def test_save_drafts_uses_the_full_checks(ready_db):

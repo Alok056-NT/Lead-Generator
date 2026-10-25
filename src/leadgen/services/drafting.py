@@ -330,11 +330,20 @@ def _offer_payload(profile: Mapping[str, Any]) -> dict[str, Any]:
     return {k: profile.get(k) for k in keys}
 
 
-def _project_sender_name(camp: Mapping[str, Any]) -> str:
-    """The project's sign-off name ("" when unset or the campaign has no project)."""
+def sender_identity(camp: Mapping[str, Any]) -> dict[str, str]:
+    """The project's sign-off: name, title and company ("" each when unset or no project)."""
     if camp.get("project_id") is None:
-        return ""
-    return str(projects.get_project(camp["project_id"]).get("sender_name") or "")
+        return {"name": "", "title": "", "company": ""}
+    project = projects.get_project(camp["project_id"])
+    return {"name": str(project.get("sender_name") or ""),
+            "title": str(project.get("sender_title") or ""),
+            "company": str(project.get("sender_company") or "")}
+
+
+def sign_off_lines(sender: Mapping[str, Any]) -> list[str]:
+    """The sign-off lines in order (name, title, company), empty ones left out."""
+    return [normalize_whitespace(str(sender.get(k) or "")) for k in ("name", "title", "company")
+            if normalize_whitespace(str(sender.get(k) or ""))]
 
 
 def _person_payload(
@@ -393,10 +402,14 @@ def get_drafting_batch(
     """
     camp = _campaign(campaign_id)
     profile = _offer_profile(camp)
-    sender = _project_sender_name(camp)
+    sender = sender_identity(camp)
     offer = _offer_payload(profile)
-    if sender:
-        offer["sender"] = {**(offer.get("sender") or {}), "name": sender}
+    if sender["name"]:
+        offer["sender"] = {**(offer.get("sender") or {}), "name": sender["name"]}
+        if sender["company"]:
+            offer["sender"]["company"] = sender["company"]
+    shown = sender if sender["name"] else {
+        "name": str((offer.get("sender") or {}).get("name") or ""), "title": "", "company": ""}
     channel = _check_channel(camp, channel)
     size = min(max(1, _int(batch_size, "batch_size")), PAGE_SIZE_MAX)
     after = _cursor(cursor)
@@ -432,7 +445,9 @@ def get_drafting_batch(
         },
         "channel_spec": CHANNEL_SPECS[channel].as_dict(),
         "offer": offer,
-        "sender_name": sender or str((offer.get("sender") or {}).get("name") or ""),
+        "sender_name": shown["name"],                         # kept for older callers
+        "sign_off": {**shown, "block": "\n".join(sign_off_lines(shown)),
+                     "required": bool(sender["name"])},
         "people": [_person_payload(r, camp, known.get(r["id"])) for r in rows],
         "count": len(rows),
         "remaining": remaining,
@@ -475,6 +490,7 @@ class _SaveContext:
     profile: Mapping[str, Any]
     companies: list[dict[str, Any]]
     index: dict[int, Any]
+    sender: dict[str, str]
 
 
 # --- saving ---------------------------------------------------------------------------------------
@@ -610,7 +626,8 @@ def _save_one(
     issues = [
         i.as_dict()
         for i in qa.check_message(
-            message, person, company, camp, ctx.profile, ctx.index, companies=ctx.companies
+            message, person, company, camp, ctx.profile, ctx.index, companies=ctx.companies,
+            sender=ctx.sender,
         )
     ]
     status = "qa_fail" if any(i["severity"] == "block" for i in issues) else "qa_pass"
@@ -658,7 +675,8 @@ def save_context(campaign_id: int) -> _SaveContext:
     profile = _offer_profile(camp)
     with db.session() as conn:
         companies = db.query(conn, "SELECT * FROM companies WHERE campaign_id = ?", (camp["id"],))
-    return _SaveContext(profile=profile, companies=companies, index=_qa().build_index(camp["id"]))
+    return _SaveContext(profile=profile, companies=companies, index=_qa().build_index(camp["id"]),
+                        sender=sender_identity(camp))
 
 
 def save_drafts(

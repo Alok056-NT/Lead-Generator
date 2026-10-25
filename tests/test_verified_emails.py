@@ -220,20 +220,20 @@ def test_migration_v4_on_a_copy_of_a_v3_database(tmp_path, monkeypatch):
             return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in V3_TABLES}
 
     before = counts(copy)
-    assert db.init_db(copy) == db.SCHEMA_VERSION == 5
+    assert db.init_db(copy) == db.SCHEMA_VERSION == 6
     assert counts(copy) == before  # nothing was deleted or added
     with db.session(original) as conn:  # the original file was not touched
         assert db.current_version(conn) == 3
         columns = {r["name"] for r in conn.execute("PRAGMA table_info(projects)")}
         assert "email_policy" not in columns
     with db.session(copy) as conn:
-        assert db.current_version(conn) == 5
+        assert db.current_version(conn) == 6
         row = db.get(conn, "projects", project_id)
         assert row["email_policy"] == "verified_only" and row["cooldown_days"] == 30
         stored = db.query(conn, "SELECT options_json FROM campaigns")[0]["options_json"]
         assert stored["allow_risky_emails"] is True  # the old campaign keeps its own value
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert db.init_db(copy) == 5  # running it again changes nothing
+    assert db.init_db(copy) == 6  # running it again changes nothing
 
 
 def test_failed_v4_migration_rolls_back(tmp_path, monkeypatch):

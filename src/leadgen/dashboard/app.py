@@ -124,6 +124,8 @@ class ProjectChangeBody(_Body):
     cooldown_days: int | None = Field(default=None, ge=0, le=3650)
     email_policy: Literal["verified_only", "allow_risky"] | None = None
     sender_name: str | None = Field(default=None, max_length=120)
+    sender_title: str | None = Field(default=None, max_length=120)
+    sender_company: str | None = Field(default=None, max_length=120)
 
 
 class CampaignBody(_Body):
@@ -462,7 +464,9 @@ def _register_routes(app: FastAPI) -> None:
         ai = ai_setup.get_status()
         return _json({
             **progress,
-            "project": {k: project[k] for k in ("id", "name", "sender_name", "cooldown_days")},
+            "project": {k: project[k] for k in (
+                "id", "name", "sender_name", "sender_title", "sender_company", "cooldown_days",
+            )},
             "ai": {"ready": ai["ready"], "mode": ai["mode"]},
             "turn": chat.turn_state(project_id),
         })  # fmt: skip

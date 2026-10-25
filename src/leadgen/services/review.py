@@ -143,6 +143,7 @@ def evaluate(
     people_by_id = {p["id"]: p for p in leads.people}
     companies = list(leads.companies.values())
     index = qa_messages.build_index(camp["id"]) if near_duplicates else None
+    sender = drafting.sender_identity(camp)
     live: list[dict[str, Any]] = []
     orphans: list[dict[str, Any]] = []
     sent = rejected = 0
@@ -162,7 +163,7 @@ def evaluate(
         company = leads.companies[person["company_id"]]
         live.append(row)
         issues = qa_messages.check_message(
-            row, person, company, camp, profile, index, companies=companies
+            row, person, company, camp, profile, index, companies=companies, sender=sender
         )
         msg_issues[row["id"]] = issues
         if not any(i.severity == "block" for i in issues):
@@ -380,7 +381,7 @@ def list_qa_issues(
         and code not in qa_leads.LEAD_SEVERITY
         and code not in (qa_messages.MESSAGE_SEVERITY)
     ):
-        raise ReviewError("invalid_value", f"Unknown QA code {code!r} (L01-L25, M01-M16).")
+        raise ReviewError("invalid_value", f"Unknown QA code {code!r} (L01-L25, M01-M17).")
     page = max(1, _int(page, "page"))
     page_size = min(max(1, _int(page_size, "page_size")), PAGE_SIZE)
     where = "p.campaign_id = ?"
@@ -566,7 +567,10 @@ def _record_pass(
         )
     # No M12 index: it is only a warning and cannot stop a pass, but building it for every
     # verdict is slow. The warning found when the draft was saved is kept below.
-    issues = qa_messages.check_message(row, person, company, camp, profile, companies=companies)
+    issues = qa_messages.check_message(
+        row, person, company, camp, profile, companies=companies,
+        sender=drafting.sender_identity(camp),
+    )
     blocks = [i for i in issues if i.severity == "block"]
     if blocks:
         return _fail(

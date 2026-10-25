@@ -442,6 +442,8 @@ def build_prompt(project: Mapping[str, Any], text: str, files: Sequence[Path]) -
         f"project_id: {project['id']}",
         f"project_name: {project['name']}",
         f"sender_name: {project['sender_name'] or '(not set yet)'}",
+        f"sender_title: {project.get('sender_title') or '(not set)'}",
+        f"sender_company: {project.get('sender_company') or '(not set)'}",
         f"product_attached: {'yes' if project['offer_id'] else 'no'}",
     ]
     if files:

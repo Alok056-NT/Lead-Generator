@@ -1,4 +1,4 @@
-"""Message quality checks M01-M16 (PLAN section 14).
+"""Message quality checks M01-M17 (PLAN section 14).
 
 `check_message` is pure: it gets the message, the person, the company, the campaign, the offer
 profile and an index of the campaign's other messages, and returns a list of `Issue`
@@ -32,6 +32,7 @@ MESSAGE_SEVERITY: dict[str, str] = {
     "M01": "block", "M02": "block", "M03": "block", "M04": "block", "M05": "block",
     "M06": "block", "M07": "warn", "M08": "warn", "M09": "block", "M10": "warn",
     "M11": "warn", "M12": "warn", "M13": "warn", "M14": "warn", "M15": "warn", "M16": "block",
+    "M17": "block",
 }  # fmt: skip
 
 MESSAGE_TITLES: dict[str, str] = {
@@ -51,6 +52,7 @@ MESSAGE_TITLES: dict[str, str] = {
     "M14": "Job title differs from the lead's title",
     "M15": "Exclamation marks, emoji or shouting",
     "M16": "AI review missing",
+    "M17": "Sign-off block missing or wrong",
 }  # fmt: skip
 
 SIMILARITY_LIMIT = 0.92
@@ -841,6 +843,29 @@ def _check_titles(text: str, person: Mapping[str, Any], known: str) -> list[Issu
     return []
 
 
+def _check_sign_off(channel: str, body: str, sender: Mapping[str, Any] | None) -> list[Issue]:
+    if not sender or not str(sender.get("name") or "").strip() or channel == "linkedin_invite":
+        return []
+    want = drafting.sign_off_lines(sender)
+    lines = [normalize_whitespace(ln) for ln in body.splitlines() if ln.strip()]
+    if [ln.casefold() for ln in lines[-len(want):]] == [w.casefold() for w in want]:
+        return []
+    return [_issue("M17", "End the message with the sign-off, each part on its own line: "
+                   + " / ".join(want) + ".")]
+
+
+def _without_sign_off(body: str, sender: Mapping[str, Any] | None) -> str:
+    """The body without the trailing sign-off lines (so they do not trip M07, M10 or M14)."""
+    want = drafting.sign_off_lines(sender) if sender else []
+    lines = body.rstrip().splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    tail = [normalize_whitespace(ln).casefold() for ln in lines[-len(want):]] if want else []
+    if want and tail == [w.casefold() for w in want]:
+        lines = lines[: -len(want)]
+    return "\n".join(lines)
+
+
 def _check_tone(text: str) -> list[Issue]:
     problems = []
     if text.count("!") >= 2:
@@ -880,14 +905,15 @@ def check_message(
     all_messages_index: Mapping[int, IndexEntry] | None = None,
     *,
     companies: Sequence[Mapping[str, Any]] | None = None,
+    sender: Mapping[str, Any] | None = None,
 ) -> list[Issue]:
     """Checks M01-M15 for one message (M16 is `review_pending_issue`). Returns the issues.
 
     `message` has `channel`, `subject`, `body` (and `id` once stored); `person` and `company`
     are database rows; `campaign` is the `campaign.get_campaign` dict; `offer` is the offer
     profile dict; `all_messages_index` is `build_index(campaign_id)` for the near-duplicate
-    check (M12), and `companies` the campaign's companies for M02 (read from the database when
-    not given).
+    check (M12), `companies` the campaign's companies for M02 (read from the database when
+    not given), and `sender` the project's sign-off (M17; no check when it has no name).
     """
     channel = str(message.get("channel") or "")
     if channel not in drafting.CHANNEL_SPECS:
@@ -895,6 +921,8 @@ def check_message(
     subject = str(message.get("subject") or "")
     body = str(message.get("body") or "")
     text = f"{subject}\n{body}" if subject else body
+    main = _without_sign_off(body, sender)
+    text_main = f"{subject}\n{main}" if subject else main
     greeting = str(person.get("greeting_name") or person.get("first_name") or "")
     others = companies if companies is not None else _campaign_companies(campaign.get("id"))
     known = _known_text(person, company, campaign, offer)
@@ -910,11 +938,11 @@ def check_message(
     issues += _check_length(channel, body)
     issues += _check_forbidden(text, offer)
     issues += _check_numbers(text, person, company, offer)
-    issues += _check_brands(text, person, company, campaign, offer)
+    issues += _check_brands(text_main, person, company, campaign, offer)
     if channel == "email":
         issues += _check_spam(text)
     issues += _check_subject(channel, subject)
-    issues += _check_ending(body)
+    issues += _check_ending(main)
     issues += _check_links(channel, body)
     if all_messages_index:
         full = normalize_whitespace(
@@ -923,6 +951,7 @@ def check_message(
         sim_text = similarity_text(subject, body, greeting, company, full)
         issues += _check_similar(channel, sim_text, message.get("id"), all_messages_index)
     issues += _check_locale(str(campaign.get("locale") or ""), text, known)
-    issues += _check_titles(body, person, known)
+    issues += _check_titles(main, person, known)
     issues += _check_tone(text)
+    issues += _check_sign_off(channel, body, sender)
     return issues

@@ -129,6 +129,61 @@ CREATE TABLE chat_messages (
 CREATE INDEX idx_chat_messages_project ON chat_messages(project_id, id);
 """
 
+# v6 (V13): the sign-off's job title and company, the project's own message templates, phone
+# numbers found from LinkedIn profiles, and the AI usage per chat reply. New columns have
+# defaults and the rest are new tables, so a v5 database keeps every row.
+_V6_SQL = """
+ALTER TABLE projects ADD COLUMN sender_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN sender_company TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE message_templates (
+    id         INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    level      TEXT NOT NULL DEFAULT 'any',        -- csuite / director / manager / any
+    depth      TEXT NOT NULL DEFAULT 'standard',   -- short / standard / detailed
+    use_case   TEXT NOT NULL DEFAULT '',
+    subject    TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL
+);
+CREATE INDEX idx_message_templates_project ON message_templates(project_id);
+
+CREATE TABLE phones (
+    id         INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    person_id  INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    number     TEXT NOT NULL DEFAULT '',           -- '' while an Apollo request is waiting
+    kind       TEXT NOT NULL DEFAULT '',           -- mobile / work / ... as the provider says
+    source     TEXT NOT NULL DEFAULT '',           -- apollo / prospeo / getprospect
+    -- status: found_not_verified / requested / failed
+    status     TEXT NOT NULL DEFAULT 'found_not_verified',
+    request_id TEXT NOT NULL DEFAULT '',
+    UNIQUE (person_id, number)
+);
+CREATE INDEX idx_phones_person ON phones(person_id);
+
+CREATE TABLE ai_usage (
+    id                 INTEGER PRIMARY KEY,
+    project_id         INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    session_id         TEXT NOT NULL DEFAULT '',
+    at                 TEXT NOT NULL,
+    model              TEXT NOT NULL DEFAULT '',
+    effort             TEXT NOT NULL DEFAULT '',
+    input_tokens       INTEGER NOT NULL DEFAULT 0,
+    output_tokens      INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_total_usd     REAL,                       -- Claude Code's running total for the session
+    cost_usd           REAL,                       -- this reply's share (estimate)
+    is_error           INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_ai_usage_at ON ai_usage(at);
+CREATE INDEX idx_ai_usage_project ON ai_usage(project_id);
+"""
+
 
 def _unique_project_name(name: str, used: set[str]) -> str:
     base = " ".join(name.split())[:120].strip() or "Project"
@@ -176,9 +231,10 @@ def _v2_assign_projects(conn: sqlite3.Connection) -> None:
 # same transaction once the SQL has run, for data changes that plain SQL cannot express.
 # v2 (T23): projects, contact memory, campaigns.project_id. v3 (T24): known_contacts.
 # v4 (T25): projects.email_policy. v5 (V12): sender name, chat session, chat_messages.
+# v6 (V13): sender title and company, message_templates, phones, ai_usage.
 Migration = tuple[int, str] | tuple[int, str, Callable[[sqlite3.Connection], None]]
 MIGRATIONS: list[Migration] = [
-    (2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL), (4, _V4_SQL), (5, _V5_SQL),
+    (2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL), (4, _V4_SQL), (5, _V5_SQL), (6, _V6_SQL),
 ]
 SCHEMA_VERSION = max([BASE_VERSION, *(m[0] for m in MIGRATIONS)])
 
@@ -191,6 +247,9 @@ TABLES = frozenset(
         "contact_log",
         "known_contacts",
         "chat_messages",
+        "message_templates",
+        "phones",
+        "ai_usage",
         "companies",
         "people",
         "search_tasks",

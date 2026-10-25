@@ -33,7 +33,7 @@ def test_migration_v5_keeps_every_row(tmp_path):
     with db.session(path) as conn:
         db.insert(conn, "projects", name="Northwind course")
 
-    assert db.init_db(path) == 5
+    assert db.init_db(path) == db.SCHEMA_VERSION  # later migrations run too
 
     with db.session(path) as conn:
         row = db.query(conn, "SELECT * FROM projects")[0]
@@ -217,6 +217,38 @@ def test_drafting_uses_the_project_sign_off_name():
     assert after["offer"]["sender"]["name"] == "Priya" and after["sender_name"] == "Priya"
     assert after["offer"]["sender"]["company"] == before["offer"]["sender"]["company"]
     assert after["offer"]["sender"]["role"] == before["offer"]["sender"]["role"]
+
+
+def test_sign_off_title_and_company_are_saved_and_validated():
+    pid = make_campaign()["project_id"]
+
+    saved = projects.update_project(
+        pid, sender_title="  Head of   Partnerships ", sender_company="Bright Harbour Training"
+    )
+    assert saved["sender_title"] == "Head of Partnerships"
+    assert saved["sender_company"] == "Bright Harbour Training"
+    for field, label in (("sender_title", "job title"), ("sender_company", "company name")):
+        for bad in ("x" * 121, 12):
+            with pytest.raises(ProjectError) as err:
+                projects.update_project(pid, **{field: bad})
+            assert err.value.code == "invalid_value" and label in err.value.message
+    assert projects.update_project(pid, sender_title="", sender_company="")["sender_title"] == ""
+
+
+def test_mcp_update_project_takes_title_and_company():
+    pid = make_campaign()["project_id"]
+    with anyio.from_thread.start_blocking_portal() as portal:
+        with portal.wrap_async_context_manager(Client(mcp_server.build_server())) as client:
+            result = portal.call(
+                client.call_tool, "update_project",
+                {"project_id": pid, "sender_title": "Head of Partnerships",
+                 "sender_company": "Bright Harbour Training"},
+            )
+
+    assert not result.is_error
+    saved = projects.get_project(pid)
+    assert saved["sender_title"] == "Head of Partnerships"
+    assert saved["sender_company"] == "Bright Harbour Training"
 
 
 def test_mcp_update_project_takes_sender_name():

@@ -57,11 +57,11 @@ def test_connect_pragmas(conn):
 
 
 def test_init_db_creates_database_in_workspace_and_is_idempotent():
-    assert db.init_db() == db.SCHEMA_VERSION == 5
+    assert db.init_db() == db.SCHEMA_VERSION == 6
     assert paths.db_path().exists()
     assert db.init_db() == db.SCHEMA_VERSION
     with db.session() as conn:
-        assert count(conn, "schema_version") == 5
+        assert count(conn, "schema_version") == 6
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert db.TABLES <= names
 
@@ -124,7 +124,7 @@ def test_failed_migration_rolls_back(monkeypatch):
     monkeypatch.setattr(
         db,
         "MIGRATIONS",
-        [(6, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
+        [(7, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
     )
     with pytest.raises(sqlite3.Error):
         db.init_db()
@@ -132,6 +132,24 @@ def test_failed_migration_rolls_back(monkeypatch):
         assert db.current_version(conn) == db.SCHEMA_VERSION
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
         assert "half_done" not in tables
+
+
+def test_v6_upgrade_keeps_every_row(tmp_path):
+    path = tmp_path / "v5.db"
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(db, "MIGRATIONS", db.MIGRATIONS[:4])
+        assert db.init_db(path) == 5
+    with db.session(path) as conn:
+        pid = db.insert(conn, "projects", name="Northwind course", sender_name="Priya")
+
+    assert db.init_db(path) == 6
+
+    with db.session(path) as conn:
+        row = db.get(conn, "projects", pid)
+        assert row["name"] == "Northwind course" and row["sender_name"] == "Priya"
+        assert row["sender_title"] == "" and row["sender_company"] == ""
+        for table in ("message_templates", "phones", "ai_usage"):
+            assert count(conn, table) == 0
 
 
 def test_bad_migration_numbering_rejected(monkeypatch):

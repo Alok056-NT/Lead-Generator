@@ -926,3 +926,55 @@ def test_good_examples_pass_all_the_checks():
 
 def test_guide_is_packaged_text():
     assert drafting.guide_text().startswith("# How to write the messages")
+
+
+# --- sign-off block -----------------------------------------------------------------------------
+
+
+def set_sign_off(cid, name="Priya Nair", title="Head of Partnerships"):
+    project_id = camp.get_campaign(cid)["project_id"]
+    projects.update_project(
+        project_id, sender_name=name, sender_title=title, sender_company="Bright Harbour Training"
+    )
+
+
+def test_sign_off_block_comes_from_the_project(world):
+    cid, co = world
+    add_person(cid, co)
+    set_sign_off(cid)
+    batch = drafting.get_drafting_batch(cid, "linkedin_message", include_guide=False)
+    assert batch["sign_off"] == {
+        "name": "Priya Nair", "title": "Head of Partnerships", "company": "Bright Harbour Training",
+        "block": "Priya Nair\nHead of Partnerships\nBright Harbour Training", "required": True,
+    }  # fmt: skip
+    assert batch["offer"]["sender"]["company"] == "Bright Harbour Training"
+    assert batch["sender_name"] == "Priya Nair"
+
+
+def test_sign_off_without_a_project_name_is_not_required(world):
+    cid, co = world
+    add_person(cid, co)
+    batch = drafting.get_drafting_batch(cid, "linkedin_message", include_guide=False)
+    assert batch["sign_off"] == {
+        "name": "Priya Nair", "title": "", "company": "", "block": "Priya Nair", "required": False,
+    }  # fmt: skip
+
+
+def test_m17_email_draft_needs_the_whole_sign_off(world):
+    cid, co = world
+    p = add_person(cid, co)
+    add_email(p)
+    set_sign_off(cid)
+    subject = "Training for Northwind"
+    short = drafting.save_drafts(
+        cid, [{"person_id": p, "channel": "email", "subject": subject, "body": email_body()}]
+    )["results"][0]
+    assert short["status"] == "qa_fail"
+    assert "M17" in [i["code"] for i in short["issues"]]
+    full = email_body().replace(
+        "Priya", "Priya Nair\nHead of Partnerships\nBright Harbour Training"
+    )
+    ok = drafting.save_drafts(
+        cid, [{"person_id": p, "channel": "email", "subject": subject, "body": full}]
+    )["results"][0]
+    assert ok["status"] == "qa_pass"

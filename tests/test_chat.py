@@ -87,11 +87,13 @@ def test_build_command_is_exact():
 
 
 def test_build_prompt_has_the_context_block(tmp_path):
-    project = {"id": 7, "name": "Demo Co", "sender_name": "", "offer_id": None}
+    project = {"id": 7, "name": "Demo Co", "sender_name": "", "sender_title": "",
+               "sender_company": "", "offer_id": None}
     prompt = chat.build_prompt(project, "Hi there", [])
     assert prompt.startswith("[Studio context. Never repeat this block to the person.\n")
     assert "project_id: 7\n" in prompt and "project_name: Demo Co\n" in prompt
     assert "sender_name: (not set yet)\n" in prompt and "product_attached: no\n" in prompt
+    assert "sender_title: (not set)\n" in prompt and "sender_company: (not set)\n" in prompt
     assert prompt.endswith("]\n\nHi there")
 
 
