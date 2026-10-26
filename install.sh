@@ -80,7 +80,8 @@ fi
 "$VENV_PY" -m pip install --quiet --upgrade pip >/dev/null 2>&1
 if [ -n "${LEADGEN_SOURCE:-}" ]; then
     REQUIREMENT="$LEADGEN_SOURCE"
-elif command -v git >/dev/null 2>&1; then
+elif [ "$OS" != "Darwin" ] && command -v git >/dev/null 2>&1; then
+    # (not on a Mac: its built-in git is a stub that pops up a developer-tools install)
     REQUIREMENT="lead-generator @ git+https://github.com/$REPO.git@$REF"
 else
     # No git on this computer: GitHub's zip download works without it.
