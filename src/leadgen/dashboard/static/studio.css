@@ -378,3 +378,10 @@ button.link { height: auto; padding: 0; border: none; background: none; box-shad
   .chat-card { height: calc(100vh - 220px); }
   .choices { grid-template-columns: 1fr; }
 }
+
+/* v1.3.2: the unsaved-changes bar in the drawer, the Back button on wave pages, Advanced cards */
+.drawer-guard { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-4); background: var(--accent-soft); border-bottom: 1px solid var(--accent); }
+.drawer-guard[hidden] { display: none; }
+.subnav .back-link { margin-right: var(--s-3); }
+.tool-card .row { margin-top: auto; }
+details.card > summary { cursor: pointer; font-weight: 600; }

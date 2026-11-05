@@ -343,10 +343,10 @@ const NAV_GROUP = {
 };
 const CAMPAIGN_NAV = [
   ['', 'Overview'],
-  ['companies', '1 Companies'],
-  ['leads', '2 People'],
-  ['messages', '4 Messages'],
-  ['export', '6 Export or send'],
+  ['companies', 'Companies'],
+  ['leads', 'People'],
+  ['messages', 'Messages'],
+  ['export', 'Export or send'],
   ['analytics', 'Results'],
 ];
 
@@ -364,8 +364,12 @@ function renderNav(topKey, campaign, subKey) {
   }
   sub.hidden = false;
   if (campaign.project) {
-    sub.appendChild(h('a', { class: 'crumb-link', href: '#/p/' + campaign.project.id, text: campaign.project.name }));
-    sub.appendChild(h('span', { class: 'crumb', 'aria-hidden': 'true', text: '/' }));
+    const pid = campaign.project.id;
+    // the project page opens on its Waves tab: write the tab memory first (ui.js keeps it, studio_project.js reads it)
+    sub.appendChild(h('a', {
+      class: 'button back-link', href: '#/p/' + pid, text: '← Back to ' + campaign.project.name,
+      onclick: () => UI.save('lg.tab.' + pid, 'waves'),
+    }));
   }
   sub.appendChild(h('span', { class: 'crumb', text: campaign.name }));
   for (const [key, text] of CAMPAIGN_NAV) {
@@ -404,7 +408,7 @@ async function route() {
     campaign = reply.campaign;
     campaign.overview = reply;
     campaign.project = reply.project;
-    renderNav('advanced', campaign, sub);
+    renderNav(campaign.project ? NAV_GROUP.p : NAV_GROUP.c, campaign, sub);
   } else {
     renderNav(NAV_GROUP[top] || top, null, '');
   }
@@ -443,6 +447,10 @@ async function route() {
 window.addEventListener('hashchange', route);
 document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !panel.hidden) closePanel(true);
+});
+// pointerdown, not click: the click that opened the panel is over before it can listen
+document.addEventListener('pointerdown', (ev) => {
+  if (!panel.hidden && !panel.contains(ev.target)) closePanel(true);
 });
 
 // ---- side panel -------------------------------------------------------------------------------
@@ -1461,7 +1469,7 @@ async function pageCompanies(ctx) {
   const filter = selectBox('f-status', [['', 'All'], ...Object.entries(COMPANY_STATUS)], status, (ev) =>
     go(base, { status: ev.target.value }));
   setMain(
-    h('h2', { text: '1 Companies' }),
+    h('h2', { text: 'Companies' }),
     whatsThis('These are the companies we will look for people at. Tick the ones you want and choose "Approve selected". Only approved companies are searched.'),
     h('div', { class: 'filters' }, h('div', null, h('label', { for: 'f-status', text: 'Show' }), filter),
       h('div', { class: 'row' },
@@ -1523,9 +1531,11 @@ async function pageLeads(ctx) {
       h('button', { type: 'button', onclick: () => go(base, {}), text: 'Clear filters' })),
   );
 
+  const review = reviewerFor(c, null);
+  const openPerson = async (p) => { if (!(p.status === 'confirmed' && (await review(p.id)))) openLead(p.id); };
   const rows = reply.leads.map((p) =>
-    h('tr', { class: 'clickable', onclick: (ev) => { if (ev.target.closest('a,button')) return; openLead(p.id); } },
-      h('td', null, h('button', { type: 'button', class: 'link', text: p.raw_name || '(no name)', onclick: () => openLead(p.id) }),
+    h('tr', { class: 'clickable', onclick: (ev) => { if (ev.target.closest('a,button')) return; openPerson(p); } },
+      h('td', null, h('button', { type: 'button', class: 'link', text: p.raw_name || '(no name)', onclick: () => openPerson(p) }),
         p.known_contact ? [' ', badge(label(KNOWN, p.known_contact.relationship), 'info')] : null),
       h('td', { text: p.title }),
       h('td', { text: p.company }),
@@ -1537,7 +1547,7 @@ async function pageLeads(ctx) {
       h('td', { class: 'small', text: label(ORIGIN, p.evidence_origin) })));
 
   setMain(
-    h('h2', { text: '2 People' }),
+    h('h2', { text: 'People' }),
     whatsThis('These are the people we found at your companies. "Ready" people can get messages. "Needs a look" people are held back until you decide. "Saved for a later campaign" people did not fit the size limits.'),
     form,
     reply.leads.length
@@ -1547,6 +1557,40 @@ async function pageLeads(ctx) {
       : h('p', { text: 'No people match.' }),
     pager(reply, (p) => go(base, { ...f, page: p })),
   );
+}
+
+// Opens the project page's review drawer for one ready person of the wave c. onClose(changed) runs when
+// the drawer closes. Returns a function (personId) -> true when the drawer opened, false when it cannot
+// (no project, or the person is not ready): the caller then opens the old side panel.
+function reviewerFor(c, onClose) {
+  let loaded = null;
+  let changed = false;
+  const everyone = () => {
+    if (!loaded) {
+      loaded = (async () => {
+        const all = [];
+        for (let page = 1; page <= 80; page++) {
+          const res = await api(`/api/projects/${c.project.id}/results${query({ campaign_id: c.id, page, page_size: 50 })}`);
+          if (!res.ok) return null;
+          all.push(...res.leads);
+          if (!res.has_more) break;
+        }
+        return all;
+      })();
+    }
+    return loaded;
+  };
+  return async (personId) => {
+    if (!c.project || !window.Studio || !Studio.reviewDrawer) return false;
+    const leads = await everyone();
+    const at = leads ? leads.findIndex((l) => l.id === personId) : -1;
+    if (at < 0) return false;
+    Studio.reviewDrawer(leads, at, () => { changed = true; }, {
+      details: (lead) => openLead(lead.id),
+      onClose: () => { const was = changed; changed = false; if (onClose) onClose(was); },
+    });
+    return true;
+  };
 }
 
 async function openLead(personId) {
@@ -1603,11 +1647,12 @@ async function openLead(personId) {
 
 // ---- Messages ---------------------------------------------------------------------------------
 
-function messageCard(m, who) {
+function messageCard(m, who, open) {
   const text = (m.subject ? 'Subject: ' + m.subject + '\n\n' : '') + m.body;
   return h('article', { class: 'card msg-card', 'aria-label': label(CHANNEL, m.channel) },
     h('div', { class: 'row' },
-      h('strong', { class: 'grow', text: who ? `${who} - ${label(CHANNEL, m.channel)}` : label(CHANNEL, m.channel) }),
+      open ? h('button', { type: 'button', class: 'link grow', text: who, title: 'Review the messages', onclick: open }) : null,
+      h('strong', { class: 'grow', text: open ? label(CHANNEL, m.channel) : who ? `${who} - ${label(CHANNEL, m.channel)}` : label(CHANNEL, m.channel) }),
       badge(label(MESSAGE_STATUS, m.status), MESSAGE_TONE[m.status]),
       m.ai_review ? badge('Checked by AI: ' + label(AI_VERDICT, m.ai_review), AI_TONE[m.ai_review]) : badge('Not checked by AI yet', 'info')),
     m.subject ? h('div', { class: 'small' }, h('strong', { text: 'Subject: ' }), m.subject) : null,
@@ -1628,6 +1673,9 @@ async function pageMessages(ctx) {
   if (ctx.token !== routeToken) return;
   if (!reply.ok) return setMain(notice('bad', errorText(reply)));
   const base = `/c/${c.id}/messages`;
+  // the drawer shows the whole person; a change redraws the page when it closes
+  const review = reviewerFor(c, (changed) => { if (changed && ctx.token === routeToken) route(); });
+  const openMessageOwner = async (m) => { if (!(await review(m.person_id))) openLead(m.person_id); };
   const apply = (extra) => go(base, { ...f, page: 1, ...extra });
   const searchBox = h('input', { type: 'search', id: 'm-search', value: f.search, placeholder: 'Name, company, words' });
   const form = h('form', { class: 'filters', role: 'search', onsubmit: (ev) => { ev.preventDefault(); apply({ search: searchBox.value.trim() }); } },
@@ -1641,11 +1689,11 @@ async function pageMessages(ctx) {
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'primary', text: 'Search' }),
       h('button', { type: 'button', onclick: () => go(base, {}), text: 'Clear filters' })));
   setMain(
-    h('h2', { text: '4 Messages' }),
+    h('h2', { text: 'Messages' }),
     whatsThis('These are the messages written for each person. Each one is checked for mistakes and then by the AI before you export or send it.'),
     h('p', { class: 'muted small', text: Object.entries(reply.counts).map(([k, v]) => `${v} ${label(CHANNEL, k).toLowerCase()}`).join(', ') || 'No messages yet.' }),
     form,
-    reply.messages.length ? reply.messages.map((m) => messageCard(m, `${m.person}, ${m.company}`)) : h('p', { text: 'No messages match.' }),
+    reply.messages.length ? reply.messages.map((m) => messageCard(m, `${m.person}, ${m.company}`, () => openMessageOwner(m))) : h('p', { text: 'No messages match.' }),
     pager(reply, (p) => go(base, { ...f, page: p })),
   );
 }
@@ -1684,8 +1732,8 @@ async function pageExport(ctx) {
     result.appendChild(notice(res.path ? 'ok' : 'warn', ...lines));
     refreshFiles();
   };
-  const buttons = [['generic', 'Download a CSV file (all details)'], ['lemlist', 'Download a file for lemlist'], ['instantly', 'Download a file for Instantly']].map(([fmt, text]) => {
-    const b = h('button', { type: 'button', class: 'primary', text });
+  const buttons = [['generic', 'Download a CSV file (all details)'], ['lemlist', 'Download a file for lemlist'], ['instantly', 'Download a file for Instantly']].map(([fmt, text], i) => {
+    const b = h('button', { type: 'button', class: i === 0 ? 'primary' : '', text });
     b.addEventListener('click', () => run(fmt, b));
     return b;
   });
@@ -1706,10 +1754,10 @@ async function pageExport(ctx) {
     const res = await api(`/api/campaigns/${c.id}/exports/open-folder`, { method: 'POST' });
     if (!res.ok) toast(errorText(res), 'warn');
   });
-  const wantsEmail = (c.channels || []).includes('email');
-  const wantsLinkedin = (c.channels || []).includes('linkedin');
+  const sender = window.Studio && Studio.sendCard
+    ? Studio.sendCard({ campaignId: () => c.id, refresh: () => route() }) : null;
   setMain(
-    h('h2', { text: '6 Export / Send (optional)' }),
+    h('h2', { text: 'Export or send' }),
     whatsThis('This is the last step. You can download your people and their messages and use them anywhere, or let Lead Generator send the emails from your own mailbox. Sending is always your choice.'),
     h('section', { class: 'card stack', 'aria-labelledby': 'dl-h' },
       h('h3', { id: 'dl-h', text: 'Download your people and messages' }),
@@ -1717,15 +1765,11 @@ async function pageExport(ctx) {
       field('x-inc', 'What to include', include),
       h('div', { class: 'row' }, ...buttons),
       result),
-    wantsEmail ? h('section', { class: 'card stack', 'aria-labelledby': 'send-mail-h' },
-      h('h3', { id: 'send-mail-h', text: 'Send emails from your mailbox (optional)' }),
+    sender ? h('section', { class: 'card stack', 'aria-labelledby': 'send-h' },
+      h('h3', { id: 'send-h', text: 'Send (optional)' }),
       h('p', { text: 'Lead Generator can send your approved emails from your own mailbox, a few at a time. Only people with a verified email address get one. You do not have to use this.' }),
-      h('div', { class: 'row' },
-        h('a', { class: 'button primary', href: '#/mailbox', text: 'Connect your mailbox' }),
-        h('a', { class: 'button', href: `#/c/${c.id}/analytics`, text: 'See sending and replies' }))) : null,
-    wantsLinkedin ? h('section', { class: 'card stack', 'aria-labelledby': 'li-h' },
-      h('h3', { id: 'li-h', text: 'LinkedIn: export for lemlist or push to lemlist (optional)' }),
-      h('p', { text: 'Download the lemlist file above and upload it to lemlist yourself, or ask your AI assistant to send the people to lemlist for you.' })) : null,
+      sender,
+      h('p', { class: 'small' }, h('a', { href: `#/c/${c.id}/analytics`, text: 'See sending and replies' }))) : null,
     h('section', { 'aria-labelledby': 'files-h', class: 'stack' },
       h('div', { class: 'row' }, h('h3', { class: 'grow', id: 'files-h', text: 'Latest files' }), open),
       fileBox),

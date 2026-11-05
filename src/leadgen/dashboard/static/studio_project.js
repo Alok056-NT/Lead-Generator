@@ -1,8 +1,9 @@
-/* Lead Generator Studio, part 2: the project page (chat with the live timeline, progress, ready contacts,
-   searches and message style, message templates, sign-off, product, contacts, export and send).
+/* Lead Generator Studio, part 2: the project page (chat with the live timeline, progress,
+   waves, searches and message style, message templates, sign-off, product, contacts). The review drawer and the
+   send card are also used by the wave pages in app.js.
    Plain JavaScript, no libraries. Loaded BEFORE app.js (see studio.js); it only defines functions and
    uses app.js's helpers (h, api, clear, setMain, toast, notice, errorText, badge, extLink, field,
-   selectBox, pager, copyText, query, fmtNum, setStatus, route, label, KNOWN, CAMPAIGN_STATUS, memoryBox,
+   selectBox, copyText, query, fmtNum, setStatus, route, label, KNOWN, CAMPAIGN_STATUS, memoryBox,
    sourceKindText, setupSentence) and its variable routeToken. Card and layout memory comes from ui.js.
    Everything from the server is put on the page as text, never as HTML. */
 (function () {
@@ -13,7 +14,6 @@
   const LEVEL_NAME = { csuite: 'Top leaders', director: 'Directors and heads', manager: 'Managers', any: 'Anyone' };
   const DEPTH_NAME = { short: 'Short', standard: 'Standard', detailed: 'Detailed' };
   const EMAIL_WORD = { verified: 'Verified', risky: 'Risky', guess: 'A guess', invalid: 'Not valid', unknown: 'Not checked', none: 'None found' };
-  const MESSAGE_WORD = { '': 'Not written yet', written: 'Written', approved: 'Approved', skipped: 'Skipped', sent: 'Sent' };
   const CHANNEL_WORD = { email: 'Email', linkedin_message: 'LinkedIn message', linkedin_invite: 'LinkedIn invitation' };
   const TAB_KEY = 'lg.tab.';
   let live = null; // the page now shown: { close() } stops its stream and timers
@@ -76,36 +76,71 @@
 
   // A side drawer with one person's messages. leads: the people on the page, index: who to open,
   // onChange(): runs after something was saved so the tables can redraw.
-  function reviewDrawer(leads, index, onChange) {
+  // opts.details(lead): adds a "More about this person" button that runs it (after closing the drawer);
+  // opts.onClose(): runs after the drawer closes.
+  function reviewDrawer(leads, index, onChange, opts) {
+    // switching away from a drawer with unsaved edits asks first, then opens this one
+    if (drawer && drawer.dirty()) { drawer.attempt(() => reviewDrawer(leads, index, onChange, opts)); return; }
     if (drawer) drawer.close();
     const opener = document.activeElement;
     let at = index;
+    let blocks = []; // the open person's message boxes: { edited(), save() }
     const body = h('div', { class: 'drawer-body' });
     const where = h('span', { class: 'muted small', 'aria-live': 'polite' });
     const closeButton = h('button', { type: 'button', class: 'ghost', text: 'Close', 'aria-label': 'Close the review (Esc)' });
     const prev = h('button', { type: 'button', text: 'Previous' });
     const next = h('button', { type: 'button', text: 'Next' });
+    const guard = h('div', { class: 'drawer-guard', role: 'alert', hidden: true });
     const node = h('aside', { class: 'drawer', role: 'dialog', 'aria-label': 'Review messages', tabindex: '-1' },
       h('header', { class: 'drawer-head' }, h('h2', { text: 'Review messages' }), closeButton),
+      guard,
       body,
       h('footer', { class: 'drawer-foot' }, prev, where, next,
         h('span', { class: 'muted small', text: 'Keys: J next, K previous, Esc close' })));
 
     function close() {
       document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onOutside);
       node.remove();
       drawer = null;
       if (opener && opener.isConnected) opener.focus();
+      if (opts && opts.onClose) opts.onClose();
+    }
+    const dirty = () => blocks.some((b) => b.edited());
+    // Runs action now, or, with unsaved edits, asks to Save or Discard first.
+    function attempt(action) {
+      if (!dirty()) { guard.hidden = true; action(); return; }
+      clear(guard);
+      const save = h('button', { type: 'button', class: 'primary', text: 'Save' });
+      const discard = h('button', { type: 'button', text: 'Discard' });
+      save.addEventListener('click', async () => {
+        save.disabled = true;
+        for (const b of blocks.filter((x) => x.edited())) if (!(await b.save())) { save.disabled = false; return; }
+        guard.hidden = true;
+        action();
+      });
+      discard.addEventListener('click', () => { guard.hidden = true; action(); });
+      guard.append(h('span', { class: 'grow', text: 'You have unsaved changes: Save or Discard' }), save, discard);
+      guard.hidden = false;
+      save.focus();
     }
     function onKey(ev) {
-      if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        if (!guard.hidden) guard.hidden = true; else attempt(close);
+        return;
+      }
       if (ev.ctrlKey || ev.metaKey || ev.altKey || typing(ev.target)) return;
       if (ev.key === 'j' || ev.key === 'J') move(1);
       else if (ev.key === 'k' || ev.key === 'K') move(-1);
     }
+    // pointerdown, not click: the click that opened the drawer is already over by the time it listens
+    function onOutside(ev) {
+      if (!node.contains(ev.target)) attempt(close);
+    }
     function move(step) {
       const to = at + step;
-      if (to >= 0 && to < leads.length) { at = to; show(); }
+      if (to >= 0 && to < leads.length) attempt(() => { at = to; show(); });
     }
 
     function messageBlock(lead, m) {
@@ -155,6 +190,7 @@
       skip.addEventListener('click', () => choose('skipped'));
       copy.addEventListener('click', () => copyText((subject ? subject.value + '\n\n' : '') + text.value));
       paint();
+      blocks.push({ edited: () => !sent && edited(), save: saveText });
       return h('section', { class: 'drawer-msg' },
         h('div', { class: 'row' }, h('h3', { class: 'grow', text: CHANNEL_WORD[m.channel] || 'Message' }), mark),
         subject ? field('ds-subject', 'Subject', subject) : null, text,
@@ -163,13 +199,17 @@
 
     function show() {
       const lead = leads[at];
+      blocks = [];
       clear(body);
+      const more = opts && opts.details ? h('button', { type: 'button', text: 'More about this person' }) : null;
+      if (more) more.addEventListener('click', () => attempt(() => { close(); opts.details(lead); }));
       body.append(
         h('h3', { class: 'drawer-name', text: lead.name }),
         h('p', { class: 'muted' }, lead.title, lead.title && lead.company ? ' at ' : '', lead.company),
         h('p', { class: 'row small' },
           badge('Email: ' + (EMAIL_WORD[lead.email_status] || lead.email_status) + (lead.email ? ' (' + lead.email + ')' : ''), lead.email_status === 'verified' ? 'ok' : 'none'),
           lead.linkedin_url ? extLink(lead.linkedin_url, 'Open LinkedIn profile') : badge('No LinkedIn profile', 'none')),
+        more,
         ...(lead.messages.length ? lead.messages.map((m) => messageBlock(lead, m))
           : [h('p', { class: 'muted', text: 'No messages have been written for this person yet.' })]));
       where.textContent = (at + 1) + ' of ' + leads.length;
@@ -178,75 +218,27 @@
       body.scrollTop = 0;
     }
 
-    closeButton.addEventListener('click', close);
+    closeButton.addEventListener('click', () => attempt(close));
     prev.addEventListener('click', () => move(-1));
     next.addEventListener('click', () => move(1));
     document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onOutside);
     document.body.appendChild(node);
-    drawer = { close };
+    drawer = { close, dirty, attempt };
     show();
     node.focus();
-  }
-
-  // ---- ready contacts and the wave table -------------------------------------------------------------
-
-  // The people table. columns: [[heading, (lead, open) => cell content]]; openAt(i) shows person i in the drawer.
-  function leadTable(leads, columns, openAt) {
-    return h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ...columns.map(([t]) => h('th', { scope: 'col', text: t })))),
-      h('tbody', null, ...leads.map((lead, i) => {
-        const open = () => openAt(i);
-        const row = h('tr', { class: 'clickable' }, ...columns.map(([, cell]) => h('td', null, cell(lead, open))));
-        row.addEventListener('click', (ev) => { if (!ev.target.closest('a, button')) open(); });
-        return row;
-      }))));
-  }
-
-  const nameButton = (lead, open) => {
-    const b = h('button', { type: 'button', class: 'link', text: lead.name });
-    b.addEventListener('click', open);
-    return b;
-  };
-  const linkedinCell = (lead) => (lead.linkedin_url ? extLink(lead.linkedin_url, 'Open profile') : '');
-
-  function resultsBody(r, view, again, openAt) {
-    const kids = [];
-    if (r.campaigns.length > 1) {
-      const pick = selectBox('res-search', r.campaigns.map((c) => [c.id, c.name]), r.campaign_id, (ev) => {
-        view.campaignId = Number(ev.target.value);
-        view.page = 1;
-        again();
-      });
-      kids.push(field('res-search', 'Search', pick));
-    }
-    if (!r.leads.length) {
-      kids.push(h('p', { class: 'muted', text: 'Contacts will appear here as the AI finds and checks them.' }));
-      return kids;
-    }
-    const review = (lead, open) => {
-      const b = h('button', { type: 'button', text: lead.messages.length ? 'Review' : 'Open' });
-      b.addEventListener('click', open);
-      return h('span', { class: 'row' }, b, h('span', { class: 'muted small', text: MESSAGE_WORD[lead.message_state] || '' }));
-    };
-    kids.push(leadTable(r.leads, [
-      ['Name', nameButton], ['Job', (l) => l.title], ['Company', (l) => l.company], ['LinkedIn', linkedinCell],
-      ['Email (verified)', (l) => l.email],
-      ['Phone (found, not checked)', (l) => (l.phone_status === 'waiting' ? 'Requested, waiting' : l.phone)],
-      ['Messages', review],
-    ], openAt));
-    kids.push(pager(r, (page) => { view.page = page; again(); }));
-    return kids;
   }
 
   // ---- waves ------------------------------------------------------------------------------------------
 
   const plainDay = (iso) => (iso ? String(iso).slice(0, 10) : '');
 
-  // The waves list. handlers: { open(id), exportWave(id), launch() }.
+  // The waves list. A wave opens its own pages (#/c/<id>); the row, its name and Export are the way in.
+  // exportAll: the "Export all waves" buttons; launch(): opens the launch dialog.
   function wavesBody(waves, handlers) {
     const launch = h('button', { type: 'button', class: 'primary', text: 'Launch a new wave' });
     launch.addEventListener('click', handlers.launch);
-    const kids = [h('div', { class: 'row' }, h('p', { class: 'muted small grow', text: 'Each wave is one search: its own companies, people and messages. Newest first.' }), launch)];
+    const kids = [h('div', { class: 'row' }, h('p', { class: 'muted small grow', text: 'Each wave is one search: its own companies, people and messages. Newest first. Click a wave to open it.' }), launch)];
     if (!waves.length) {
       kids.push(h('p', { class: 'muted', text: 'No waves yet. Tell the AI who you want to reach, or launch one here.' }));
       return kids;
@@ -255,34 +247,44 @@
     kids.push(h('div', { class: 'table-wrap' }, h('table', null,
       h('thead', null, h('tr', null, ...heads.map((t) => h('th', { scope: 'col', text: t })))),
       h('tbody', null, ...waves.map((w) => {
-        const open = h('button', { type: 'button', class: 'link', text: w.name, title: 'Show everyone in this wave' });
-        open.addEventListener('click', () => handlers.open(w.id));
-        const exp = h('button', { type: 'button', text: 'Export', 'aria-label': 'Export ' + w.name });
-        exp.addEventListener('click', () => handlers.exportWave(w.id));
-        return h('tr', null, h('td', null, open), h('td', { text: plainDay(w.started) }), h('td', null, badge(w.status, w.status === 'Planning' ? 'none' : 'ok')),
+        const href = '#/c/' + w.id;
+        const row = h('tr', { class: 'clickable' },
+          h('td', null, h('a', { href, text: w.name, title: 'Open this wave' })), h('td', { text: plainDay(w.started) }),
+          h('td', null, badge(w.status, w.status === 'Planning' ? 'none' : 'ok')),
           ...[w.companies, w.people, w.verified_emails, w.messages, w.sent].map((n) => h('td', { class: 'num', text: fmtNum(n) })),
-          h('td', { text: w.style }), h('td', null, exp));
+          h('td', { text: w.style }),
+          h('td', null, h('a', { class: 'button', href: href + '/export', 'aria-label': 'Export ' + w.name, text: 'Export' })));
+        row.addEventListener('click', (ev) => { if (!ev.target.closest('a, button')) window.location.hash = href; });
+        return row;
       })))));
+    kids.push(handlers.exportAll);
     return kids;
   }
 
-  // One wave's whole table with paging; the person's row opens the review drawer.
-  function waveTable(wave, r, handlers) {
-    const back = h('button', { type: 'button', text: 'Back to all waves' });
-    back.addEventListener('click', handlers.back);
-    const kids = [h('div', { class: 'row' }, back, h('strong', { class: 'grow', text: wave ? wave.name : 'Wave' }))];
-    if (!r.leads.length) {
-      kids.push(h('p', { class: 'muted', text: 'Nobody is ready in this wave yet.' }));
-      return kids;
+  // "Export all waves": one file with every wave of the project, a Wave column. Shows the result in place.
+  function exportAllRow(projectId) {
+    const note = h('div', { role: 'status' });
+    const folderRow = h('div', { class: 'row' });
+    const base = '/api/projects/' + projectId;
+    async function run(format, button) {
+      button.disabled = true;
+      const res = await api(base + '/exports', { method: 'POST', body: { format, include: 'approved' } });
+      button.disabled = false;
+      if (!res.ok) return setStatus(note, 'bad', errorText(res));
+      if (!res.exported) return setStatus(note, 'warn', 'Nobody is ready to export yet. Open a wave and finish the checks first.');
+      setStatus(note, 'ok', 'Saved ' + fmtNum(res.exported) + ' contacts to your exports folder, all waves in one file.');
+      clear(folderRow);
+      const folder = h('button', { type: 'button', text: 'Open the folder' });
+      folder.addEventListener('click', () => api(base + '/exports/open-folder', { method: 'POST' }));
+      folderRow.appendChild(folder);
     }
-    const emailCell = (l) => [l.email, l.email ? ' · ' : '', EMAIL_WORD[l.email_status] || l.email_status].join('');
-    kids.push(leadTable(r.leads, [
-      ['Name', nameButton], ['Job', (l) => l.title], ['Company', (l) => l.company],
-      ['Email (status)', emailCell], ['LinkedIn', linkedinCell],
-      ['Message status', (l) => MESSAGE_WORD[l.message_state] || ''],
-    ], handlers.openAt));
-    kids.push(pager(r, handlers.page));
-    return kids;
+    const buttons = [['generic', 'Export all waves (Excel CSV)'], ['lemlist', 'Export all waves (lemlist CSV)']].map(([format, text]) => {
+      const b = h('button', { type: 'button', text });
+      b.addEventListener('click', () => run(format, b));
+      return b;
+    });
+    return h('div', { class: 'stack' }, h('div', { class: 'row' }, ...buttons),
+      h('p', { class: 'small muted', text: 'Puts every wave in one file, with a Wave column.' }), note, folderRow);
   }
 
   // "Launch a new wave": a few plain fields, then ONE chat message for the AI (it follows the usual estimate and yes flow).
@@ -503,35 +505,11 @@
     ];
   }
 
-  // ---- export and send ----------------------------------------------------------------------------
+  // ---- send (on a wave's Export or send page) ------------------------------------------------------
 
-  function actionsCard(state) {
-    const note = h('div', { role: 'status' });
-    const folderRow = h('div', { class: 'row' });
-    // One export: a single wave (campaign id) or every wave of the project (id null). Shows the result in this card.
-    async function runExport(id, format, button) {
-      const all = id === null;
-      if (!all && !id) return setStatus(note, 'warn', 'There is nothing to export yet.');
-      const base = all ? '/api/projects/' + state.projectId : '/api/campaigns/' + id;
-      if (button) button.disabled = true;
-      const res = await api(base + '/exports', { method: 'POST', body: { format, include: 'approved' } });
-      if (button) button.disabled = false;
-      if (!res.ok) return setStatus(note, 'bad', errorText(res));
-      if (!res.exported) return setStatus(note, 'warn', 'Nobody is ready to export yet. Ask the AI to finish the checks first.');
-      setStatus(note, 'ok', 'Saved ' + fmtNum(res.exported) + ' contacts to your exports folder' + (all ? ', all waves in one file.' : '.'));
-      clear(folderRow);
-      const folder = h('button', { type: 'button', text: 'Open the folder' });
-      folder.addEventListener('click', () => api(base + '/exports/open-folder', { method: 'POST' }));
-      folderRow.appendChild(folder);
-    }
-    const exportRow = (formats, id) => h('div', { class: 'row' }, ...formats.map(([format, text]) => {
-      const button = h('button', { type: 'button', text });
-      button.addEventListener('click', () => runExport(id(), format, button));
-      return button;
-    }));
-    const exportButtons = exportRow([['generic', 'Download for Excel (CSV)'], ['lemlist', 'Download for lemlist (CSV)']], state.campaignId);
-    const exportAll = exportRow([['generic', 'Export all waves (Excel CSV)'], ['lemlist', 'Export all waves (lemlist CSV)']], () => null);
-
+  // Send by email and send to lemlist for one wave. state: { campaignId(), refresh() }. Nothing is sent
+  // until the person confirms in a dialog.
+  function sendCard(state) {
     const MISSING = {
       email_channel: 'This search is not set up for email.',
       mailbox_configured: 'Your email is not connected yet.',
@@ -621,8 +599,8 @@
       check();
     }
 
-    const sendMail = h('button', { type: 'button', class: 'primary', text: 'Send by email...' });
-    const sendLem = h('button', { type: 'button', class: 'primary', text: 'Send to lemlist...' });
+    const sendMail = h('button', { type: 'button', text: 'Send by email...' });
+    const sendLem = h('button', { type: 'button', text: 'Send to lemlist...' });
     sendMail.addEventListener('click', sendEmail);
     sendLem.addEventListener('click', sendLemlist);
 
@@ -642,16 +620,11 @@
     const connectLem = h('button', { type: 'button', class: 'link', text: 'Connect lemlist' });
     connectLem.addEventListener('click', () => { lemBox.hidden = !lemBox.hidden; });
 
-    const node = h('div', { class: 'stack' },
+    return h('div', { class: 'stack' },
       h('p', { class: 'muted small', text: 'Nothing is sent until you click and confirm.' }),
-      exportButtons, exportAll,
-      h('p', { class: 'small muted', text: 'The first row saves the wave chosen in Ready contacts. The second puts every wave in one file, with a Wave column.' }),
-      note, folderRow,
       h('div', { class: 'row' }, sendMail, sendLem),
       h('p', { class: 'small' }, h('a', { href: '#/mailbox', text: 'Connect your email' }), ' · ', connectLem),
       lemBox);
-    node.runExport = runExport;
-    return node;
   }
 
   // ---- the chat -----------------------------------------------------------------------------------
@@ -825,13 +798,13 @@
 
   // ---- the page -----------------------------------------------------------------------------------
 
-  // Where each progress step leads: [tab, card].
+  // Where each progress step leads: [tab, card] on this page, or a page of the newest wave (a path after #/c/<id>).
+  // With no wave yet, a wave step leads to the Waves tab.
   const STEP_TARGET = {
-    product: ['settings', 'product'], reach: ['settings', 'searches'], companies: ['results', 'waves'],
-    people: ['results', 'waves'], emails: ['results', 'results'], checks: ['results', 'results'],
-    messages: ['results', 'results'], export: ['results', 'send'],
+    product: ['settings', 'product'], reach: ['settings', 'searches'], companies: '/companies',
+    people: '/leads', emails: '/leads', checks: '', messages: '/messages', export: '/export',
   };
-  const TABS = [['activity', 'Activity'], ['results', 'Results'], ['settings', 'Settings']];
+  const TABS = [['activity', 'Activity'], ['waves', 'Waves'], ['settings', 'Settings']];
 
   function rememberedTab(projectId) {
     const key = TAB_KEY + projectId;
@@ -849,20 +822,16 @@
     if (!studio.ok) return setMain(notice('bad', errorText(studio)), h('a', { href: '#/home', text: 'Back to your projects' }));
     if (!chat.ok || !page.ok) return setMain(notice('bad', errorText(chat.ok ? page : chat)));
 
-    // wave: the id of the wave whose table is open (null: the list); lastLeads: the people last loaded for Ready contacts
-    const view = { campaignId: null, page: 1, wave: null, wavePage: 1, waves: [], waveData: null, lastLeads: [] };
+    const view = { waves: [] }; // newest first
     const tl = UI.timeline();
     let timer = null;
     let dead = false;
     const memory = memoryBox(page.project, page.memory);
     memory.querySelector('h3').hidden = true; // the card's own title says it
-    const sendCard = actionsCard({ projectId: id, campaignId: () => view.campaignId, refresh: () => refresh(true) });
     const cards = {
       activity: UI.card('p.activity', 'What the AI is doing', { open: true }, tl.node),
       progress: UI.card('p.progress', 'Progress', { open: true }),
       waves: UI.card('p.waves', 'Waves', { open: true }),
-      results: UI.card('p.results', 'Ready contacts', { open: true }),
-      send: UI.card('p.send', 'Export and send', {}, sendCard),
       product: UI.card('p.product', 'Your product', {}, ...productBody(page)),
       signoff: UI.card('p.signoff', 'Your sign-off', {}, signOffBody(studio.project, () => route())),
       templates: UI.card('p.templates', 'Message templates', {}),
@@ -871,7 +840,7 @@
       contacts: UI.card('p.contacts', 'Contacts you already have', {}, ...contactsBody(page)),
     };
     const inTab = {
-      activity: ['activity', 'progress'], results: ['waves', 'results', 'send'],
+      activity: ['activity', 'progress'], waves: ['waves'],
       settings: ['product', 'signoff', 'templates', 'searches', 'memory', 'contacts'],
     };
     const drawSearches = (rows, choices) => { clear(cards.searches.inner); cards.searches.inner.append(...searchesBody(id, rows, choices)); };
@@ -886,7 +855,13 @@
     const memoryOfTab = rememberedTab(id);
     const tabButtons = {};
     const panels = {};
-    for (const [key] of TABS) panels[key] = h('div', { class: 'tab-panel', role: 'tabpanel', id: 'rp-' + key, 'aria-labelledby': 'rt-' + key, hidden: true }, ...inTab[key].map((c) => cards[c]));
+    const nextText = h('span', { class: 'grow' });
+    const nextButton = h('button', { type: 'button', class: 'primary', text: 'Show me' });
+    const nextBox = h('div', { class: 'next-step', hidden: true }, nextText, nextButton);
+    for (const [key] of TABS) {
+      panels[key] = h('div', { class: 'tab-panel', role: 'tabpanel', id: 'rp-' + key, 'aria-labelledby': 'rt-' + key, hidden: true },
+        key === 'waves' ? nextBox : null, ...inTab[key].map((c) => cards[c]));
+    }
     function selectTab(key, remember) {
       for (const [k] of TABS) {
         tabButtons[k].setAttribute('aria-selected', String(k === key));
@@ -910,9 +885,6 @@
       tabButtons[key] = b;
       tabList.appendChild(b);
     });
-    const nextText = h('span', { class: 'grow' });
-    const nextButton = h('button', { type: 'button', class: 'primary', text: 'Show me' });
-    const nextBox = h('div', { class: 'next-step', hidden: true }, nextText, nextButton);
     let nextKey = null;
     nextButton.addEventListener('click', () => { if (nextKey) goTo(nextKey); });
 
@@ -920,19 +892,19 @@
       grid.dataset.pane = which;
       for (const t of topTabs.children) t.setAttribute('aria-selected', String(t.dataset.pane === which));
     }
-    function openFirstToReview() {
-      const leads = view.lastLeads;
-      let at = leads.findIndex((l) => l.message_state === 'written');
-      if (at < 0) at = leads.findIndex((l) => l.messages.length);
-      if (at >= 0) reviewDrawer(leads, at, () => refresh(true));
-    }
     function goTo(key) {
-      const [tab, target] = STEP_TARGET[key] || ['results', 'results'];
+      const target = STEP_TARGET[key];
+      const newest = view.waves.reduce((a, b) => (b.id > a.id ? b : a), view.waves[0]);
       showPane('results');
-      selectTab(tab);
-      cards[target].setOpen(true);
-      cards[target].scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (key === 'messages') openFirstToReview();
+      if (Array.isArray(target)) {
+        selectTab(target[0]);
+        cards[target[1]].setOpen(true);
+        cards[target[1]].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (newest) {
+        window.location.hash = '#/c/' + newest.id + (target || '');
+      } else {
+        selectTab('waves');
+      }
     }
     function drawProgress(s) {
       clear(cards.progress.inner);
@@ -943,64 +915,34 @@
       nextText.textContent = next ? next.text : '';
     }
 
-    // ---- results, waves
-    const openReady = (i) => reviewDrawer(view.lastLeads, i, () => refresh(true));
-    function drawResults(r) {
-      view.campaignId = r.campaign_id;
-      view.lastLeads = r.leads;
-      clear(cards.results.inner);
-      cards.results.setCount(fmtNum(r.total));
-      cards.results.inner.append(...resultsBody(r, view, () => refresh(true), openReady));
-    }
+    // ---- waves
+    const exportAll = exportAllRow(id);
     function drawWaves() {
       clear(cards.waves.inner);
       cards.waves.setCount(String(view.waves.length));
-      if (view.wave === null) {
-        cards.waves.inner.append(...wavesBody(view.waves, {
-          open: (waveId) => { view.wave = waveId; view.wavePage = 1; view.waveData = null; refresh(true); },
-          exportWave: (waveId) => {
-            selectTab('results');
-            cards.send.setOpen(true);
-            cards.send.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            sendCard.runExport(waveId, 'generic', null);
-          },
-          launch: () => launchDialog(view.waves, (text) => {
-            const sent = pane.send(text);
-            if (sent) showPane('chat');
-            return sent;
-          }),
-        }));
-      } else if (view.waveData) {
-        const wave = view.waves.find((w) => w.id === view.wave);
-        cards.waves.inner.append(...waveTable(wave, view.waveData, {
-          back: () => { view.wave = null; drawWaves(); },
-          page: (n) => { view.wavePage = n; refresh(true); },
-          openAt: (i) => reviewDrawer(view.waveData.leads, i, () => refresh(true)),
-        }));
-      }
+      cards.waves.inner.append(...wavesBody(view.waves, {
+        exportAll,
+        launch: () => launchDialog(view.waves, (text) => {
+          const sent = pane.send(text);
+          if (sent) showPane('chat');
+          return sent;
+        }),
+      }));
     }
     async function refresh(now) {
       clearTimeout(timer);
       const run = async () => {
         if (dead || ctx.token !== routeToken) return;
-        const [s, r, w, wr] = await Promise.all([
-          api('/api/projects/' + id + '/studio'),
-          api('/api/projects/' + id + '/results' + query({ campaign_id: view.campaignId, page: view.page })),
-          api('/api/projects/' + id + '/waves'),
-          view.wave === null ? null : api('/api/projects/' + id + '/results' + query({ campaign_id: view.wave, page: view.wavePage, page_size: 25 })),
-        ]);
+        const [s, w] = await Promise.all([api('/api/projects/' + id + '/studio'), api('/api/projects/' + id + '/waves')]);
         if (dead || ctx.token !== routeToken) return;
         if (s.ok) drawProgress(s);
-        if (r.ok) drawResults(r);
-        if (w.ok) view.waves = w.waves;
-        if (wr && wr.ok) view.waveData = wr;
-        if (w.ok || (wr && wr.ok)) drawWaves();
+        if (w.ok) { view.waves = w.waves; drawWaves(); }
       };
       if (now) await run(); else timer = setTimeout(run, 1200); // many tool events in a row make one refresh
     }
 
     const pane = chatPane(id, chat, { refresh, timeline: tl });
-    const right = h('div', { class: 'right' }, nextBox, tabList, ...Object.values(panels));
+    const right = h('div', { class: 'right' }, tabList, ...Object.values(panels));
     const grid = h('div', { class: 'studio-grid', 'data-pane': 'chat' }, pane.node, right);
     const layout = UI.layoutSwitch(grid, 'project', [['chat', 'Chat wide'], ['split', 'Side by side'], ['results', 'Results wide']], 'split');
     const switcher = selectBox('p-switch', (list.ok ? list.projects : []).map((p) => [p.id, p.name]), id, (ev) => go('/p/' + ev.target.value));
@@ -1021,12 +963,12 @@
     drawProgress(studio);
     if (tpl.ok) drawTemplates(tpl);
     if (tpl.ok && camps.ok) drawSearches(camps.campaigns, tpl.choices);
-    // the tab last used for this project; else Results once there are contacts, else Activity
-    const saved = memoryOfTab.get();
-    selectTab(TABS.some(([k]) => k === saved) ? saved : studio.summary.ready_contacts > 0 ? 'results' : 'activity', false);
+    // the tab last used for this project (an old "results" is now "waves"); else Waves once there are contacts, else Activity
+    const saved = memoryOfTab.get() === 'results' ? 'waves' : memoryOfTab.get();
+    selectTab(TABS.some(([k]) => k === saved) ? saved : studio.summary.ready_contacts > 0 ? 'waves' : 'activity', false);
     live = { close() { dead = true; clearTimeout(timer); pane.close(); } };
     refresh(true);
   }
 
-  window.Studio = Object.assign(window.Studio || {}, { pageProject });
+  window.Studio = Object.assign(window.Studio || {}, { pageProject, reviewDrawer, sendCard });
 })();

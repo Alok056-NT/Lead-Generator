@@ -95,22 +95,23 @@ def test_the_labels_of_the_connect_and_home_screens():
 def test_the_project_page_labels_and_pieces():
     js = (STATIC / "studio_project.js").read_text(encoding="utf-8")
     for expected in (
-        "EventSource", "/chat/stream", "'Stop'", "'Attach a file'", "'Ready contacts'",
-        "'Export and send'", "'Download for Excel (CSV)'", "'Download for lemlist (CSV)'",
+        "EventSource", "/chat/stream", "'Stop'", "'Attach a file'",
         "'Send by email...'", "'Send to lemlist...'", "'Connect lemlist'", "'Not ready yet:'",
         "'Progress and results'",
         "'What the AI is doing'", "UI.timeline", "'Searches and message style'",
         "'Message templates'", "'Your sign-off'", "'Your job title'", "'Your company'",
         "'Your product'", "\"Don't contact again\"", "'Contacts you already have'", "'Chat wide'",
-        "'Side by side'", "'Results wide'", "'Phone (found, not checked)'", "'New template'",
+        "'Side by side'", "'Results wide'", "'New template'",
         "'Copy into my templates'",
         "setRangeText", "/template'",
-        "'Activity'", "'Results'", "'Settings'", "'Waves'", "'Launch a new wave'",
-        "'Back to all waves'", "'Review messages'", "'Approve'", "'Skip'",
-        "'Export all waves (Excel CSV)'",
-        "'Message status'", "/waves", "/api/messages/", "TAB_KEY", "'Show me'",
+        "'Activity'", "'Settings'", "'Waves'", "'Launch a new wave'", "'Review messages'",
+        "'Approve'", "'Skip'", "'Export all waves (Excel CSV)'", "/waves", "/api/messages/",
+        "TAB_KEY", "'Show me'", "'You have unsaved changes: Save or Discard'",
     ):  # fmt: skip
         assert expected in js, expected
+    # one home for each thing: the old project-page pieces are gone
+    for gone in ("'Ready contacts'", "'Export and send'", "waveTable", "'Back to all waves'", "actionsCard"):
+        assert gone not in js, gone
 
 
 def test_every_send_asks_first_and_is_confirmed():
@@ -179,3 +180,17 @@ def test_launch_and_send_never_spend_without_a_yes():
     js = (STATIC / "studio_project.js").read_text(encoding="utf-8")
     assert "wait for my yes before anything is spent" in js
     assert "confirm: true" not in js[js.index("function launchDialog") :].split("// ----")[0]
+
+
+def test_v15_one_clear_path_and_popups_close_outside():
+    """Waves open their own pages, the Back button remembers the Waves tab, and pop-ups close on an outside click."""
+    app = (STATIC / "app.js").read_text(encoding="utf-8")
+    for expected in ("Back to ", "UI.save('lg.tab.'", "'Export or send'", "reviewerFor", "pointerdown"):
+        assert expected in app, expected
+    assert "'1 Companies'" not in app.split("const CAMPAIGN_NAV")[1].split("];")[0]
+    project = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    for expected in ("pointerdown", "=== 'results' ? 'waves'", "reviewDrawer, sendCard"):
+        assert expected in project, expected
+    studio = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for expected in ("getBoundingClientRect", "pointerdown", "Open all waves", "Open your mailbox", "'details'"):
+        assert expected in studio, expected

@@ -36,7 +36,15 @@
       ...bodyKids,
       h('div', { class: 'dialog-actions' }, ...actionKids));
     dlg.addEventListener('close', () => dlg.remove());
-    dlg.addEventListener('click', (ev) => { if (ev.target === dlg) dlg.close(); });
+    // A click on the dimmed area closes it. The box's own padding also reports the dialog as the target,
+    // and so does a text selection that starts inside and ends outside, so check where the press began.
+    const outside = (ev) => {
+      const r = dlg.getBoundingClientRect();
+      return ev.target === dlg && (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom);
+    };
+    let pressedOutside = false;
+    dlg.addEventListener('pointerdown', (ev) => { pressedOutside = outside(ev); });
+    dlg.addEventListener('click', (ev) => { if (pressedOutside && outside(ev)) dlg.close(); pressedOutside = false; });
     document.body.appendChild(dlg);
     dlg.showModal();
     return dlg;
@@ -339,15 +347,20 @@
   async function pageAdvanced(ctx) {
     const list = await api('/api/projects');
     if (ctx.token !== routeToken) return;
-    const links = [['#/campaigns', 'Campaigns'], ['#/analytics', 'Results'], ['#/mailbox', 'Connect your mailbox'], ['#/settings', 'Email footer, spelling and spending limits'], ['#/classic', 'Projects, the earlier view']];
-    const kids = [h('h1', { text: 'Advanced' }),
+    const tools = [
+      ['All waves', 'Every wave in every project, in one list.', '#/campaigns', 'Open all waves'],
+      ['Results', 'How many emails were sent, opened and replied to.', '#/analytics', 'See the results'],
+      ['Your mailbox', 'Send from your own email address.', '#/mailbox', 'Open your mailbox'],
+      ['Email footer, spelling and spending limits', 'The footer on your emails, how names are spelled, and how much you allow to be spent.', '#/settings', 'Open the settings'],
+    ];
+    const earlier = h('details', { class: 'card stack' }, h('summary', { text: 'Earlier project pages' }),
+      h('p', null, h('a', { href: '#/classic', text: 'Projects, the earlier view' })),
+      ...(list.ok ? list.projects : []).map((p) => h('p', null, h('a', { href: '#/p/' + p.id + '/details', text: p.name }))));
+    setMain(h('h1', { text: 'Advanced' }),
       h('p', { class: 'lead', text: 'Everything from the earlier version of Lead Generator is still here.' }),
-      h('section', { class: 'card stack' }, ...links.map(([href, text]) => h('p', null, h('a', { href, text }))))];
-    if (list.ok && list.projects.length) {
-      kids.push(h('section', { class: 'card stack' }, h('h3', { text: 'Earlier project pages' }),
-        ...list.projects.map((p) => h('p', null, h('a', { href: '#/p/' + p.id + '/details', text: p.name })))));
-    }
-    setMain(...kids);
+      h('div', { class: 'cards' }, ...tools.map(([title, line, href, button]) => h('section', { class: 'card stack tool-card' },
+        h('h3', { text: title }), h('p', { class: 'muted', text: line }), h('div', { class: 'row' }, h('a', { class: 'button', href, text: button }))))),
+      earlier);
   }
 
   window.Studio = Object.assign(window.Studio || {}, {
