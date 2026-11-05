@@ -1,0 +1,24 @@
+# v1.3.1 brief: six quick wins + waves (owner request, 6 Nov 2026)
+
+Source for the six fixes: the "Reacher Website Flow" report (quick wins section). Builder: one Sonnet session, no sub-agents, no Opus. Plain HTML/CSS/JS as today, no new dependencies, plain-English labels (the static-text tests ban jargon words such as "designation").
+
+## A. Six quick wins (project page `static/studio_project.js`, `studio.js`, `studio.css`)
+1. **Clickable progress steps.** Each step in Progress opens (expands) and scrolls to the tab/card that step needs (product → Settings › Your product, companies/people → Results, emails/checks → Results, messages → Results with the review drawer, export → Export and send).
+2. **"Next step" line** at the top of the right panel, built from the progress state the page already gets (`/api/projects/{id}/studio` steps). One sentence, e.g. "Next: check 27 emails" or "Next: review 54 messages", with a button that does what step 1 does.
+3. **Three tabs instead of ten stacked cards** in the right panel: **Activity** (What the AI is doing, Progress), **Results** (Waves, Ready contacts, Export and send), **Settings** (Your product, Your sign-off, Message templates, Searches and message style, Don't contact again, Contacts you already have). Remember the chosen tab per project in localStorage (try/catch). Cards inside a tab keep their collapse state. Default tab: Results once there are contacts, else Activity.
+4. **One home for the sign-off.** The Edit project window keeps only Project name and the do-not-contact days; it says "Sign-off is in Settings › Your sign-off". Keep the API fields (`sender_title`, `sender_company`) working.
+5. **Review drawer for messages.** Clicking a contact opens a side drawer (not the current pop-up): name, job, company, email/LinkedIn status, the message (editable, saved through the existing message-edit route if one exists; if none, add a small PATCH route with a test), buttons Approve, Skip, Previous, Next, Copy. Approve/Skip are stored per message (add a column or reuse an existing status field; forward-only migration with a test). Keyboard: J/K next/previous, Esc closes.
+6. **Setup checklist on Home** (`studio.js` home page) until all are done: AI connected, at least one search key added, sign-off set (name + job title + company) on at least one project. Show "2 of 3 done" and a link for each missing item. Hide it when complete.
+
+## B. Waves (searches are campaigns named "Wave 1", "Wave 2", …)
+1. **Waves list** at the top of Results: one row per wave with name, date started, status in plain words (Planning, Finding people, Checking emails, Ready, Sent), counts (companies, people, verified emails, messages written, sent) and its message style. Newest first.
+2. **Click a wave → its whole table**: all its contacts with paging (reuse `/api/projects/{id}/results?campaign_id=`), columns Name, Job, Company, Email (status), LinkedIn, Message status (written / approved / skipped / sent). Clicking a row opens the review drawer (A5). A clear "Back to all waves".
+3. **Launch a new wave** button (clear, primary, in the Waves list): a small dialog: wave name (pre-filled "Wave N"), "Keep the same targeting as" (pick a previous wave or "start fresh"), "What should change?" (optional text), size (companies, people per company; defaults 30 and 2). On Launch it sends one chat message to the AI built from these fields (the AI creates the wave and follows the usual estimate → confirm flow; nothing is spent without the person's yes). Also say in the studio guide (`guides/studio.md`) how to handle that message.
+4. **Export separately or together**: each wave row has Export (the existing per-campaign export). Add **Export all waves**: one file (same formats and `include` options as the per-wave export) with a `Wave` column, one row per person, a person in several waves listed once with all wave names. New route `POST /api/projects/{id}/exports` + service function + tests. Opens the exports folder like today.
+
+## Rules
+- Keep every v1.3 behaviour: verified-only emails, contact memory/cooldown, checks before export, nothing sent without a click, chat engine.
+- Tests for every new route, migration and rule; run `.venv/Scripts/python -m pytest -q -n auto` once at the end and `.venv/Scripts/ruff check src tests`.
+- Check the page in a real browser once with the fake claude (`LEADGEN_CLAUDE_BIN`, temp `LEADGEN_HOME`, `--port 8790`): tabs, next step, drawer, waves list, wave table, launch dialog, export all.
+- Bump the version to 1.3.1 (so re-running the installer upgrades), add STATUS row T32, commit `V14: quick wins and waves` (trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`), then push to origin main.
+- Final message: 10 lines max, plain English, what changed and anything not done.
