@@ -106,7 +106,8 @@ def test_the_project_page_labels_and_pieces():
         "'Copy into my templates'",
         "setRangeText", "/template'",
         "'Activity'", "'Results'", "'Settings'", "'Waves'", "'Launch a new wave'",
-        "'Back to all waves'", "'Review messages'", "'Approve'", "'Skip'", "'Export all waves (Excel CSV)'",
+        "'Back to all waves'", "'Review messages'", "'Approve'", "'Skip'",
+        "'Export all waves (Excel CSV)'",
         "'Message status'", "/waves", "/api/messages/", "TAB_KEY", "'Show me'",
     ):  # fmt: skip
         assert expected in js, expected
@@ -158,9 +159,11 @@ def test_js_syntax_with_node_when_available(name):
 
 
 def test_v14_page_rules():
-    """The tabs remember their choice safely; the drawer keys and the home checklist are in place."""
+    """The drawer keys, the clickable steps and the home checklist are in place."""
     project = (STATIC / "studio_project.js").read_text(encoding="utf-8")
-    for expected in ("Escape", "'j'", "'k'", "step-go", "nextStepLine", "reviewDrawer", "launchDialog"):
+    for expected in (
+        "Escape", "'j'", "'k'", "step-go", "nextStepLine", "reviewDrawer", "launchDialog",
+    ):
         assert expected in project, expected
     home = (STATIC / "studio.js").read_text(encoding="utf-8")
     for expected in ("setupChecklist", "Get set up", "sign_off_set", "Set your sign-off"):

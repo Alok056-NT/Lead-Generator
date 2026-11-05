@@ -3,6 +3,19 @@
 All notable changes to Lead Generator are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] - 2026-11-06
+
+Quick wins on the project page, and waves.
+
+### Added
+- Progress steps are clickable; a "Next:" line with a button; three tabs (Activity, Results, Settings) that remember your choice per project.
+- A review drawer for messages (edit, Approve, Skip, Previous, Next, Copy; J/K and Esc). A skipped message never leaves.
+- Waves: a list with status and counts, a table per wave, a "Launch a new wave" dialog, and "Export all waves" in one file with a Wave column.
+- A setup checklist on Home until the AI, a search key and a sign-off are set.
+
+### Changed
+- The Edit project window keeps only the name and the days; the sign-off is in Settings.
+
 ## [1.2.0] - 2026-10-26
 
 Lead Generator Studio: a chat with your AI inside each project, a button that opens the app, and a new look.
