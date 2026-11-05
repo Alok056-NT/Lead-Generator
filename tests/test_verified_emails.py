@@ -233,7 +233,7 @@ def test_migration_v4_on_a_copy_of_a_v3_database(tmp_path, monkeypatch):
         stored = db.query(conn, "SELECT options_json FROM campaigns")[0]["options_json"]
         assert stored["allow_risky_emails"] is True  # the old campaign keeps its own value
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert db.init_db(copy) == 6  # running it again changes nothing
+    assert db.init_db(copy) == 7  # running it again changes nothing
 
 
 def test_failed_v4_migration_rolls_back(tmp_path, monkeypatch):
