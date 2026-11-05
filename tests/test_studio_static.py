@@ -86,7 +86,7 @@ def test_the_labels_of_the_connect_and_home_screens():
     for expected in (
         "Connect your AI", "Use my Claude plan", "Use an API key", "Sign in to Claude",
         "Show me how to install it", "Test the connection", "Skip for now", "Name your project",
-        "Create and open", "Edit project", "Your name for the sign-off", "Delete this project?",
+        "Create and open", "Edit project", "Sign-off is in Settings", "Delete this project?",
         "Type the project name to confirm", "Keep it", "Your projects",
     ):  # fmt: skip
         assert expected in js, expected
@@ -105,6 +105,9 @@ def test_the_project_page_labels_and_pieces():
         "'Side by side'", "'Results wide'", "'Phone (found, not checked)'", "'New template'",
         "'Copy into my templates'",
         "setRangeText", "/template'",
+        "'Activity'", "'Results'", "'Settings'", "'Waves'", "'Launch a new wave'",
+        "'Back to all waves'", "'Review messages'", "'Approve'", "'Skip'", "'Export all waves (Excel CSV)'",
+        "'Message status'", "/waves", "/api/messages/", "TAB_KEY", "'Show me'",
     ):  # fmt: skip
         assert expected in js, expected
 
@@ -152,3 +155,24 @@ def test_js_syntax_with_node_when_available(name):
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_v14_page_rules():
+    """The tabs remember their choice safely; the drawer keys and the home checklist are in place."""
+    project = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    for expected in ("Escape", "'j'", "'k'", "step-go", "nextStepLine", "reviewDrawer", "launchDialog"):
+        assert expected in project, expected
+    home = (STATIC / "studio.js").read_text(encoding="utf-8")
+    for expected in ("setupChecklist", "Get set up", "sign_off_set", "Set your sign-off"):
+        assert expected in home, expected
+    assert "ep-sender" not in home and "ep-title" not in home  # the sign-off has one home
+    css = (STATIC / "studio.css").read_text(encoding="utf-8")
+    for expected in (".drawer", ".next-step", ".right-tabs", ".step-go"):
+        assert expected in css, expected
+
+
+def test_launch_and_send_never_spend_without_a_yes():
+    """The launch dialog only sends a chat message that asks the AI to wait for the person's yes."""
+    js = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    assert "wait for my yes before anything is spent" in js
+    assert "confirm: true" not in js[js.index("function launchDialog") :].split("// ----")[0]

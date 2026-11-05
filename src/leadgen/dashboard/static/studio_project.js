@@ -12,50 +12,204 @@
   const SIGN_IN_CODES = ['not_signed_in', 'bad_api_key', 'missing_cli'];
   const LEVEL_NAME = { csuite: 'Top leaders', director: 'Directors and heads', manager: 'Managers', any: 'Anyone' };
   const DEPTH_NAME = { short: 'Short', standard: 'Standard', detailed: 'Detailed' };
+  const EMAIL_WORD = { verified: 'Verified', risky: 'Risky', guess: 'A guess', invalid: 'Not valid', unknown: 'Not checked', none: 'None found' };
+  const MESSAGE_WORD = { '': 'Not written yet', written: 'Written', approved: 'Approved', skipped: 'Skipped', sent: 'Sent' };
+  const CHANNEL_WORD = { email: 'Email', linkedin_message: 'LinkedIn message', linkedin_invite: 'LinkedIn invitation' };
+  const TAB_KEY = 'lg.tab.';
   let live = null; // the page now shown: { close() } stops its stream and timers
+  let drawer = null; // the open review drawer: { close() }
 
   function leave() {
     if (live) { live.close(); live = null; }
+    if (drawer) drawer.close();
   }
   window.addEventListener('hashchange', leave);
 
   // ---- progress -----------------------------------------------------------------------------------
 
-  function stepper(steps) {
-    return h('ol', { class: 'stepper', 'aria-label': 'Progress' }, ...steps.map((s) =>
-      h('li', { class: 'step ' + s.state, 'aria-current': s.state === 'active' ? 'step' : null },
+  // Each step is a button that takes the person to the tab and card that step needs (onStep(key)).
+  function stepper(steps, onStep) {
+    return h('ol', { class: 'stepper', 'aria-label': 'Progress' }, ...steps.map((s) => {
+      const go = h('button', { type: 'button', class: 'step-go', title: 'Show me where' },
         h('span', { class: 'step-mark', 'aria-hidden': 'true' }),
-        h('div', null,
-          h('div', { class: 'step-title' }, s.label, h('span', { class: 'sr-only', text: ': ' + (STATE_WORD[s.state] || '') })),
-          h('div', { class: 'step-detail muted small', text: s.detail || '' })))));
+        h('span', null,
+          h('span', { class: 'step-title' }, s.label, h('span', { class: 'sr-only', text: ': ' + (STATE_WORD[s.state] || '') })),
+          h('span', { class: 'step-detail muted small', text: s.detail || '' })));
+      go.addEventListener('click', () => onStep(s.key));
+      return h('li', { class: 'step ' + s.state, 'aria-current': s.state === 'active' ? 'step' : null }, go);
+    }));
   }
 
-  // ---- ready contacts -----------------------------------------------------------------------------
-
-  function viewDialog(lead) {
-    const body = [h('p', { class: 'muted small' }, lead.title, lead.title && lead.company ? ' at ' : '', lead.company),
-      h('p', null, badge(lead.checked ? 'Checked' : 'Not checked yet', lead.checked ? 'ok' : 'none')),
-      lead.phone ? h('p', { class: 'small', text: 'Phone: ' + lead.phone + ' (found, not checked)' }) : null];
-    const actions = [];
-    const close = h('button', { type: 'button', text: 'Close' });
-    if (lead.linkedin_message) {
-      body.push(h('h3', { text: 'LinkedIn message' }), h('pre', { class: 'msg', text: lead.linkedin_message }));
-      const copy = h('button', { type: 'button', text: 'Copy message' });
-      copy.addEventListener('click', () => copyText(lead.linkedin_message));
-      actions.push(copy);
-    }
-    if (lead.email_body) {
-      body.push(h('h3', { text: 'Email' }), h('p', { class: 'small' }, h('strong', { text: 'Subject: ' }), lead.email_subject), h('pre', { class: 'msg', text: lead.email_body }));
-      const copy = h('button', { type: 'button', text: 'Copy email' });
-      copy.addEventListener('click', () => copyText(lead.email_subject + '\n\n' + lead.email_body));
-      actions.push(copy);
-    }
-    if (!actions.length) body.push(h('p', { class: 'muted', text: 'No messages have been written for this person yet.' }));
-    const dlg = Studio.dialog(lead.name, body, [...actions, close]);
-    close.addEventListener('click', () => dlg.close());
+  // The one-sentence "Next:" line from the steps the page already has. Returns { text, key } or null.
+  function nextStepLine(studio) {
+    const step = studio.steps.find((x) => x.state === 'active') || studio.steps.find((x) => x.state === 'todo');
+    if (!step) return null;
+    const sum = studio.summary || {};
+    const toCheck = Math.max(0, (sum.ready_contacts || 0) - (sum.verified_emails || 0));
+    const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+    const text = {
+      product: 'Next: add your product',
+      reach: 'Next: tell the AI who you want to reach',
+      companies: 'Next: approve the companies',
+      people: 'Next: find the people',
+      emails: toCheck ? 'Next: check ' + plural(toCheck, 'email') : 'Next: check the emails',
+      messages: sum.messages ? 'Next: review ' + plural(sum.messages, 'message') : 'Next: let the AI write the messages',
+      checks: sum.messages ? 'Next: finish the checks on ' + plural(sum.messages, 'message') : 'Next: finish the checks',
+      export: 'Next: export or send your contacts',
+    }[step.key];
+    return { text: text || 'Next: ' + step.label.toLowerCase(), key: step.key };
   }
 
-  function resultsBody(r, view, again) {
+  // ---- the review drawer ----------------------------------------------------------------------------
+
+  // One word for a person's messages (the same rule as the server's): sent, skipped, approved, written, or ''.
+  function stateOf(messages) {
+    if (!messages.length) return '';
+    if (messages.some((m) => m.status === 'sent')) return 'sent';
+    const choices = new Set(messages.map((m) => m.owner_choice));
+    return choices.size === 1 && !choices.has('') ? Array.from(choices)[0] : 'written';
+  }
+
+  function typing(el) {
+    return !!el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable);
+  }
+
+  // A side drawer with one person's messages. leads: the people on the page, index: who to open,
+  // onChange(): runs after something was saved so the tables can redraw.
+  function reviewDrawer(leads, index, onChange) {
+    if (drawer) drawer.close();
+    const opener = document.activeElement;
+    let at = index;
+    const body = h('div', { class: 'drawer-body' });
+    const where = h('span', { class: 'muted small', 'aria-live': 'polite' });
+    const closeButton = h('button', { type: 'button', class: 'ghost', text: 'Close', 'aria-label': 'Close the review (Esc)' });
+    const prev = h('button', { type: 'button', text: 'Previous' });
+    const next = h('button', { type: 'button', text: 'Next' });
+    const node = h('aside', { class: 'drawer', role: 'dialog', 'aria-label': 'Review messages', tabindex: '-1' },
+      h('header', { class: 'drawer-head' }, h('h2', { text: 'Review messages' }), closeButton),
+      body,
+      h('footer', { class: 'drawer-foot' }, prev, where, next,
+        h('span', { class: 'muted small', text: 'Keys: J next, K previous, Esc close' })));
+
+    function close() {
+      document.removeEventListener('keydown', onKey);
+      node.remove();
+      drawer = null;
+      if (opener && opener.isConnected) opener.focus();
+    }
+    function onKey(ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || typing(ev.target)) return;
+      if (ev.key === 'j' || ev.key === 'J') move(1);
+      else if (ev.key === 'k' || ev.key === 'K') move(-1);
+    }
+    function move(step) {
+      const to = at + step;
+      if (to >= 0 && to < leads.length) { at = to; show(); }
+    }
+
+    function messageBlock(lead, m) {
+      const sent = m.status === 'sent';
+      const subject = m.channel === 'email' ? h('input', { type: 'text', value: m.subject || '', maxlength: '300', 'aria-label': 'Subject', id: 'ds-subject', readOnly: sent }) : null;
+      const text = h('textarea', { rows: '9', maxlength: '5000', value: m.body || '', 'aria-label': CHANNEL_WORD[m.channel] || 'Message', readOnly: sent });
+      const status = h('div', { role: 'status', class: 'small' });
+      const mark = h('span', { class: 'muted small' });
+      const save = h('button', { type: 'button', text: 'Save changes', disabled: true });
+      const approve = h('button', { type: 'button', class: 'primary', text: 'Approve', disabled: sent });
+      const skip = h('button', { type: 'button', text: 'Skip', disabled: sent });
+      const copy = h('button', { type: 'button', text: 'Copy' });
+      const edited = () => text.value !== (m.body || '') || (subject !== null && subject.value !== (m.subject || ''));
+      const paint = () => {
+        mark.textContent = sent ? 'Sent' : m.owner_choice === 'approved' ? 'Approved' : m.owner_choice === 'skipped' ? 'Skipped' : 'Not reviewed yet';
+        approve.setAttribute('aria-pressed', String(m.owner_choice === 'approved'));
+        skip.setAttribute('aria-pressed', String(m.owner_choice === 'skipped'));
+      };
+      const changed = () => { lead.message_state = stateOf(lead.messages); onChange(); };
+      async function saveText() {
+        save.disabled = true;
+        const res = await api('/api/messages/' + m.id, { method: 'PATCH', body: { body: text.value, subject: subject ? subject.value : null } });
+        if (!res.ok) { setStatus(status, 'bad', errorText(res)); save.disabled = false; return false; }
+        Object.assign(m, res.message);
+        text.value = m.body;
+        if (subject) subject.value = m.subject;
+        const blocks = (res.issues || []).filter((i) => i.severity === 'block');
+        if (blocks.length) setStatus(status, 'warn', 'Saved, but it needs another look: ' + blocks.map((i) => i.detail).join(' '));
+        else setStatus(status, 'ok', 'Saved. The AI will look at the new text again.');
+        paint();
+        changed();
+        return true;
+      }
+      async function choose(choice) {
+        if (edited() && !(await saveText())) return;
+        const pick = m.owner_choice === choice ? '' : choice;
+        const res = await api('/api/messages/' + m.id + '/choice', { method: 'POST', body: { choice: pick } });
+        if (!res.ok) return setStatus(status, 'bad', errorText(res));
+        Object.assign(m, res.message);
+        clear(status);
+        paint();
+        changed();
+      }
+      for (const input of [text, subject]) if (input) input.addEventListener('input', () => { save.disabled = sent || !edited(); });
+      save.addEventListener('click', saveText);
+      approve.addEventListener('click', () => choose('approved'));
+      skip.addEventListener('click', () => choose('skipped'));
+      copy.addEventListener('click', () => copyText((subject ? subject.value + '\n\n' : '') + text.value));
+      paint();
+      return h('section', { class: 'drawer-msg' },
+        h('div', { class: 'row' }, h('h3', { class: 'grow', text: CHANNEL_WORD[m.channel] || 'Message' }), mark),
+        subject ? field('ds-subject', 'Subject', subject) : null, text,
+        h('div', { class: 'row' }, approve, skip, save, copy), status);
+    }
+
+    function show() {
+      const lead = leads[at];
+      clear(body);
+      body.append(
+        h('h3', { class: 'drawer-name', text: lead.name }),
+        h('p', { class: 'muted' }, lead.title, lead.title && lead.company ? ' at ' : '', lead.company),
+        h('p', { class: 'row small' },
+          badge('Email: ' + (EMAIL_WORD[lead.email_status] || lead.email_status) + (lead.email ? ' (' + lead.email + ')' : ''), lead.email_status === 'verified' ? 'ok' : 'none'),
+          lead.linkedin_url ? extLink(lead.linkedin_url, 'Open LinkedIn profile') : badge('No LinkedIn profile', 'none')),
+        ...(lead.messages.length ? lead.messages.map((m) => messageBlock(lead, m))
+          : [h('p', { class: 'muted', text: 'No messages have been written for this person yet.' })]));
+      where.textContent = (at + 1) + ' of ' + leads.length;
+      prev.disabled = at === 0;
+      next.disabled = at === leads.length - 1;
+      body.scrollTop = 0;
+    }
+
+    closeButton.addEventListener('click', close);
+    prev.addEventListener('click', () => move(-1));
+    next.addEventListener('click', () => move(1));
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(node);
+    drawer = { close };
+    show();
+    node.focus();
+  }
+
+  // ---- ready contacts and the wave table -------------------------------------------------------------
+
+  // The people table. columns: [[heading, (lead, open) => cell content]]; openAt(i) shows person i in the drawer.
+  function leadTable(leads, columns, openAt) {
+    return h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ...columns.map(([t]) => h('th', { scope: 'col', text: t })))),
+      h('tbody', null, ...leads.map((lead, i) => {
+        const open = () => openAt(i);
+        const row = h('tr', { class: 'clickable' }, ...columns.map(([, cell]) => h('td', null, cell(lead, open))));
+        row.addEventListener('click', (ev) => { if (!ev.target.closest('a, button')) open(); });
+        return row;
+      }))));
+  }
+
+  const nameButton = (lead, open) => {
+    const b = h('button', { type: 'button', class: 'link', text: lead.name });
+    b.addEventListener('click', open);
+    return b;
+  };
+  const linkedinCell = (lead) => (lead.linkedin_url ? extLink(lead.linkedin_url, 'Open profile') : '');
+
+  function resultsBody(r, view, again, openAt) {
     const kids = [];
     if (r.campaigns.length > 1) {
       const pick = selectBox('res-search', r.campaigns.map((c) => [c.id, c.name]), r.campaign_id, (ev) => {
@@ -69,21 +223,102 @@
       kids.push(h('p', { class: 'muted', text: 'Contacts will appear here as the AI finds and checks them.' }));
       return kids;
     }
-    const heads = ['Name', 'Job', 'Company', 'LinkedIn', 'Email (verified)', 'Phone (found, not checked)', 'Messages'];
-    kids.push(h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ...heads.map((t) => h('th', { scope: 'col', text: t })))),
-      h('tbody', null, ...r.leads.map((lead) => {
-        const view1 = h('button', { type: 'button', text: 'View' });
-        view1.addEventListener('click', () => viewDialog(lead));
-        return h('tr', null,
-          h('td', { text: lead.name }), h('td', { text: lead.title }), h('td', { text: lead.company }),
-          h('td', null, lead.linkedin_url ? extLink(lead.linkedin_url, 'Open profile') : ''),
-          h('td', { text: lead.email }),
-          h('td', { text: lead.phone_status === 'waiting' ? 'Requested, waiting' : lead.phone }),
-          h('td', null, view1));
-      })))));
+    const review = (lead, open) => {
+      const b = h('button', { type: 'button', text: lead.messages.length ? 'Review' : 'Open' });
+      b.addEventListener('click', open);
+      return h('span', { class: 'row' }, b, h('span', { class: 'muted small', text: MESSAGE_WORD[lead.message_state] || '' }));
+    };
+    kids.push(leadTable(r.leads, [
+      ['Name', nameButton], ['Job', (l) => l.title], ['Company', (l) => l.company], ['LinkedIn', linkedinCell],
+      ['Email (verified)', (l) => l.email],
+      ['Phone (found, not checked)', (l) => (l.phone_status === 'waiting' ? 'Requested, waiting' : l.phone)],
+      ['Messages', review],
+    ], openAt));
     kids.push(pager(r, (page) => { view.page = page; again(); }));
     return kids;
+  }
+
+  // ---- waves ------------------------------------------------------------------------------------------
+
+  const plainDay = (iso) => (iso ? String(iso).slice(0, 10) : '');
+
+  // The waves list. handlers: { open(id), exportWave(id), launch() }.
+  function wavesBody(waves, handlers) {
+    const launch = h('button', { type: 'button', class: 'primary', text: 'Launch a new wave' });
+    launch.addEventListener('click', handlers.launch);
+    const kids = [h('div', { class: 'row' }, h('p', { class: 'muted small grow', text: 'Each wave is one search: its own companies, people and messages. Newest first.' }), launch)];
+    if (!waves.length) {
+      kids.push(h('p', { class: 'muted', text: 'No waves yet. Tell the AI who you want to reach, or launch one here.' }));
+      return kids;
+    }
+    const heads = ['Wave', 'Started', 'Status', 'Companies', 'People', 'Verified emails', 'Messages written', 'Sent', 'Message style', ''];
+    kids.push(h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ...heads.map((t) => h('th', { scope: 'col', text: t })))),
+      h('tbody', null, ...waves.map((w) => {
+        const open = h('button', { type: 'button', class: 'link', text: w.name, title: 'Show everyone in this wave' });
+        open.addEventListener('click', () => handlers.open(w.id));
+        const exp = h('button', { type: 'button', text: 'Export', 'aria-label': 'Export ' + w.name });
+        exp.addEventListener('click', () => handlers.exportWave(w.id));
+        return h('tr', null, h('td', null, open), h('td', { text: plainDay(w.started) }), h('td', null, badge(w.status, w.status === 'Planning' ? 'none' : 'ok')),
+          ...[w.companies, w.people, w.verified_emails, w.messages, w.sent].map((n) => h('td', { class: 'num', text: fmtNum(n) })),
+          h('td', { text: w.style }), h('td', null, exp));
+      })))));
+    return kids;
+  }
+
+  // One wave's whole table with paging; the person's row opens the review drawer.
+  function waveTable(wave, r, handlers) {
+    const back = h('button', { type: 'button', text: 'Back to all waves' });
+    back.addEventListener('click', handlers.back);
+    const kids = [h('div', { class: 'row' }, back, h('strong', { class: 'grow', text: wave ? wave.name : 'Wave' }))];
+    if (!r.leads.length) {
+      kids.push(h('p', { class: 'muted', text: 'Nobody is ready in this wave yet.' }));
+      return kids;
+    }
+    const emailCell = (l) => [l.email, l.email ? ' · ' : '', EMAIL_WORD[l.email_status] || l.email_status].join('');
+    kids.push(leadTable(r.leads, [
+      ['Name', nameButton], ['Job', (l) => l.title], ['Company', (l) => l.company],
+      ['Email (status)', emailCell], ['LinkedIn', linkedinCell],
+      ['Message status', (l) => MESSAGE_WORD[l.message_state] || ''],
+    ], handlers.openAt));
+    kids.push(pager(r, handlers.page));
+    return kids;
+  }
+
+  // "Launch a new wave": a few plain fields, then ONE chat message for the AI (it follows the usual estimate and yes flow).
+  function launchDialog(waves, sendToAi) {
+    const numbers = waves.map((w) => /^Wave (\d+)$/i.exec(w.name)).filter(Boolean).map((m) => Number(m[1]));
+    const nextNumber = numbers.length ? Math.max(...numbers) + 1 : waves.length + 1;
+    const name = h('input', { type: 'text', id: 'lw-name', value: 'Wave ' + nextNumber, maxlength: '80', autocomplete: 'off' });
+    const same = selectBox('lw-same', [['', 'Start fresh'], ...waves.map((w) => [w.id, w.name])], waves.length ? String(waves[0].id) : '');
+    const change = h('textarea', { id: 'lw-change', rows: '3', maxlength: '500', placeholder: 'For example: aim at hotels instead of airlines' });
+    const companies = h('input', { type: 'number', id: 'lw-companies', value: '30', min: '1', max: '500' });
+    const per = h('input', { type: 'number', id: 'lw-per', value: '2', min: '1', max: '10' });
+    const status = h('div', { role: 'status' });
+    const cancel = h('button', { type: 'button', text: 'Cancel' });
+    const go = h('button', { type: 'button', class: 'primary', text: 'Launch' });
+    const dlg = Studio.dialog('Launch a new wave', [
+      field('lw-name', 'Wave name', name),
+      field('lw-same', 'Keep the same targeting as', same),
+      field('lw-change', 'What should change? (optional)', change),
+      h('div', { class: 'row' }, field('lw-companies', 'Companies', companies), field('lw-per', 'People per company', per)),
+      h('p', { class: 'small muted', text: 'The AI will show you what it plans and what it costs, and waits for your yes before anything is spent.' }),
+      status], [cancel, go]);
+    cancel.addEventListener('click', () => dlg.close());
+    go.addEventListener('click', () => {
+      const title = name.value.trim();
+      const nCompanies = Number(companies.value);
+      const nPer = Number(per.value);
+      if (!title) return setStatus(status, 'bad', 'Give the wave a name.');
+      if (!(nCompanies >= 1) || !(nPer >= 1)) return setStatus(status, 'bad', 'Enter how many companies and how many people per company.');
+      const from = waves.find((w) => String(w.id) === same.value);
+      const lines = ['Start a new wave called "' + title + '".',
+        from ? 'Keep the same targeting as "' + from.name + '" (its countries, kinds of company, job roles and message style).' : 'Start fresh: work out the targeting from my product.',
+        change.value.trim() ? 'What should change: ' + change.value.trim() : 'Nothing should change.',
+        'Size: up to ' + nCompanies + ' companies and ' + nPer + ' people per company.',
+        'Show me the plan and the cost first, and wait for my yes before anything is spent.'];
+      if (sendToAi(lines.join('\n'))) dlg.close();
+    });
   }
 
   // ---- searches and message style -----------------------------------------------------------------
@@ -273,24 +508,29 @@
   function actionsCard(state) {
     const note = h('div', { role: 'status' });
     const folderRow = h('div', { class: 'row' });
-    const exportButtons = [['generic', 'Download for Excel (CSV)'], ['lemlist', 'Download for lemlist (CSV)']].map(([format, text]) => {
+    // One export: a single wave (campaign id) or every wave of the project (id null). Shows the result in this card.
+    async function runExport(id, format, button) {
+      const all = id === null;
+      if (!all && !id) return setStatus(note, 'warn', 'There is nothing to export yet.');
+      const base = all ? '/api/projects/' + state.projectId : '/api/campaigns/' + id;
+      if (button) button.disabled = true;
+      const res = await api(base + '/exports', { method: 'POST', body: { format, include: 'approved' } });
+      if (button) button.disabled = false;
+      if (!res.ok) return setStatus(note, 'bad', errorText(res));
+      if (!res.exported) return setStatus(note, 'warn', 'Nobody is ready to export yet. Ask the AI to finish the checks first.');
+      setStatus(note, 'ok', 'Saved ' + fmtNum(res.exported) + ' contacts to your exports folder' + (all ? ', all waves in one file.' : '.'));
+      clear(folderRow);
+      const folder = h('button', { type: 'button', text: 'Open the folder' });
+      folder.addEventListener('click', () => api(base + '/exports/open-folder', { method: 'POST' }));
+      folderRow.appendChild(folder);
+    }
+    const exportRow = (formats, id) => h('div', { class: 'row' }, ...formats.map(([format, text]) => {
       const button = h('button', { type: 'button', text });
-      button.addEventListener('click', async () => {
-        const id = state.campaignId();
-        if (!id) return setStatus(note, 'warn', 'There is nothing to export yet.');
-        button.disabled = true;
-        const res = await api('/api/campaigns/' + id + '/exports', { method: 'POST', body: { format, include: 'approved' } });
-        button.disabled = false;
-        if (!res.ok) return setStatus(note, 'bad', errorText(res));
-        if (!res.exported) return setStatus(note, 'warn', 'Nobody is ready to export yet. Ask the AI to finish the checks first.');
-        setStatus(note, 'ok', 'Saved ' + fmtNum(res.exported) + ' contacts to your exports folder.');
-        clear(folderRow);
-        const folder = h('button', { type: 'button', text: 'Open the folder' });
-        folder.addEventListener('click', () => api('/api/campaigns/' + id + '/exports/open-folder', { method: 'POST' }));
-        folderRow.appendChild(folder);
-      });
+      button.addEventListener('click', () => runExport(id(), format, button));
       return button;
-    });
+    }));
+    const exportButtons = exportRow([['generic', 'Download for Excel (CSV)'], ['lemlist', 'Download for lemlist (CSV)']], state.campaignId);
+    const exportAll = exportRow([['generic', 'Export all waves (Excel CSV)'], ['lemlist', 'Export all waves (lemlist CSV)']], () => null);
 
     const MISSING = {
       email_channel: 'This search is not set up for email.',
@@ -402,12 +642,16 @@
     const connectLem = h('button', { type: 'button', class: 'link', text: 'Connect lemlist' });
     connectLem.addEventListener('click', () => { lemBox.hidden = !lemBox.hidden; });
 
-    return h('div', { class: 'stack' },
+    const node = h('div', { class: 'stack' },
       h('p', { class: 'muted small', text: 'Nothing is sent until you click and confirm.' }),
-      h('div', { class: 'row' }, ...exportButtons), note, folderRow,
+      exportButtons, exportAll,
+      h('p', { class: 'small muted', text: 'The first row saves the wave chosen in Ready contacts. The second puts every wave in one file, with a Wave column.' }),
+      note, folderRow,
       h('div', { class: 'row' }, sendMail, sendLem),
       h('p', { class: 'small' }, h('a', { href: '#/mailbox', text: 'Connect your email' }), ' · ', connectLem),
       lemBox);
+    node.runExport = runExport;
+    return node;
   }
 
   // ---- the chat -----------------------------------------------------------------------------------
@@ -569,10 +813,30 @@
       log, chips, pills,
       h('div', { class: 'chat-box' }, input, h('div', { class: 'row' }, attach, picker, h('span', { class: 'grow' }), send)),
       down);
-    return { node, close: closeStream };
+    // Sends a message on the person's behalf (the launch-a-wave dialog). False when it cannot go now.
+    function sendFromPage(text) {
+      if (!ready) { toast('Connect your AI first.', 'warn'); return false; }
+      if (running) { toast('The AI is still working. Try again when it has finished.', 'warn'); return false; }
+      sendMessage(text);
+      return true;
+    }
+    return { node, close: closeStream, send: sendFromPage };
   }
 
   // ---- the page -----------------------------------------------------------------------------------
+
+  // Where each progress step leads: [tab, card].
+  const STEP_TARGET = {
+    product: ['settings', 'product'], reach: ['settings', 'searches'], companies: ['results', 'waves'],
+    people: ['results', 'waves'], emails: ['results', 'results'], checks: ['results', 'results'],
+    messages: ['results', 'results'], export: ['results', 'send'],
+  };
+  const TABS = [['activity', 'Activity'], ['results', 'Results'], ['settings', 'Settings']];
+
+  function rememberedTab(projectId) {
+    const key = TAB_KEY + projectId;
+    return { get: () => UI.load(key, ''), set: (tab) => UI.save(key, tab) };
+  }
 
   async function pageProject(ctx) {
     leave();
@@ -585,23 +849,30 @@
     if (!studio.ok) return setMain(notice('bad', errorText(studio)), h('a', { href: '#/home', text: 'Back to your projects' }));
     if (!chat.ok || !page.ok) return setMain(notice('bad', errorText(chat.ok ? page : chat)));
 
-    const view = { campaignId: null, page: 1 };
+    // wave: the id of the wave whose table is open (null: the list); lastLeads: the people last loaded for Ready contacts
+    const view = { campaignId: null, page: 1, wave: null, wavePage: 1, waves: [], waveData: null, lastLeads: [] };
     const tl = UI.timeline();
     let timer = null;
     let dead = false;
     const memory = memoryBox(page.project, page.memory);
     memory.querySelector('h3').hidden = true; // the card's own title says it
+    const sendCard = actionsCard({ projectId: id, campaignId: () => view.campaignId, refresh: () => refresh(true) });
     const cards = {
       activity: UI.card('p.activity', 'What the AI is doing', { open: true }, tl.node),
       progress: UI.card('p.progress', 'Progress', { open: true }),
+      waves: UI.card('p.waves', 'Waves', { open: true }),
+      results: UI.card('p.results', 'Ready contacts', { open: true }),
+      send: UI.card('p.send', 'Export and send', {}, sendCard),
+      product: UI.card('p.product', 'Your product', {}, ...productBody(page)),
       signoff: UI.card('p.signoff', 'Your sign-off', {}, signOffBody(studio.project, () => route())),
       templates: UI.card('p.templates', 'Message templates', {}),
       searches: UI.card('p.searches', 'Searches and message style', {}),
-      results: UI.card('p.results', 'Ready contacts', { open: true }),
-      send: UI.card('p.send', 'Export and send', {}, actionsCard({ campaignId: () => view.campaignId, refresh: () => refresh(true) })),
-      product: UI.card('p.product', 'Your product', {}, ...productBody(page)),
       memory: UI.card('p.memory', "Don't contact again", {}, memory),
       contacts: UI.card('p.contacts', 'Contacts you already have', {}, ...contactsBody(page)),
+    };
+    const inTab = {
+      activity: ['activity', 'progress'], results: ['waves', 'results', 'send'],
+      settings: ['product', 'signoff', 'templates', 'searches', 'memory', 'contacts'],
     };
     const drawSearches = (rows, choices) => { clear(cards.searches.inner); cards.searches.inner.append(...searchesBody(id, rows, choices)); };
     const drawTemplates = (data) => { clear(cards.templates.inner); cards.templates.inner.append(...templatesBody(id, data, reloadTemplates)); };
@@ -610,52 +881,149 @@
       if (t.ok) drawTemplates(t);
       if (t.ok && c.ok) drawSearches(c.campaigns, t.choices);
     }
-    function drawProgress(s) { clear(cards.progress.inner); cards.progress.inner.append(stepper(s.steps)); }
+
+    // ---- the tabs, the "Next:" line and where a step leads
+    const memoryOfTab = rememberedTab(id);
+    const tabButtons = {};
+    const panels = {};
+    for (const [key] of TABS) panels[key] = h('div', { class: 'tab-panel', role: 'tabpanel', id: 'rp-' + key, 'aria-labelledby': 'rt-' + key, hidden: true }, ...inTab[key].map((c) => cards[c]));
+    function selectTab(key, remember) {
+      for (const [k] of TABS) {
+        tabButtons[k].setAttribute('aria-selected', String(k === key));
+        tabButtons[k].tabIndex = k === key ? 0 : -1;
+        panels[k].hidden = k !== key;
+      }
+      if (remember !== false) memoryOfTab.set(key);
+    }
+    const tabList = h('div', { class: 'right-tabs', role: 'tablist', 'aria-label': 'Project panel' });
+    TABS.forEach(([key, text], i) => {
+      const b = h('button', { type: 'button', role: 'tab', class: 'tab', id: 'rt-' + key, 'aria-controls': 'rp-' + key, text });
+      b.addEventListener('click', () => selectTab(key));
+      b.addEventListener('keydown', (ev) => {
+        const step = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        ev.preventDefault();
+        const to = TABS[(i + step + TABS.length) % TABS.length][0];
+        selectTab(to);
+        tabButtons[to].focus();
+      });
+      tabButtons[key] = b;
+      tabList.appendChild(b);
+    });
+    const nextText = h('span', { class: 'grow' });
+    const nextButton = h('button', { type: 'button', class: 'primary', text: 'Show me' });
+    const nextBox = h('div', { class: 'next-step', hidden: true }, nextText, nextButton);
+    let nextKey = null;
+    nextButton.addEventListener('click', () => { if (nextKey) goTo(nextKey); });
+
+    function showPane(which) { // on a narrow screen only one of chat and panel is shown
+      grid.dataset.pane = which;
+      for (const t of topTabs.children) t.setAttribute('aria-selected', String(t.dataset.pane === which));
+    }
+    function openFirstToReview() {
+      const leads = view.lastLeads;
+      let at = leads.findIndex((l) => l.message_state === 'written');
+      if (at < 0) at = leads.findIndex((l) => l.messages.length);
+      if (at >= 0) reviewDrawer(leads, at, () => refresh(true));
+    }
+    function goTo(key) {
+      const [tab, target] = STEP_TARGET[key] || ['results', 'results'];
+      showPane('results');
+      selectTab(tab);
+      cards[target].setOpen(true);
+      cards[target].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (key === 'messages') openFirstToReview();
+    }
+    function drawProgress(s) {
+      clear(cards.progress.inner);
+      cards.progress.inner.append(stepper(s.steps, goTo));
+      const next = nextStepLine(s);
+      nextBox.hidden = !next;
+      nextKey = next ? next.key : null;
+      nextText.textContent = next ? next.text : '';
+    }
+
+    // ---- results, waves
+    const openReady = (i) => reviewDrawer(view.lastLeads, i, () => refresh(true));
     function drawResults(r) {
       view.campaignId = r.campaign_id;
+      view.lastLeads = r.leads;
       clear(cards.results.inner);
       cards.results.setCount(fmtNum(r.total));
-      cards.results.inner.append(...resultsBody(r, view, () => refresh(true)));
+      cards.results.inner.append(...resultsBody(r, view, () => refresh(true), openReady));
+    }
+    function drawWaves() {
+      clear(cards.waves.inner);
+      cards.waves.setCount(String(view.waves.length));
+      if (view.wave === null) {
+        cards.waves.inner.append(...wavesBody(view.waves, {
+          open: (waveId) => { view.wave = waveId; view.wavePage = 1; view.waveData = null; refresh(true); },
+          exportWave: (waveId) => {
+            selectTab('results');
+            cards.send.setOpen(true);
+            cards.send.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            sendCard.runExport(waveId, 'generic', null);
+          },
+          launch: () => launchDialog(view.waves, (text) => {
+            const sent = pane.send(text);
+            if (sent) showPane('chat');
+            return sent;
+          }),
+        }));
+      } else if (view.waveData) {
+        const wave = view.waves.find((w) => w.id === view.wave);
+        cards.waves.inner.append(...waveTable(wave, view.waveData, {
+          back: () => { view.wave = null; drawWaves(); },
+          page: (n) => { view.wavePage = n; refresh(true); },
+          openAt: (i) => reviewDrawer(view.waveData.leads, i, () => refresh(true)),
+        }));
+      }
     }
     async function refresh(now) {
       clearTimeout(timer);
       const run = async () => {
         if (dead || ctx.token !== routeToken) return;
-        const [s, r] = await Promise.all([
+        const [s, r, w, wr] = await Promise.all([
           api('/api/projects/' + id + '/studio'),
           api('/api/projects/' + id + '/results' + query({ campaign_id: view.campaignId, page: view.page })),
+          api('/api/projects/' + id + '/waves'),
+          view.wave === null ? null : api('/api/projects/' + id + '/results' + query({ campaign_id: view.wave, page: view.wavePage, page_size: 25 })),
         ]);
         if (dead || ctx.token !== routeToken) return;
         if (s.ok) drawProgress(s);
         if (r.ok) drawResults(r);
+        if (w.ok) view.waves = w.waves;
+        if (wr && wr.ok) view.waveData = wr;
+        if (w.ok || (wr && wr.ok)) drawWaves();
       };
       if (now) await run(); else timer = setTimeout(run, 1200); // many tool events in a row make one refresh
     }
 
     const pane = chatPane(id, chat, { refresh, timeline: tl });
-    const right = h('div', { class: 'right' }, ...Object.values(cards));
+    const right = h('div', { class: 'right' }, nextBox, tabList, ...Object.values(panels));
     const grid = h('div', { class: 'studio-grid', 'data-pane': 'chat' }, pane.node, right);
     const layout = UI.layoutSwitch(grid, 'project', [['chat', 'Chat wide'], ['split', 'Side by side'], ['results', 'Results wide']], 'split');
     const switcher = selectBox('p-switch', (list.ok ? list.projects : []).map((p) => [p.id, p.name]), id, (ev) => go('/p/' + ev.target.value));
     const signs = studio.project.sender_name ? 'Signs as ' + studio.project.sender_name : 'Sign-off not set yet';
-    const tab = (key, text) => {
-      const b = h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': key === 'chat' ? 'true' : 'false', text });
-      b.addEventListener('click', () => {
-        grid.dataset.pane = key;
-        for (const other of b.parentNode.children) other.setAttribute('aria-selected', other === b ? 'true' : 'false');
-      });
-      return b;
-    };
+    const topTabs = h('div', { class: 'studio-tabs', role: 'tablist' });
+    for (const [key, text] of [['chat', 'Chat'], ['results', 'Progress and results']]) {
+      const b = h('button', { type: 'button', role: 'tab', class: 'tab', 'data-pane': key, 'aria-selected': key === 'chat' ? 'true' : 'false', text });
+      b.addEventListener('click', () => showPane(key));
+      topTabs.appendChild(b);
+    }
     setMain(
       h('div', { class: 'row page-head' }, h('a', { href: '#/home', text: 'All projects' }), h('h1', { text: studio.project.name }),
         h('label', { class: 'sr-only', for: 'p-switch', text: 'Switch project' }), switcher,
         h('span', { class: 'chip-static', text: signs }),
         layout, UI.collapseAllButton(right)),
-      h('div', { class: 'studio-tabs', role: 'tablist' }, tab('chat', 'Chat'), tab('results', 'Progress and results')),
+      topTabs,
       grid);
     drawProgress(studio);
     if (tpl.ok) drawTemplates(tpl);
     if (tpl.ok && camps.ok) drawSearches(camps.campaigns, tpl.choices);
+    // the tab last used for this project; else Results once there are contacts, else Activity
+    const saved = memoryOfTab.get();
+    selectTab(TABS.some(([k]) => k === saved) ? saved : studio.summary.ready_contacts > 0 ? 'results' : 'activity', false);
     live = { close() { dead = true; clearTimeout(timer); pane.close(); } };
     refresh(true);
   }

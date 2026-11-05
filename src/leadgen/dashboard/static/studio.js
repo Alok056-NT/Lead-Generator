@@ -235,29 +235,24 @@
     name.focus();
   }
 
-  // project: {id, name, sender_name, sender_title, sender_company, cooldown_days}; onSaved runs after a successful save.
+  // project: {id, name, cooldown_days}; onSaved runs after a successful save. The sign-off lives in
+  // Settings on the project page (PATCH still takes sender_title and sender_company).
   function openEditDialog(project, onSaved) {
     const name = h('input', { type: 'text', id: 'ep-name', value: project.name, autocomplete: 'off', maxlength: '120' });
-    const sender = h('input', { type: 'text', id: 'ep-sender', value: project.sender_name || '', autocomplete: 'off', maxlength: '120' });
-    const title = h('input', { type: 'text', id: 'ep-title', value: project.sender_title || '', autocomplete: 'off', maxlength: '120' });
-    const company = h('input', { type: 'text', id: 'ep-company', value: project.sender_company || '', autocomplete: 'off', maxlength: '120' });
     const days = h('input', { type: 'number', id: 'ep-days', value: String(project.cooldown_days), min: '0', max: '3650' });
     const status = h('div', { role: 'status' });
     const save = h('button', { type: 'button', class: 'primary', text: 'Save' });
     const cancel = h('button', { type: 'button', text: 'Cancel' });
     const dlg = dialog('Edit project', [
       field('ep-name', 'Project name', name),
-      field('ep-sender', 'Your name for the sign-off', sender),
-      field('ep-title', 'Your job title', title),
-      field('ep-company', 'Your company', company),
-      h('p', { class: 'small muted', text: 'Messages end with your name, job title and company, each on its own line.' }),
       field('ep-days', 'Do not contact the same person again for (days)', days),
       h('p', { class: 'small muted', text: 'Set 0 to turn this off.' }),
+      h('p', { class: 'small muted', text: 'Sign-off is in Settings › Your sign-off, inside the project.' }),
       status], [cancel, save]);
     cancel.addEventListener('click', () => dlg.close());
     save.addEventListener('click', async () => {
       save.disabled = true;
-      const res = await api('/api/projects/' + project.id, { method: 'PATCH', body: { name: name.value, sender_name: sender.value, sender_title: title.value, sender_company: company.value, cooldown_days: Number(days.value) } });
+      const res = await api('/api/projects/' + project.id, { method: 'PATCH', body: { name: name.value, cooldown_days: Number(days.value) } });
       save.disabled = false;
       if (res.ok) { dlg.close(); toast('Saved.'); if (onSaved) onSaved(res.project); } else setStatus(status, 'bad', errorText(res));
     });
@@ -297,6 +292,22 @@
         h('a', { class: 'button primary', href: '#/p/' + p.id, text: 'Open' }), edit, del));
   }
 
+  // The first-time checklist: AI connected, a search key added, a sign-off set on at least one project.
+  // Returns null once all three are done.
+  function setupChecklist(ai, providers, search, projects) {
+    const items = [
+      [ai.ok && ai.ready, 'Connect your AI', '#/connect'],
+      [providers.ok && providers.providers.some((p) => search.includes(p.key) && p.configured), 'Add a search key', '#/keys'],
+      [projects.some((p) => p.sign_off_set), 'Set your sign-off (name, job title and company) in a project', projects.length ? '#/p/' + projects[0].id : '#/home'],
+    ];
+    const done = items.filter(([ok]) => ok).length;
+    if (done === items.length) return null;
+    return h('section', { class: 'card', 'aria-labelledby': 'setup-h' },
+      h('h2', { id: 'setup-h', text: 'Get set up: ' + done + ' of ' + items.length + ' done' }),
+      h('ul', { class: 'setup-list' }, ...items.map(([ok, text, href]) => h('li', null,
+        ok ? badge('Done', 'ok') : badge('To do', 'warn'), ' ', ok ? h('span', { class: 'muted', text }) : h('a', { href, text })))));
+  }
+
   async function pageHome(ctx) {
     const [list, ai, providers] = await Promise.all([api('/api/projects'), api('/api/ai'), api('/api/providers')]);
     if (ctx.token !== routeToken) return;
@@ -309,13 +320,8 @@
       h('div', { class: 'grow' }, h('h1', { text: 'Your projects' }),
         h('p', { class: 'lead', text: 'Each project is one product or service you want to find customers for.' })),
       list.projects.length ? newButton : null)];
-    if (ai.ok && !ai.ready) {
-      kids.push(h('div', { class: 'notice warn' }, 'Your AI is not connected yet. ', h('a', { href: '#/connect', text: 'Connect your AI' })));
-    }
-    if (providers.ok && !providers.providers.some((p) => search.includes(p.key) && p.configured)) {
-      kids.push(h('p', { class: 'small muted' }, 'Tip: add a free search key on the Connectors page so the AI can look for people. ',
-        h('a', { href: '#/keys', text: 'Open Connectors' })));
-    }
+    const setup = setupChecklist(ai, providers, search, list.projects);
+    if (setup) kids.push(setup);
     if (!list.projects.length) {
       kids.push(h('div', { class: 'empty card' },
         h('h2', { text: 'No projects yet' }),

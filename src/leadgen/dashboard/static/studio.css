@@ -290,6 +290,39 @@ dialog.dialog[open] { animation: fade-in-up 0.3s var(--ease) both; }
 .step.skipped .step-mark { border-style: dashed; }
 .step.todo .step-title, .step.skipped .step-title { color: var(--muted); }
 .step-title { font-weight: 500; }
+.step-go { display: flex; gap: var(--s-3); align-items: flex-start; width: 100%; height: auto; padding: var(--s-1) var(--s-2); margin: 0 calc(-1 * var(--s-2));
+  border: none; background: none; box-shadow: none; text-align: left; font: inherit; }
+.step-go:hover:not(:disabled) { background: var(--surface-2); }
+.step-go > span:last-child { display: grid; }
+
+/* the right panel: next step, tabs, tab panels */
+.next-step { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-md);
+  background: var(--accent-soft); font-weight: 500; }
+.next-step[hidden] { display: none; }
+.right-tabs { display: flex; gap: var(--s-2); }
+.right-tabs .tab { flex: 1; }
+.tab-panel { display: flex; flex-direction: column; gap: var(--s-3); }
+.tab-panel[hidden] { display: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--surface-2); }
+button.link { height: auto; padding: 0; border: none; background: none; box-shadow: none; color: var(--accent); text-align: left; font: inherit; }
+
+/* the message review drawer */
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(440px, 100vw); display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--hairline); box-shadow: var(--shadow-3); animation: fade-in-up 0.25s var(--ease) both; }
+.drawer:focus { outline: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--hairline); }
+.drawer-head h2 { margin: 0; font-size: 16px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: var(--s-4); display: grid; gap: var(--s-3); align-content: start; }
+.drawer-name { margin: 0; font-size: 18px; }
+.drawer-msg { display: grid; gap: var(--s-2); padding-top: var(--s-3); border-top: 1px solid var(--hairline); }
+.drawer-msg textarea { width: 100%; resize: vertical; }
+.drawer-msg h3 { margin: 0; }
+.drawer button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.drawer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding: var(--s-3) var(--s-4); border-top: 1px solid var(--hairline); }
+
+/* the setup checklist on Home */
+.setup-list { list-style: none; margin: var(--s-2) 0 0; padding: 0; display: grid; gap: var(--s-1); }
 
 /* ---- the agent: orb, bar visualizer, shimmering text, timeline ------------------------------- */
 .agent-head { display: flex; align-items: center; gap: var(--s-3); }
