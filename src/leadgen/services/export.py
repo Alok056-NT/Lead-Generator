@@ -596,3 +596,63 @@ def export_campaign(
         )
     return reply
 
+
+
+# --- export_project (all waves in one file) -----------------------------------------------------
+
+
+def project_export_folder(project_id: int) -> Path:
+    """The folder of a project's "all waves" files (created)."""
+    return paths.exports_dir(slugify(projects.get_project(project_id)["name"]) + "-all-waves")
+
+
+def _person_key(row: dict[str, Any]) -> str:
+    """Who a row is across waves: the email, else the LinkedIn address, else name and company."""
+    for field in ("email", "linkedinUrl"):
+        if row[field]:
+            return str(row[field]).strip().lower()
+    return f"{row['firstName']} {row['lastName']}|{row['companyName']}".strip().lower()
+
+
+def export_project(
+    project_id: int, format: str = "generic", include: str = "approved"  # noqa: A002
+) -> dict[str, Any]:
+    """Write one CSV with the people of every open wave (search) of a project.
+
+    Same `format` and `include` as `export_campaign`, plus a `Wave` column. One row per person:
+    someone found in several waves is listed once (the oldest wave's row) with all their wave
+    names joined by "; ". Only the leads file is written (the per-wave reports stay with each
+    wave's own export). Everyone in the file goes into the project's contact memory. Raises
+    `ExportError` and `ProjectError`.
+    """
+    _check(format, include)
+    projects.get_project(project_id)
+    shorts = campaign_mod.list_campaigns(include_archived=False, project_id=project_id)
+    merged: dict[str, dict[str, Any]] = {}
+    for short in sorted(shorts, key=lambda c: c["id"]):
+        for row in build_rows(short["id"], include).rows:
+            mine = merged.setdefault(_person_key(row), {**row, "Wave": [], "ids": []})
+            mine["Wave"].append(short["name"])
+            mine["ids"].append(row["personId"])
+    rows = [{**r, "Wave": "; ".join(dict.fromkeys(r["Wave"]))} for r in merged.values()]
+    columns, out_rows, skipped = _format_rows(format, rows)
+    if format == "instantly":  # that file renames the columns; carry the wave along
+        waves_of = [r["Wave"] for r in rows if r["email"]]
+        out_rows = [{**o, "Wave": w} for o, w in zip(out_rows, waves_of, strict=True)]
+    in_file = [r for r in rows if r["email"] or format != "instantly"]
+    path: Path | None = None
+    if out_rows:
+        path = _stamp_path(project_export_folder(project_id), format)
+        _write_csv(path, (*columns, "Wave"), out_rows)
+        projects.remember(
+            [i for r in in_file for i in r["ids"]], "exported_csv", source=path.name,
+            emails={i: str(r["email"] or "") for r in in_file for i in r["ids"]},
+        )  # fmt: skip
+    reply: dict[str, Any] = {
+        "ok": True, "project_id": project_id, "format": format, "include": include,
+        "path": str(path) if path else None, "waves": len(shorts), "exported": len(out_rows),
+        "skipped_no_email": skipped,
+    }
+    if path is None:
+        reply["message"] = "Nobody can be exported yet. Finish the checks in each wave first."
+    return reply

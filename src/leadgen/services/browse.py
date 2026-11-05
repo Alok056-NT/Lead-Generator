@@ -19,10 +19,12 @@ from leadgen.core.text import slugify
 from leadgen.services import campaign as campaign_mod
 from leadgen.services import (
     contacts_import,
+    export,
     projects,
     qa_leads,
     qa_messages,
     spot_check,
+    templates,
 )
 from leadgen.services import offer as offer_mod
 from leadgen.services.people import person_shape
@@ -490,7 +492,15 @@ def _startfile(folder: Path) -> None:
 
 def open_exports_folder(campaign_id: int) -> dict[str, Any]:
     """Show the campaign's export folder in the system file browser (Explorer / Finder)."""
-    folder = _export_folder(campaign_id)
+    return _open_folder(_export_folder(campaign_id))
+
+
+def open_project_exports_folder(project_id: int) -> dict[str, Any]:
+    """Show the folder of a project's "all waves" files (see `export.export_project`)."""
+    return _open_folder(export.project_export_folder(project_id))
+
+
+def _open_folder(folder: Path) -> dict[str, Any]:
     try:
         if _platform() == "win32":
             _startfile(folder)
@@ -670,6 +680,9 @@ def project_cards() -> list[dict[str, Any]]:
                 "verified_emails": verified.get(proj["id"], 0),
                 "cooldown_days": proj["cooldown_days"],
                 "sender_name": proj["sender_name"],
+                "sign_off_set": all(
+                    proj[k] for k in ("sender_name", "sender_title", "sender_company")
+                ),
                 "last_activity": recent,
             }
         )
@@ -722,6 +735,56 @@ def project_page(project_id: int) -> dict[str, Any]:
     }
 
 
+MESSAGE_CHANNELS = ("email", "linkedin_message", "linkedin_invite")
+
+
+def _message_state(messages: list[dict[str, Any]]) -> str:
+    """One word for a person's messages: sent, skipped, approved, written or "" (none yet)."""
+    if not messages:
+        return ""
+    if any(m["status"] == "sent" for m in messages):
+        return "sent"
+    choices = {m["owner_choice"] for m in messages}
+    return choices.pop() if len(choices) == 1 and choices != {""} else "written"
+
+
+def _wave_status(counts: dict[str, dict[str, int]], ready_people: int) -> str:
+    """A wave's stage in plain words, from its counts: Sent (every message sent), Ready (messages
+    are written), Checking emails (people are ready), Finding people, or Planning."""
+    messages = sum(counts["messages"].values())
+    if messages and counts["messages"]["sent"] == messages:
+        return "Sent"
+    if messages:
+        return "Ready"
+    if ready_people:
+        return "Checking emails"
+    if counts["companies"]["approved"] or sum(counts["people"].values()):
+        return "Finding people"
+    return "Planning"
+
+
+def project_waves(project_id: int) -> dict[str, Any]:
+    """A project's searches as waves, newest first: name, date started, stage in plain words,
+    counts (`companies`, `people`, `verified_emails`, `messages`, `sent`) and the message style.
+    Raises `ProjectError` (project)."""
+    projects.get_project(project_id)
+    styles = {c["key"]: c["label"] for c in templates.choices(project_id)}
+    waves = []
+    for short in campaign_mod.list_campaigns(include_archived=False, project_id=project_id):
+        full = campaign_mod.get_campaign(short["id"])
+        counts, ready = full["counts"], full["counts"]["people"]["confirmed"]
+        key = full["options"].get("template_key", templates.DEFAULT_KEY)
+        waves.append({
+            "id": full["id"], "name": full["name"], "started": full["created_at"],
+            "status": _wave_status(counts, ready),
+            "companies": sum(counts["companies"].values()) - counts["companies"]["excluded"],
+            "people": ready, "verified_emails": full["email_summary"]["verified_emails"],
+            "messages": sum(counts["messages"].values()), "sent": counts["messages"]["sent"],
+            "style": styles.get(key, key),
+        })  # fmt: skip
+    return {"ok": True, "waves": waves}
+
+
 def studio_results(
     project_id: int, campaign_id: int | None = None, page: int = 1, page_size: int = 25
 ) -> dict[str, Any]:
@@ -747,7 +810,8 @@ def studio_results(
         with db.session() as conn:
             rows = db.query(
                 conn,
-                "SELECT person_id, channel, subject, body FROM messages WHERE person_id IN "
+                "SELECT id, person_id, channel, subject, body, status, owner_choice "
+                "FROM messages WHERE person_id IN "
                 f"({', '.join('?' for _ in ids)})", ids,
             )  # fmt: skip
             phone_rows = db.query(
@@ -769,6 +833,7 @@ def studio_results(
         linkedin = mine.get("linkedin_message") or mine.get("linkedin_invite") or {}
         email = mine.get("email") or {}
         phone, phone_status = phones.get(lead["id"], ("", ""))
+        written = [mine[c] for c in MESSAGE_CHANNELS if c in mine]
         leads.append({
             "id": lead["id"],
             "name": lead["raw_name"] or f"{lead['first_name']} {lead['last_name']}".strip(),
@@ -779,6 +844,12 @@ def studio_results(
             "linkedin_message": linkedin.get("body", ""),
             "email_subject": email.get("subject", ""), "email_body": email.get("body", ""),
             "checked": lead["ai_verdict"] == "pass" and lead["qa_block"] == 0,
+            "email_status": lead["email_status"],
+            "message_state": _message_state(written),
+            "messages": [
+                {k: m[k] for k in ("id", "channel", "subject", "body", "status", "owner_choice")}
+                for m in written
+            ],
         })  # fmt: skip
     return {"ok": True, "campaigns": campaigns, "campaign_id": chosen, "leads": leads,
             "page": base["page"], "page_size": base["page_size"], "total": base["total"],

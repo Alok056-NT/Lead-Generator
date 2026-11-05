@@ -57,11 +57,11 @@ def test_connect_pragmas(conn):
 
 
 def test_init_db_creates_database_in_workspace_and_is_idempotent():
-    assert db.init_db() == db.SCHEMA_VERSION == 6
+    assert db.init_db() == db.SCHEMA_VERSION == 7
     assert paths.db_path().exists()
     assert db.init_db() == db.SCHEMA_VERSION
     with db.session() as conn:
-        assert count(conn, "schema_version") == 6
+        assert count(conn, "schema_version") == 7
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert db.TABLES <= names
 
@@ -124,7 +124,7 @@ def test_failed_migration_rolls_back(monkeypatch):
     monkeypatch.setattr(
         db,
         "MIGRATIONS",
-        [(7, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
+        [(8, "CREATE TABLE half_done (id INTEGER); INSERT INTO no_such_table VALUES (1);")],
     )
     with pytest.raises(sqlite3.Error):
         db.init_db()
@@ -142,7 +142,7 @@ def test_v6_upgrade_keeps_every_row(tmp_path):
     with db.session(path) as conn:
         pid = db.insert(conn, "projects", name="Northwind course", sender_name="Priya")
 
-    assert db.init_db(path) == 6
+    assert db.init_db(path) == 7
 
     with db.session(path) as conn:
         row = db.get(conn, "projects", pid)
@@ -150,6 +150,25 @@ def test_v6_upgrade_keeps_every_row(tmp_path):
         assert row["sender_title"] == "" and row["sender_company"] == ""
         for table in ("message_templates", "phones", "ai_usage"):
             assert count(conn, table) == 0
+
+
+def test_v7_upgrade_adds_owner_choice_and_keeps_messages(tmp_path):
+    path = tmp_path / "v6.db"
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(db, "MIGRATIONS", db.MIGRATIONS[:5])
+        assert db.init_db(path) == 6
+    with db.session(path) as conn:
+        pid = db.insert(conn, "projects", name="Northwind course")
+        cid = db.insert(conn, "campaigns", name="Wave 1", project_id=pid)
+        coid = db.insert(conn, "companies", campaign_id=cid, name="Northwind Logistics")
+        person = db.insert(conn, "people", campaign_id=cid, company_id=coid, raw_name="Aria Tan")
+        mid = db.insert(conn, "messages", person_id=person, channel="email", body="Hello")
+
+    assert db.init_db(path) == 7
+
+    with db.session(path) as conn:
+        row = db.get(conn, "messages", mid)
+        assert row["body"] == "Hello" and row["owner_choice"] == ""
 
 
 def test_bad_migration_numbering_rejected(monkeypatch):

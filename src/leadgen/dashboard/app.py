@@ -39,6 +39,7 @@ from leadgen.services import (
     lemlist,
     mailbox,
     mailbox_connect,
+    message_review,
     offer_files,
     people,
     preferences,
@@ -95,6 +96,15 @@ class StatusBody(_Body):
 class ExportBody(_Body):
     format: Literal["generic", "lemlist", "instantly"] = "generic"
     include: Literal["approved", "qa_pass", "all_confirmed"] = "approved"
+
+
+class MessageEditBody(_Body):
+    body: str = Field(max_length=5000)
+    subject: str | None = Field(default=None, max_length=300)
+
+
+class MessageChoiceBody(_Body):
+    choice: Literal["approved", "skipped", ""]
 
 
 class SourceBody(_Body):
@@ -496,6 +506,26 @@ def _register_routes(app: FastAPI) -> None:
         project_id: int, campaign_id: int | None = None, page: int = 1, page_size: int = 25
     ) -> JSONResponse:
         return _reply(browse.studio_results(project_id, campaign_id, page, page_size))
+
+    @app.get("/api/projects/{project_id}/waves")
+    def project_waves(project_id: int) -> JSONResponse:
+        return _reply(browse.project_waves(project_id))
+
+    @app.post("/api/projects/{project_id}/exports")
+    def make_project_export(project_id: int, body: ExportBody) -> JSONResponse:
+        return _reply(export.export_project(project_id, body.format, body.include))
+
+    @app.post("/api/projects/{project_id}/exports/open-folder")
+    def open_project_folder(project_id: int) -> JSONResponse:
+        return _reply(browse.open_project_exports_folder(project_id))
+
+    @app.patch("/api/messages/{message_id}")
+    def edit_message(message_id: int, body: MessageEditBody) -> JSONResponse:
+        return _reply(message_review.edit_message(message_id, body.body, body.subject))
+
+    @app.post("/api/messages/{message_id}/choice")
+    def message_choice(message_id: int, body: MessageChoiceBody) -> JSONResponse:
+        return _reply(message_review.set_choice(message_id, body.choice))
 
     # ---- project source -----------------------------------------------------------------------
 

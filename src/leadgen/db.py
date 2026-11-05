@@ -184,6 +184,13 @@ CREATE INDEX idx_ai_usage_at ON ai_usage(at);
 CREATE INDEX idx_ai_usage_project ON ai_usage(project_id);
 """
 
+# v7 (V14): the owner's own choice on a message in the review drawer ('' / approved / skipped),
+# kept apart from `status`, which follows the checks and the AI review. A skipped message never
+# leaves (export, send, lemlist); editing the text clears the choice.
+_V7_SQL = """
+ALTER TABLE messages ADD COLUMN owner_choice TEXT NOT NULL DEFAULT '';
+"""
+
 
 def _unique_project_name(name: str, used: set[str]) -> str:
     base = " ".join(name.split())[:120].strip() or "Project"
@@ -235,6 +242,7 @@ def _v2_assign_projects(conn: sqlite3.Connection) -> None:
 Migration = tuple[int, str] | tuple[int, str, Callable[[sqlite3.Connection], None]]
 MIGRATIONS: list[Migration] = [
     (2, _V2_SQL, _v2_assign_projects), (3, _V3_SQL), (4, _V4_SQL), (5, _V5_SQL), (6, _V6_SQL),
+    (7, _V7_SQL),
 ]
 SCHEMA_VERSION = max([BASE_VERSION, *(m[0] for m in MIGRATIONS)])
 

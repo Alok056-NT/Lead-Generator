@@ -153,8 +153,8 @@ def evaluate(
         if row["status"] == "sent":
             sent += 1
             continue
-        if row["status"] == "rejected":
-            rejected += 1
+        if row["status"] == "rejected" or row["owner_choice"] == "skipped":
+            rejected += 1  # a message the owner skipped never leaves, like a rejected one
             continue
         person = people_by_id.get(row["person_id"])
         if person is None:
