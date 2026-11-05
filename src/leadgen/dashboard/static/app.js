@@ -402,7 +402,7 @@ async function route() {
     if (token !== routeToken) return;
     if (!reply.ok) {
       renderNav('advanced', null, '');
-      setMain(notice('bad', errorText(reply)), h('a', { href: '#/campaigns', text: 'Back to your campaigns' }));
+      setMain(notice('bad', errorText(reply)), h('a', { href: '#/campaigns', text: 'Back to all waves' }));
       return;
     }
     campaign = reply.campaign;
@@ -528,7 +528,7 @@ function projectCard(p) {
 }
 
 function campaignTable(list, showProject) {
-  const heads = ['Campaign', ...(showProject ? ['Project'] : []), 'Status', 'Countries', 'Channels', 'Companies', 'People', 'Messages'];
+  const heads = ['Wave', ...(showProject ? ['Project'] : []), 'Status', 'Countries', 'Channels', 'Companies', 'People', 'Messages'];
   const firstNum = heads.indexOf('Companies');
   return h(
     'div',
@@ -745,7 +745,7 @@ async function pageProject(ctx) {
   }
   const source = sourceFields('ps', false);
   const srcStatus = h('div', { role: 'status' });
-  const attach = h('button', { type: 'button', class: 'primary', text: src ? 'Replace the source' : 'Attach it' });
+  const attach = h('button', { type: 'button', class: src ? '' : 'primary', text: src ? 'Replace the source' : 'Attach it' });
   attach.addEventListener('click', async () => {
     const spec = source.read();
     if (spec && spec.error) return setStatus(srcStatus, 'bad', spec.error);
@@ -793,7 +793,7 @@ async function pageProject(ctx) {
     h('div', { class: 'row' },
       h('a', { class: 'button', href: '/api/contacts-template/xlsx', download: '', text: 'Download the Excel template' }),
       h('a', { class: 'button', href: '/api/contacts-template/csv', download: '', text: 'Download the CSV template' }),
-      h('a', { class: 'button primary', href: `#/p/${pr.id}/contacts`, text: 'Upload your contacts' }))));
+      h('a', { class: 'button', href: `#/p/${pr.id}/contacts`, text: 'Upload your contacts' }))));
 
   kids.push(memoryBox(pr, res.memory));
   setMain(...kids);
@@ -1073,7 +1073,7 @@ async function pageMailbox(ctx) {
   const gmailStatus = h('div', { role: 'status', class: 'small' });
   const address = h('input', { type: 'email', id: 'mb-address', autocomplete: 'off', spellcheck: 'false', placeholder: 'you@gmail.com', name: 'mb-address' });
   const appPassword = h('input', { type: 'password', id: 'mb-app-password', autocomplete: 'off', spellcheck: 'false', placeholder: 'abcd efgh ijkl mnop', name: 'mb-app-password' });
-  const saveGmail = h('button', { type: 'button', class: 'primary', text: 'Save and test' });
+  const saveGmail = h('button', { type: 'button', class: 'primary', text: 'Save and test Gmail' });
   saveGmail.addEventListener('click', async () => {
     if (!address.value.trim() || !appPassword.value.trim()) return setStatus(gmailStatus, 'bad', 'Type your email address and paste the app password first.');
     saveGmail.disabled = true;
@@ -1095,7 +1095,7 @@ async function pageMailbox(ctx) {
     password: h('input', { type: 'password', id: 'mb-o-password', autocomplete: 'off', spellcheck: 'false', name: 'mb-o-password' }),
     imap: h('input', { type: 'text', id: 'mb-imap', autocomplete: 'off', spellcheck: 'false', placeholder: 'Usually filled in for you', name: 'mb-imap' }),
   };
-  const saveOther = h('button', { type: 'button', class: 'primary', text: 'Save and test' });
+  const saveOther = h('button', { type: 'button', text: 'Save and test this mailbox' });
   saveOther.addEventListener('click', async () => {
     saveOther.disabled = true;
     setStatus(otherStatus, 'info', 'Logging in to check it. Nothing is sent...');
@@ -1248,16 +1248,16 @@ async function pageCampaigns(ctx) {
   if (ctx.token !== routeToken) return;
   if (!reply.ok) return setMain(notice('bad', errorText(reply)));
   const kids = [
-    h('h2', { text: 'Campaigns' }),
-    whatsThis('A campaign is one round of outreach inside a project. To start one, open the project and choose "New campaign".'),
+    h('h2', { text: 'All waves' }),
+    whatsThis('A wave is one round of outreach inside a project. To start one, open the project and choose "Launch a new wave".'),
   ];
   if (projs.ok && projs.projects.length > 1) {
-    kids.push(h('div', { class: 'filters' }, h('div', null, h('label', { for: 'c-project', text: 'Show campaigns of' }),
+    kids.push(h('div', { class: 'filters' }, h('div', null, h('label', { for: 'c-project', text: 'Show waves of' }),
       selectBox('c-project', [['', 'All projects'], ...projs.projects.map((x) => [x.id, x.name])], project, (e) => go('/campaigns', { project: e.target.value })))));
   }
   kids.push(reply.campaigns.length
     ? campaignTable(reply.campaigns, true)
-    : h('p', { text: 'No campaigns yet. Open a project and choose "New campaign".' }));
+    : h('p', { text: 'No waves yet. Open a project and choose "Launch a new wave".' }));
   setMain(...kids);
 }
 
@@ -1651,8 +1651,8 @@ function messageCard(m, who, open) {
   const text = (m.subject ? 'Subject: ' + m.subject + '\n\n' : '') + m.body;
   return h('article', { class: 'card msg-card', 'aria-label': label(CHANNEL, m.channel) },
     h('div', { class: 'row' },
-      open ? h('button', { type: 'button', class: 'link grow', text: who, title: 'Review the messages', onclick: open }) : null,
-      h('strong', { class: 'grow', text: open ? label(CHANNEL, m.channel) : who ? `${who} - ${label(CHANNEL, m.channel)}` : label(CHANNEL, m.channel) }),
+      open ? h('button', { type: 'button', class: 'link', text: who, title: 'Review the messages', onclick: open }) : null,
+      h('strong', { class: 'grow', text: open ? ' · ' + label(CHANNEL, m.channel) : who ? `${who} - ${label(CHANNEL, m.channel)}` : label(CHANNEL, m.channel) }),
       badge(label(MESSAGE_STATUS, m.status), MESSAGE_TONE[m.status]),
       m.ai_review ? badge('Checked by AI: ' + label(AI_VERDICT, m.ai_review), AI_TONE[m.ai_review]) : badge('Not checked by AI yet', 'info')),
     m.subject ? h('div', { class: 'small' }, h('strong', { text: 'Subject: ' }), m.subject) : null,
@@ -1769,7 +1769,8 @@ async function pageExport(ctx) {
       h('h3', { id: 'send-h', text: 'Send (optional)' }),
       h('p', { text: 'Lead Generator can send your approved emails from your own mailbox, a few at a time. Only people with a verified email address get one. You do not have to use this.' }),
       sender,
-      h('p', { class: 'small' }, h('a', { href: `#/c/${c.id}/analytics`, text: 'See sending and replies' }))) : null,
+      h('p', { class: 'small' }, h('a', { href: '#/mailbox', text: 'Connect your email' }), ' · ',
+        h('a', { href: `#/c/${c.id}/analytics`, text: 'See sending and replies' }))) : null,
     h('section', { 'aria-labelledby': 'files-h', class: 'stack' },
       h('div', { class: 'row' }, h('h3', { class: 'grow', id: 'files-h', text: 'Latest files' }), open),
       fileBox),
@@ -1795,7 +1796,7 @@ async function pageAnalytics(ctx) {
   const kids = [h('h2', { text: 'Results' }), whatsThis('How your emails are doing: how many were sent, replied to, or bounced. LinkedIn results are tracked in lemlist.')];
   if (campaigns && campaigns.ok) {
     kids.push(h('div', { class: 'filters' }, h('div', null, h('label', { for: 'a-scope', text: 'Show' }),
-      selectBox('a-scope', [['', 'All campaigns'], ...campaigns.campaigns.map((x) => [x.id, x.name])], scopeId, (e) => go('/analytics', { campaign_id: e.target.value })))));
+      selectBox('a-scope', [['', 'All waves'], ...campaigns.campaigns.map((x) => [x.id, x.name])], scopeId, (e) => go('/analytics', { campaign_id: e.target.value })))));
   }
   const t = byDes.totals;
   kids.push(h('div', { class: 'cards' },

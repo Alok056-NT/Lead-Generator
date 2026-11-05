@@ -623,7 +623,7 @@
     return h('div', { class: 'stack' },
       h('p', { class: 'muted small', text: 'Nothing is sent until you click and confirm.' }),
       h('div', { class: 'row' }, sendMail, sendLem),
-      h('p', { class: 'small' }, h('a', { href: '#/mailbox', text: 'Connect your email' }), ' · ', connectLem),
+      h('p', { class: 'small' }, connectLem),
       lemBox);
   }
 

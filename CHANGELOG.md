@@ -3,6 +3,19 @@
 All notable changes to Lead Generator are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.2] - 2026-11-06
+
+One clear path, fewer repeats.
+
+### Changed
+- The project page tabs are now Activity, Waves and Settings. The Waves tab holds the "Next" line and the waves list; the Ready contacts table, the wave table and the Export and send card are gone from it. Click a wave (or Export on its row) to open its own pages.
+- Wave pages start with a "Back to <project>" button that returns to the Waves tab. The page tabs lose their numbers, and the top bar highlights Projects.
+- Clicking a ready person on a wave's People or Messages page opens the same review drawer as before. Sending by email or lemlist moved to the wave's Export or send page.
+- Advanced is now four button cards (All waves, Results, Your mailbox, settings); older pages sit in a closed section. Buttons on those pages were tidied to one main button each.
+
+### Fixed
+- Pop-ups close on a click outside them, Esc and their Close button, and give focus back. The review drawer asks "Save or Discard" before closing with unsaved edits. Clicking the padding of a dialog no longer closes it.
+
 ## [1.3.1] - 2026-11-06
 
 Quick wins on the project page, and waves.

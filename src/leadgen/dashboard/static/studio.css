@@ -385,3 +385,4 @@ button.link { height: auto; padding: 0; border: none; background: none; box-shad
 .subnav .back-link { margin-right: var(--s-3); }
 .tool-card .row { margin-top: auto; }
 details.card > summary { cursor: pointer; font-weight: 600; }
+.tool-card { display: flex; flex-direction: column; }

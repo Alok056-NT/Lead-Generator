@@ -110,7 +110,8 @@ def test_the_project_page_labels_and_pieces():
     ):  # fmt: skip
         assert expected in js, expected
     # one home for each thing: the old project-page pieces are gone
-    for gone in ("'Ready contacts'", "'Export and send'", "waveTable", "'Back to all waves'", "actionsCard"):
+    gone_words = ("'Ready contacts'", "'Export and send'", "waveTable", "'Back to all waves'")
+    for gone in (*gone_words, "actionsCard"):
         assert gone not in js, gone
 
 
@@ -183,14 +184,18 @@ def test_launch_and_send_never_spend_without_a_yes():
 
 
 def test_v15_one_clear_path_and_popups_close_outside():
-    """Waves open their own pages, the Back button remembers the Waves tab, and pop-ups close on an outside click."""
+    """Waves open their own pages, Back keeps the Waves tab, pop-ups close on an outside click."""
     app = (STATIC / "app.js").read_text(encoding="utf-8")
-    for expected in ("Back to ", "UI.save('lg.tab.'", "'Export or send'", "reviewerFor", "pointerdown"):
+    for expected in (
+        "Back to ", "UI.save('lg.tab.'", "'Export or send'", "reviewerFor", "pointerdown",
+    ):  # fmt: skip
         assert expected in app, expected
     assert "'1 Companies'" not in app.split("const CAMPAIGN_NAV")[1].split("];")[0]
     project = (STATIC / "studio_project.js").read_text(encoding="utf-8")
     for expected in ("pointerdown", "=== 'results' ? 'waves'", "reviewDrawer, sendCard"):
         assert expected in project, expected
     studio = (STATIC / "studio.js").read_text(encoding="utf-8")
-    for expected in ("getBoundingClientRect", "pointerdown", "Open all waves", "Open your mailbox", "'details'"):
+    for expected in (
+        "getBoundingClientRect", "pointerdown", "Open all waves", "Open your mailbox", "'details'",
+    ):  # fmt: skip
         assert expected in studio, expected
