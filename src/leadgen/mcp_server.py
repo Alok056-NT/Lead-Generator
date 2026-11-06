@@ -943,7 +943,8 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         draft and its issues, plus the offer profile, the channel limits and, on the first call,
         the writing guide. Write one message per person using only that data, then call
         save_drafts. Each person names the template to follow (templates). Loop with next_cursor
-        until done. Free, changes nothing.""",
+        until done. To rewrite one person's existing message from a template pass lead_ids and
+        template_key. Free, changes nothing.""",
         READ,
         keep=("guide", "templates"),
     )
@@ -952,8 +953,17 @@ def build_server(*, remote: bool = False, init_db: bool = True) -> MCPServer:
         channel: Annotated[str, Field(description="email, linkedin_invite or linkedin_message.")],
         batch_size: Annotated[int, Field(description="People per batch.")] = drafting.DEFAULT_BATCH,
         cursor: Cursor = None,
+        lead_ids: Annotated[
+            list[int] | None,
+            Field(description="Only these people (a rewrite of existing messages)."),
+        ] = None,
+        template_key: Annotated[
+            str | None, Field(description="Follow this template instead of the search's.")
+        ] = None,
     ) -> dict[str, Any]:
-        return drafting.get_drafting_batch(campaign_id, channel, batch_size, cursor)
+        return drafting.get_drafting_batch(
+            campaign_id, channel, batch_size, cursor, lead_ids=lead_ids, template_key=template_key
+        )
 
     @tool(
         "Save drafts",

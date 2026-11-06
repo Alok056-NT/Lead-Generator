@@ -978,3 +978,43 @@ def test_m17_email_draft_needs_the_whole_sign_off(world):
         cid, [{"person_id": p, "channel": "email", "subject": subject, "body": full}]
     )["results"][0]
     assert ok["status"] == "qa_pass"
+
+
+# --- rewrite one person's message from a template (V16) -------------------------------------------
+
+
+def test_lead_ids_list_only_those_people_even_with_an_unsent_message(world):
+    cid, co = world
+    a = add_person(cid, co, "Aria", "Tan")
+    b = add_person(cid, co, "Marcus", "Lim")
+    sent = add_person(cid, co, "Sam", "Ong")
+    set_message(a, "linkedin_message", body=li_body("Aria"), status="qa_pass", ai_review="pass")
+    set_message(sent, "linkedin_message", body=li_body("Sam"), status="sent")
+    batch = drafting.get_drafting_batch(cid, "linkedin_message", lead_ids=[a, sent])
+    assert ids(batch) == [a]
+    assert batch["people"][0]["previous_draft"]["body"] == li_body("Aria")
+    assert ids(drafting.get_drafting_batch(cid, "linkedin_message", lead_ids=[])) == []
+    assert b not in ids(batch)
+
+
+def test_template_key_overrides_the_search_template(world):
+    cid, co = world
+    a = add_person(cid, co, "Aria", "Tan")
+    batch = drafting.get_drafting_batch(
+        cid, "linkedin_message", lead_ids=[a], template_key="manager-short"
+    )
+    assert batch["people"][0]["template"] == "manager-short"
+    with pytest.raises(DraftError) as err:
+        drafting.get_drafting_batch(cid, "linkedin_message", template_key="nope")
+    assert err.value.code == "unknown_template"
+
+
+def test_saving_new_text_clears_the_owner_choice(world):
+    cid, co = world
+    a = add_person(cid, co, "Aria", "Tan")
+    mid = set_message(
+        a, "linkedin_message", body=li_body("Aria"), status="qa_pass", owner_choice="approved"
+    )
+    draft = {"person_id": a, "channel": "linkedin_message", "body": li_body("Aria", "again")}
+    drafting.save_drafts(cid, [draft])
+    assert [m["owner_choice"] for m in messages(a) if m["id"] == mid] == [""]

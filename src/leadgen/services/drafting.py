@@ -298,19 +298,31 @@ def _clean_notes(notes: Any) -> str:
 
 # --- drafting batch -------------------------------------------------------------------------------
 
-_ELIGIBLE_FROM = """
+_UNSENT_OR_FLAGGED = (
+    "(m.id IS NULL OR (m.status != 'sent' AND (m.status = 'qa_fail' OR m.ai_review = 'fix')))"
+)
+_ELIGIBLE_FROM = f"""
 FROM people p
 JOIN companies c ON c.id = p.company_id
 LEFT JOIN messages m ON m.person_id = p.id AND m.channel = ?
 WHERE p.campaign_id = ? AND p.status = 'confirmed'
-  AND (m.id IS NULL OR (m.status != 'sent' AND (m.status = 'qa_fail' OR m.ai_review = 'fix')))
+  AND {_UNSENT_OR_FLAGGED}
 """
 
 
-def _eligible_sql(channel: str, camp: Mapping[str, Any]) -> tuple[str, list[Any]]:
-    """The shared FROM/WHERE for the eligible people and its bound parameters."""
+def _eligible_sql(
+    channel: str, camp: Mapping[str, Any], lead_ids: list[int] | None = None
+) -> tuple[str, list[Any]]:
+    """The shared FROM/WHERE for the eligible people and its bound parameters. With `lead_ids`
+    only those people are listed, and an unsent message they already have does not exclude them
+    (the owner asked for a rewrite)."""
     sql = _ELIGIBLE_FROM
     params: list[Any] = [channel, camp["id"]]
+    if lead_ids is not None:
+        marks = ", ".join("?" for _ in lead_ids) or "NULL"
+        sql = sql.replace(_UNSENT_OR_FLAGGED, "(m.id IS NULL OR m.status != 'sent')")
+        sql += f"  AND p.id IN ({marks})\n"
+        params += lead_ids
     if channel == "email":
         statuses = sendable_email_statuses(camp)
         marks = ", ".join("?" for _ in statuses)
@@ -389,6 +401,8 @@ def get_drafting_batch(
     batch_size: int = DEFAULT_BATCH,
     cursor: str | int | None = None,
     include_guide: bool | None = None,
+    lead_ids: list[int] | None = None,
+    template_key: str | None = None,
 ) -> dict[str, Any]:
     """People to write a `channel` message for, with the offer and the channel limits.
 
@@ -399,9 +413,18 @@ def get_drafting_batch(
     included on the first batch (no `cursor`) unless `include_guide` says otherwise. Call again
     with `next_cursor` until `done`. Raises `DraftError` (`no_offer_profile`, `invalid_channel`,
     `channel_not_enabled`, ...).
+
+    `lead_ids` (rewrite one or a few people): list only those confirmed people, even when they
+    already have an unsent message (it comes back as `previous_draft`). `template_key` follows
+    that template instead of the campaign's (`auto-standard`, a built-in key or `custom-<id>`).
     """
     camp = _campaign(campaign_id)
     profile = _offer_profile(camp)
+    if template_key is not None and not (
+        template_key in templates.AUTO_KEYS
+        or templates.get_template(camp.get("project_id"), template_key)
+    ):
+        raise DraftError("unknown_template", "That message template does not exist.")
     sender = sender_identity(camp)
     offer = _offer_payload(profile)
     if sender["name"]:
@@ -415,7 +438,7 @@ def get_drafting_batch(
     after = _cursor(cursor)
     show_guide = (after == 0) if include_guide is None else bool(include_guide)
 
-    base, params = _eligible_sql(channel, camp)
+    base, params = _eligible_sql(channel, camp, lead_ids)
     with db.session() as conn:
         total = conn.execute(
             f"SELECT COUNT(*) {base} AND p.id > ?", [*params, after]
@@ -437,7 +460,9 @@ def get_drafting_batch(
     styled = channel != "linkedin_invite"
     used: dict[str, dict[str, str]] = {}
     if styled:
-        key = str((camp.get("options") or {}).get("template_key") or templates.DEFAULT_KEY)
+        key = template_key or str(
+            (camp.get("options") or {}).get("template_key") or templates.DEFAULT_KEY
+        )
         for r, person in zip(rows, people, strict=True):
             tkey, tpl = templates.resolve(camp.get("project_id"), key, r["seniority"])
             person["template"] = tkey
@@ -663,6 +688,7 @@ def _save_one(
         "qa_json": qa_json,
         "ai_review": "",
         "ai_review_notes": "",
+        "owner_choice": "",  # new text: the owner has not reviewed it yet
     }
     if existing_row is None:
         message_id = db.insert(conn, "messages", person_id=person_id, channel=channel, **values)
