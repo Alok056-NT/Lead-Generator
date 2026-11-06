@@ -195,12 +195,6 @@ function label(map, key) {
   return map[key] || key || '';
 }
 
-function qaBadge(block, warn) {
-  if (block) return badge(block + ' to fix', 'bad');
-  if (warn) return badge(warn + ' to look at', 'warn');
-  return badge('No problems', 'ok');
-}
-
 // A line the server wrote with a code in front ("L04:company is not shown ...") becomes the plain
 // sentence first and the code in small grey text after it.
 function reasonLine(text) {
@@ -224,6 +218,12 @@ function notice(tone, ...kids) {
 
 function listOf(items) {
   return h('ul', null, ...items.map((t) => h('li', { text: t })));
+}
+
+// The options of a "Show" filter: All, then each status with how many are in it, e.g. "Ready (26)".
+function showOptions(map, counts) {
+  const n = (key) => fmtNum((counts || {})[key] || 0);
+  return [['', `All (${fmtNum(sumCounts(counts))})`], ...Object.entries(map).map(([key, text]) => [key, `${text} (${n(key)})`])];
 }
 
 function pager(data, goto) {
@@ -1261,10 +1261,6 @@ async function pageCampaigns(ctx) {
   setMain(...kids);
 }
 
-function countLine(obj, map) {
-  return Object.entries(obj || {}).map(([k, v]) => `${v} ${(map && map[k] ? map[k] : k).toLowerCase()}`).join(', ');
-}
-
 function limitsLine(options) {
   const o = options || {};
   const parts = [];
@@ -1274,40 +1270,102 @@ function limitsLine(options) {
   return parts.length ? parts.join(', ') : 'No size limits';
 }
 
-function flowItem(title, ...body) {
-  return h('li', { class: 'flow-item' }, h('strong', { text: title }), h('div', null, ...body));
+// Where the one big "Next step" button goes, by the step the server names: [button text, page after #/c/<id>].
+// 'chat' opens the project (where the chat is), 'checks' runs the checks. Review buttons say how many messages.
+const NEXT_ACTION = {
+  approve_companies: ['Approve the companies', '/companies?status=candidate'],
+  companies: ['Open the project chat', 'chat'],
+  people_ai: ['See people', '/leads'],
+  keys: ['See people', '/leads'],
+  people: ['See people', '/leads'],
+  people_reserve: ['See people', '/leads?status=reserve'],
+  people_review: ['See people', '/leads?status=review'],
+  emails: ['See people', '/leads'],
+  drafting: ['Open the project chat', 'chat'],
+  fix_drafts: ['REVIEW', '/messages'],
+  review: ['REVIEW', '/messages'],
+  spot_check: ['See people', '/leads'],
+  deliver: ['Export or send', '/export'],
+  analytics: ['See results', '/analytics'],
+  run_qa: ['Run the checks', 'checks'],
+};
+
+const plural = (n, one, many) => `${fmtNum(n)} ${n === 1 ? one : many || one + 's'}`;
+
+// "SA · events agencies, retail… · Marketing, owners · Managers and above": who this wave is aimed at.
+function targetingLine(c) {
+  const few = (list, n) => (list.length > n ? list.slice(0, n).join(', ') + '…' : list.join(', '));
+  return [(c.countries || []).join(', '), few(c.sectors || [], 2), few((c.designations || []).map((d) => d.label), 2),
+    label(SENIORITY, c.seniority_min)].filter(Boolean).join(' · ');
+}
+
+// One step of the wave: a big number, one or two short lines, at most one amber line, one button.
+function stepTile(title, big, lines, amber, button) {
+  return h('section', { class: 'card tile', 'aria-label': title },
+    h('h3', { text: title }),
+    h('div', { class: 'num', text: fmtNum(big) }),
+    ...lines.filter(Boolean).map((t) => h('div', { class: 'small muted', text: t })),
+    amber ? h('a', { class: 'amber small', href: amber[1], text: amber[0] }) : null,
+    h('a', { class: 'button', href: button[1], text: button[0] }));
 }
 
 async function pageOverview(ctx) {
   const c = ctx.campaign;
   const ov = c.overview;
-  const [st, qa, sibs] = await Promise.all([
+  const [st, qa, sibs, waves] = await Promise.all([
     api('/api/status'), api(`/api/campaigns/${c.id}/qa`), api('/api/campaigns' + query({ project_id: c.project_id })),
+    c.project ? api(`/api/projects/${c.project.id}/waves`) : null,
   ]);
   if (ctx.token !== routeToken) return;
   const step = st.ok ? (st.campaigns.find((x) => x.id === c.id) || {}).next_step : null;
-  const counts = c.counts;
+  const wave = waves && waves.ok ? waves.waves.find((w) => w.id === c.id) : null;
+  const statusText = wave ? wave.status : label(CAMPAIGN_STATUS, c.status);
+  const base = `#/c/${c.id}`;
+  const { companies, people, messages } = c.counts;
+  const written = sumCounts(messages);
+  const verified = (c.email_summary || {}).verified_emails || 0;
   const allowRisky = !!(c.options || {}).allow_risky_emails;
-  const emails = c.email_summary || {};
-  const kids = [
-    h('div', { class: 'row' }, h('h2', { class: 'grow', text: c.name }), badge(label(CAMPAIGN_STATUS, c.status), c.status === 'active' ? 'ok' : 'none')),
-    whatsThis('A campaign goes through six steps, from choosing companies to sending or exporting. Your AI assistant does most of the work. This page shows where you are.'),
-  ];
-  if (step) kids.push(nextCard(step, 'next-h'));
-  kids.push(h('section', { class: 'card', 'aria-labelledby': 'flow-h' },
-    h('h3', { id: 'flow-h', text: 'Where you are' }),
-    h('ol', { class: 'flow' },
-      flowItem('1 Companies', h('a', { href: `#/c/${c.id}/companies`, text: countLine(counts.companies, COMPANY_STATUS) || 'None yet' })),
-      flowItem('2 People',
-        h('a', { href: `#/c/${c.id}/leads`, text: countLine(counts.people, PERSON_STATUS) || 'None yet' }),
-        h('div', { class: 'small muted', text: 'Size plan: ' + limitsLine(c.options) })),
-      flowItem(allowRisky ? '3 Emails' : '3 Emails (verified only)',
-        `${emails.verified_emails || 0} people have a verified email address. `,
-        `${emails.found_not_verified || 0} have an address we could not verify` + (allowRisky ? '.' : ' (it will not be used).')),
-      flowItem('4 Messages', h('a', { href: `#/c/${c.id}/messages`, text: countLine(counts.messages, MESSAGE_STATUS) || 'None yet' })),
-      flowItem('5 Checks', qa.ok && qa.total ? `${fmtNum(qa.total)} things were found in the last check. See below.` : 'Run the checks below before you export or send.'),
-      flowItem('6 Export / Send (optional)', h('a', { href: `#/c/${c.id}/export`, text: 'Download your people and messages, or send from your mailbox' })))));
-  kids.push(
+
+  // the one Next step bar
+  const action = step && NEXT_ACTION[step.step];
+  const nextBar = h('div', { class: 'next-step' }, h('strong', { text: 'Next step' }),
+    h('span', { class: 'grow', text: nextStepText(step) }));
+  if (!step && written) nextBar.append(h('a', { class: 'button primary', href: base + '/export', text: 'Export or send' }));
+  if (action) {
+    const text = action[0] === 'REVIEW' ? 'Review ' + plural(written, 'message') : action[0];
+    if (action[1] === 'checks') {
+      const run = h('button', { type: 'button', class: 'primary', text });
+      run.addEventListener('click', () => runChecks(c, run));
+      nextBar.append(run);
+    } else {
+      nextBar.append(h('a', { class: 'button primary', href: action[1] === 'chat' ? '#/p/' + (c.project ? c.project.id : '') : base + action[1], text }));
+    }
+  }
+
+  const tiles = h('div', { class: 'tiles' },
+    stepTile('1 Companies', companies.approved || 0, ['companies approved'],
+      companies.candidate ? [`${plural(companies.candidate, 'company', 'companies')} waiting for your approval`, base + '/companies?status=candidate'] : null,
+      ['See companies', base + '/companies']),
+    stepTile('2 People', people.confirmed || 0, ['people ready', verified ? `${fmtNum(verified)} with a verified email` : ''],
+      people.review ? [`${plural(people.review, 'person', 'people')} need${people.review === 1 ? 's' : ''} a look`, base + '/leads?status=review'] : null,
+      ['See people', base + '/leads']),
+    stepTile('3 Messages', written, ['messages written', messages.approved ? `${fmtNum(messages.approved)} approved` : ''],
+      messages.qa_fail ? [`${plural(messages.qa_fail, 'message')} did not pass the checks`, base + '/messages?status=qa_fail'] : null,
+      ['Review messages', base + '/messages']),
+    stepTile('4 Export or send', messages.sent || 0, ['messages sent'], null, ['Export or send', base + '/export']));
+
+  const tasks = ov.search_tasks;
+  const spot = ov.spot_check;
+  const aiLines = [];
+  if (tasks.open + tasks.submitted + tasks.skipped > 0) {
+    aiLines.push(h('p', { text: `Searches done by your AI assistant: ${tasks.open} waiting, ${tasks.submitted} done, ${tasks.skipped} skipped.` }));
+  }
+  if (spot.ai_leads > 0) {
+    const state = { ok: 'passed', incomplete: 'not finished', failed: 'failed, so it needs another look', '': 'not needed' }[spot.state];
+    aiLines.push(h('p', { text: `${spot.ai_leads} people were found by the AI's web search. Spot check: ${state}.` }));
+  }
+  const more = h('details', { class: 'card more' },
+    h('summary', { text: 'More about this wave' }),
     h('section', { class: 'card', 'aria-labelledby': 'det-h' },
       h('h3', { id: 'det-h', text: 'About this campaign' }),
       h('dl', { class: 'kv' },
@@ -1317,23 +1375,17 @@ async function pageOverview(ctx) {
         h('dt', { text: 'Reaching them by' }), h('dd', { text: (c.channels || []).map((x) => (x === 'linkedin' ? 'LinkedIn' : 'Email')).join(' and ') }),
         h('dt', { text: 'Job roles' }), h('dd', { text: (c.designations || []).map((d) => d.label).join('; ') }),
         h('dt', { text: 'Lowest level' }), h('dd', { text: label(SENIORITY, c.seniority_min) }),
-        h('dt', { text: 'Email addresses used' }), h('dd', { text: allowRisky ? 'Verified, and risky ones on catch-all servers' : 'Only verified addresses' }))));
-  kids.push(reserveSection(c, ov, sibs.ok ? sibs.campaigns : []));
-  const tasks = ov.search_tasks;
-  const spot = ov.spot_check;
-  if (tasks.open + tasks.submitted + tasks.skipped > 0 || spot.ai_leads > 0) {
-    const lines = [];
-    if (tasks.open + tasks.submitted + tasks.skipped > 0) {
-      lines.push(h('p', { text: `Searches done by your AI assistant: ${tasks.open} waiting, ${tasks.submitted} done, ${tasks.skipped} skipped.` }));
-    }
-    if (spot.ai_leads > 0) {
-      const state = { ok: 'passed', incomplete: 'not finished', failed: 'failed, so it needs another look', '': 'not needed' }[spot.state];
-      lines.push(h('p', { text: `${spot.ai_leads} people were found by the AI's web search. Spot check: ${state}.` }));
-    }
-    kids.push(h('section', { class: 'card', 'aria-labelledby': 'ai-h' }, h('h3', { id: 'ai-h', text: "The AI's web search" }), ...lines));
-  }
-  kids.push(qaSection(c, qa));
-  setMain(...kids);
+        h('dt', { text: 'Size plan' }), h('dd', { text: limitsLine(c.options) }),
+        h('dt', { text: 'Emails found' }),
+        h('dd', { text: `${(c.email_summary || {}).verified_emails || 0} verified, ${(c.email_summary || {}).found_not_verified || 0} found but not verified` + (allowRisky ? '' : ' (not used)') }),
+        h('dt', { text: 'Email addresses used' }), h('dd', { text: allowRisky ? 'Verified, and risky ones on catch-all servers' : 'Only verified addresses' }))),
+    reserveSection(c, ov, sibs.ok ? sibs.campaigns : []),
+    aiLines.length ? h('section', { class: 'card', 'aria-labelledby': 'ai-h' }, h('h3', { id: 'ai-h', text: "The AI's web search" }), ...aiLines) : null);
+
+  setMain(
+    h('div', { class: 'row' }, h('h2', { class: 'grow', text: c.name }), badge(statusText, statusText === 'Planning' ? 'none' : 'ok')),
+    h('p', { class: 'muted', text: targetingLine(c) }),
+    nextBar, tiles, qaSection(c, qa), more);
 }
 
 const RESERVE_WHY = {
@@ -1384,36 +1436,68 @@ function reserveSection(c, ov, siblings) {
   return h('section', { class: 'card stack', 'aria-labelledby': 'res-h' }, ...kids);
 }
 
-function qaSection(c, qa) {
-  const box = h('div');
-  const run = h('button', { type: 'button', class: 'primary', text: 'Run the checks' });
-  run.addEventListener('click', async () => {
-    run.disabled = true;
-    const res = await api(`/api/campaigns/${c.id}/qa/run`, { method: 'POST' });
-    run.disabled = false;
-    if (res.ok) {
-      toast('The checks are finished.');
-      route();
-    } else toast(errorText(res), 'bad');
-  });
-  box.appendChild(h('div', { class: 'row' }, h('h3', { class: 'grow', id: 'qa-h', text: '5 Checks' }), run));
-  box.appendChild(h('p', { class: 'small muted', text: 'We look for mistakes in the people and messages before anything is exported or sent.' }));
-  if (!qa.ok) {
-    box.appendChild(notice('bad', errorText(qa)));
-  } else if (!qa.issues.length) {
-    box.appendChild(h('p', { text: 'Nothing has been found yet. Run the checks to see.' }));
-  } else {
-    box.appendChild(h('p', { class: 'muted small', text: `Showing ${qa.issues.length} of ${fmtNum(qa.total)} things from the last check (the ones to fix first).` }));
-    box.appendChild(h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, ...['What was found', 'How serious', 'Who', 'Details'].map((t) => h('th', { scope: 'col', text: t })))),
-      h('tbody', null, ...qa.issues.map((i) => h('tr', null,
-        h('td', null, i.title, ' ', h('span', { class: 'code', text: '(' + i.code + ')' })),
-        h('td', null, badge(i.severity === 'block' ? 'To fix' : 'To look at', i.severity === 'block' ? 'bad' : 'warn')),
-        h('td', null, h('button', { type: 'button', class: 'link', text: `${i.person} (${i.company})`, onclick: () => openLead(i.person_id) }),
-          i.channel ? h('div', { class: 'small muted', text: label(CHANNEL, i.channel) }) : null),
-        h('td', { text: i.detail })))))));
+async function runChecks(c, button) {
+  button.disabled = true;
+  const res = await api(`/api/campaigns/${c.id}/qa/run`, { method: 'POST' });
+  button.disabled = false;
+  if (res.ok) {
+    toast('The checks are finished.');
+    route();
+  } else toast(errorText(res), 'bad');
+}
+
+function qaRows(issues) {
+  return h('div', { class: 'table-wrap' }, h('table', null,
+    h('thead', null, h('tr', null, ...['What was found', 'How serious', 'Who', 'Details'].map((t) => h('th', { scope: 'col', text: t })))),
+    h('tbody', null, ...issues.map((i) => h('tr', null,
+      h('td', null, i.title, ' ', h('span', { class: 'code', text: '(' + i.code + ')' })),
+      h('td', null, badge(i.severity === 'block' ? 'To fix' : 'To look at', i.severity === 'block' ? 'bad' : 'warn')),
+      h('td', null, h('button', { type: 'button', class: 'link', text: `${i.person} (${i.company})`, onclick: () => openLead(i.person_id) }),
+        i.channel ? h('div', { class: 'small muted', text: label(CHANNEL, i.channel) }) : null),
+      h('td', { text: i.detail }))))));
+}
+
+// One group of the list: what was found, how many, and its rows once opened (fetched on first open).
+function qaGroup(c, g) {
+  const rows = h('div');
+  const more = h('button', { type: 'button', text: 'Show more' });
+  let page = 0;
+  async function load() {
+    more.disabled = true;
+    const res = await api(`/api/campaigns/${c.id}/qa${query({ code: g.code, severity: g.severity, page: page + 1, page_size: 50 })}`);
+    if (!res.ok) return rows.appendChild(notice('bad', errorText(res)));
+    page += 1;
+    rows.insertBefore(qaRows(res.issues), more);
+    more.hidden = !res.has_more;
+    more.disabled = false;
   }
-  return h('section', { class: 'card', 'aria-labelledby': 'qa-h' }, box);
+  more.addEventListener('click', load);
+  rows.appendChild(more);
+  const box = h('details', { class: 'qa-group' },
+    h('summary', null, g.title, ' ', h('span', { class: 'code', text: '(' + g.code + ')' }), ' · ',
+      g.severity === 'block' ? `${fmtNum(g.n)} to fix` : `${fmtNum(g.n)} to look at`),
+    rows);
+  box.addEventListener('toggle', () => { if (box.open && !page) load(); });
+  return box;
+}
+
+function qaSection(c, qa) {
+  const run = h('button', { type: 'button', class: 'primary', text: 'Run the checks' });
+  run.addEventListener('click', () => runChecks(c, run));
+  const groups = qa.ok ? qa.groups || [] : [];
+  const sum = (sev) => groups.filter((g) => g.severity === sev).reduce((a, g) => a + g.n, 0);
+  const look = sum('warn');
+  const fix = sum('block');
+  const found = [look ? `${fmtNum(look)} ${look === 1 ? 'thing' : 'things'} to look at` : '', fix ? `${fmtNum(fix)} to fix` : ''].filter(Boolean);
+  const box = h('section', { class: 'card stack', 'aria-labelledby': 'qa-h' },
+    h('div', { class: 'row' },
+      h('h3', { class: 'grow', id: 'qa-h', text: 'Checks: ' + (found.join(', ') || 'nothing found yet') }), run),
+    h('p', { class: 'small muted', text: 'We look for mistakes in the people and messages before anything is exported or sent.' }));
+  if (!qa.ok) box.appendChild(notice('bad', errorText(qa)));
+  else if (groups.length) {
+    box.appendChild(h('details', { class: 'qa-list' }, h('summary', { text: 'Show the list' }), ...groups.map((g) => qaGroup(c, g))));
+  }
+  return box;
 }
 
 // ---- Companies --------------------------------------------------------------------------------
@@ -1452,21 +1536,20 @@ async function pageCompanies(ctx) {
       info.textContent = selected.size ? `${selected.size} selected` : '';
     });
     boxes.push(box);
-    const domainState = co.domain_ok === true ? badge('Website works', 'ok')
-      : co.domain_ok === false ? badge('Website not verified', 'warn') : badge('Not checked', 'none');
+    const domainState = co.domain_ok === true ? 'Website works' : co.domain_ok === false ? 'Website not verified' : 'Not checked';
     return h('tr', null,
       h('td', null, box),
       h('td', null, h('strong', { text: co.name }),
         co.warm_contacts ? [' ', badge(`Warm: ${co.warm_contacts} known contact${co.warm_contacts === 1 ? '' : 's'}`, 'info')] : null,
         co.aliases && co.aliases.length ? h('div', { class: 'small muted', text: 'Also: ' + co.aliases.join(', ') }) : null),
       h('td', { class: 'mono', text: co.domain || '-' }),
-      h('td', null, domainState),
+      h('td', { class: 'small', text: domainState }),
       h('td', { text: co.sector || '' }),
       h('td', null, badge(label(COMPANY_STATUS, co.status), COMPANY_TONE[co.status])),
       h('td', { class: 'small', text: (co.warnings || []).join(' ') }));
   });
 
-  const filter = selectBox('f-status', [['', 'All'], ...Object.entries(COMPANY_STATUS)], status, (ev) =>
+  const filter = selectBox('f-status', showOptions(COMPANY_STATUS, reply.counts), status, (ev) =>
     go(base, { status: ev.target.value }));
   setMain(
     h('h2', { text: 'Companies' }),
@@ -1477,7 +1560,6 @@ async function pageCompanies(ctx) {
         h('button', { type: 'button', onclick: () => act('excluded'), text: 'Leave out selected' }),
         h('button', { type: 'button', onclick: () => act('candidate'), text: 'Put back to waiting' }),
         info)),
-    h('p', { class: 'muted small', text: countLine(reply.counts, COMPANY_STATUS) + '.' }),
     reply.companies.length
       ? h('div', { class: 'table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, h('th', { scope: 'col' }, all), ...['Company', 'Website', 'Website check', 'Sector', 'Status', 'Warnings'].map((t) => h('th', { scope: 'col', text: t })))),
@@ -1511,8 +1593,8 @@ async function pageLeads(ctx) {
   const searchBox = h('input', { type: 'search', id: 'f-search', value: f.search, placeholder: 'Name, title, company' });
   const form = h('form', { class: 'filters', role: 'search', onsubmit: (ev) => { ev.preventDefault(); apply({ search: searchBox.value.trim() }); } },
     h('div', null, h('label', { for: 'f-search', text: 'Search' }), searchBox),
-    h('div', null, h('label', { for: 'f-status', text: 'Status' }),
-      selectBox('f-status', [['', 'All'], ...Object.entries(PERSON_STATUS)], f.status, (e) => apply({ status: e.target.value }))),
+    h('div', null, h('label', { for: 'f-status', text: 'Show' }),
+      selectBox('f-status', showOptions(PERSON_STATUS, c.counts.people), f.status, (e) => apply({ status: e.target.value }))),
     h('div', null, h('label', { for: 'f-des', text: 'Job role' }),
       selectBox('f-des', [['', 'All'], ...(filters.ok ? filters.designations : []).map((d) => [d, d])], f.designation, (e) => apply({ designation: e.target.value }))),
     h('div', null, h('label', { for: 'f-co', text: 'Company' }),
@@ -1541,9 +1623,10 @@ async function pageLeads(ctx) {
       h('td', { text: p.company }),
       h('td', { text: p.designation }),
       h('td', null, badge(label(PERSON_STATUS, p.status), PERSON_TONE[p.status])),
-      h('td', null, p.email ? h('div', { class: 'small mono', text: p.email }) : null, badge(emailLabel(p.email_status, allowRisky), EMAIL_TONE[p.email_status])),
-      h('td', null, qaBadge(p.qa_block, p.qa_warn)),
-      h('td', null, badge(label(AI_VERDICT, p.ai_verdict), AI_TONE[p.ai_verdict])),
+      h('td', null, p.email ? h('div', { class: 'small mono', text: p.email }) : null,
+        h('div', { class: 'small muted', text: emailLabel(p.email_status, allowRisky) })),
+      h('td', { class: 'small', text: p.qa_block ? `${p.qa_block} to fix` : p.qa_warn ? `${p.qa_warn} to look at` : '' }),
+      h('td', { class: 'small', text: label(AI_VERDICT, p.ai_verdict) }),
       h('td', { class: 'small', text: label(ORIGIN, p.evidence_origin) })));
 
   setMain(
@@ -1586,6 +1669,7 @@ function reviewerFor(c, onClose) {
     const at = leads ? leads.findIndex((l) => l.id === personId) : -1;
     if (at < 0) return false;
     Studio.reviewDrawer(leads, at, () => { changed = true; }, {
+      rewrite: { projectId: c.project.id, campaignId: c.id, waveName: c.name },
       details: (lead) => openLead(lead.id),
       onClose: () => { const was = changed; changed = false; if (onClose) onClose(was); },
     });
@@ -1654,7 +1738,7 @@ function messageCard(m, who, open) {
       open ? h('button', { type: 'button', class: 'link', text: who, title: 'Review the messages', onclick: open }) : null,
       h('strong', { class: 'grow', text: open ? ' · ' + label(CHANNEL, m.channel) : who ? `${who} - ${label(CHANNEL, m.channel)}` : label(CHANNEL, m.channel) }),
       badge(label(MESSAGE_STATUS, m.status), MESSAGE_TONE[m.status]),
-      m.ai_review ? badge('Checked by AI: ' + label(AI_VERDICT, m.ai_review), AI_TONE[m.ai_review]) : badge('Not checked by AI yet', 'info')),
+      h('span', { class: 'small muted', text: m.ai_review ? 'Checked by AI: ' + label(AI_VERDICT, m.ai_review) : 'Not checked by AI yet' })),
     m.subject ? h('div', { class: 'small' }, h('strong', { text: 'Subject: ' }), m.subject) : null,
     h('pre', { class: 'msg', text: m.body }),
     m.ai_review_notes ? h('p', { class: 'small' }, h('strong', { text: 'Notes from the AI check: ' }), m.ai_review_notes) : null,
@@ -1681,9 +1765,9 @@ async function pageMessages(ctx) {
   const form = h('form', { class: 'filters', role: 'search', onsubmit: (ev) => { ev.preventDefault(); apply({ search: searchBox.value.trim() }); } },
     h('div', null, h('label', { for: 'm-search', text: 'Search' }), searchBox),
     h('div', null, h('label', { for: 'm-ch', text: 'Channel' }),
-      selectBox('m-ch', [['', 'All'], ...Object.entries(CHANNEL)], f.channel, (e) => apply({ channel: e.target.value }))),
-    h('div', null, h('label', { for: 'm-st', text: 'Status' }),
-      selectBox('m-st', [['', 'All'], ...Object.entries(MESSAGE_STATUS)], f.status, (e) => apply({ status: e.target.value }))),
+      selectBox('m-ch', showOptions(CHANNEL, reply.counts), f.channel, (e) => apply({ channel: e.target.value }))),
+    h('div', null, h('label', { for: 'm-st', text: 'Show' }),
+      selectBox('m-st', showOptions(MESSAGE_STATUS, c.counts.messages), f.status, (e) => apply({ status: e.target.value }))),
     h('div', null, h('label', { for: 'm-ai', text: 'Checked by AI' }),
       selectBox('m-ai', [['', 'All'], ['pass', 'Passed'], ['fix', 'Needs a fix'], ['reject', 'Rejected'], ['none', 'Not checked yet']], f.ai_review, (e) => apply({ ai_review: e.target.value }))),
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'primary', text: 'Search' }),
@@ -1691,7 +1775,6 @@ async function pageMessages(ctx) {
   setMain(
     h('h2', { text: 'Messages' }),
     whatsThis('These are the messages written for each person. Each one is checked for mistakes and then by the AI before you export or send it.'),
-    h('p', { class: 'muted small', text: Object.entries(reply.counts).map(([k, v]) => `${v} ${label(CHANNEL, k).toLowerCase()}`).join(', ') || 'No messages yet.' }),
     form,
     reply.messages.length ? reply.messages.map((m) => messageCard(m, `${m.person}, ${m.company}`, () => openMessageOwner(m))) : h('p', { text: 'No messages match.' }),
     pager(reply, (p) => go(base, { ...f, page: p })),
@@ -1732,11 +1815,9 @@ async function pageExport(ctx) {
     result.appendChild(notice(res.path ? 'ok' : 'warn', ...lines));
     refreshFiles();
   };
-  const buttons = [['generic', 'Download a CSV file (all details)'], ['lemlist', 'Download a file for lemlist'], ['instantly', 'Download a file for Instantly']].map(([fmt, text], i) => {
-    const b = h('button', { type: 'button', class: i === 0 ? 'primary' : '', text });
-    b.addEventListener('click', () => run(fmt, b));
-    return b;
-  });
+  const format = selectBox('x-fmt', [['generic', 'Excel CSV (all details)'], ['lemlist', 'lemlist CSV'], ['instantly', 'Instantly CSV']], 'generic');
+  const download = h('button', { type: 'button', class: 'primary', text: 'Download' });
+  download.addEventListener('click', () => run(format.value, download));
   const fileBox = h('div');
   const renderFiles = (data) => {
     clear(fileBox);
@@ -1760,13 +1841,14 @@ async function pageExport(ctx) {
     h('h2', { text: 'Export or send' }),
     whatsThis('This is the last step. You can download your people and their messages and use them anywhere, or let Lead Generator send the emails from your own mailbox. Sending is always your choice.'),
     h('section', { class: 'card stack', 'aria-labelledby': 'dl-h' },
-      h('h3', { id: 'dl-h', text: 'Download your people and messages' }),
+      h('h3', { id: 'dl-h', text: 'Step 1: Download your people and messages' }),
       h('p', { text: 'Files are saved on this computer. Nothing is sent anywhere. Messages with problems are held back and listed in a report.' }),
       field('x-inc', 'What to include', include),
-      h('div', { class: 'row' }, ...buttons),
+      field('x-fmt', 'Format', format),
+      h('div', { class: 'row' }, download),
       result),
     sender ? h('section', { class: 'card stack', 'aria-labelledby': 'send-h' },
-      h('h3', { id: 'send-h', text: 'Send (optional)' }),
+      h('h3', { id: 'send-h', text: 'Step 2: Send from your mailbox (optional)' }),
       h('p', { text: 'Lead Generator can send your approved emails from your own mailbox, a few at a time. Only people with a verified email address get one. You do not have to use this.' }),
       sender,
       h('p', { class: 'small' }, h('a', { href: '#/mailbox', text: 'Connect your email' }), ' · ',

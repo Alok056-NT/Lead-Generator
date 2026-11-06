@@ -409,9 +409,21 @@ def list_qa_issues(
             [*params, page_size, (page - 1) * page_size],
         )
     issues = [{**r, "channel": r["channel"] or "", "title": _title(r["code"])} for r in rows]
+    with db.session() as conn:
+        found = db.query(
+            conn,
+            "SELECT q.code AS code, q.severity AS severity, COUNT(*) AS n "
+            "FROM qa_issues q LEFT JOIN messages m ON q.entity_type = 'message' AND m.id = q.entity_id "
+            "JOIN people p ON p.id = (CASE WHEN q.entity_type = 'person' THEN q.entity_id "
+            "ELSE m.person_id END) WHERE p.campaign_id = ? "
+            "GROUP BY q.code, q.severity ORDER BY (q.severity = 'block') DESC, q.code",
+            (campaign_id,),
+        )
     reply: dict[str, Any] = {
         "ok": True,
         "issues": issues,
+        # every stored issue of the campaign counted by what was found (not narrowed by the filters)
+        "groups": [{**r, "title": _title(r["code"])} for r in found],
         "page": page,
         "page_size": page_size,
         "total": total,

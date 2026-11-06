@@ -109,9 +109,9 @@ def test_the_project_page_labels_and_pieces():
         "TAB_KEY", "'Show me'", "'You have unsaved changes: Save or Discard'",
     ):  # fmt: skip
         assert expected in js, expected
-    # one home for each thing: the old project-page pieces are gone
-    gone_words = ("'Ready contacts'", "'Export and send'", "waveTable", "'Back to all waves'")
-    for gone in (*gone_words, "actionsCard"):
+    # the contacts are back under the Waves card; the old send card and wave table are not
+    assert "'Ready contacts'" in js and "resultsBody" in js
+    for gone in ("'Export and send'", "waveTable", "'Back to all waves'", "actionsCard"):
         assert gone not in js, gone
 
 
@@ -199,3 +199,23 @@ def test_v15_one_clear_path_and_popups_close_outside():
         "getBoundingClientRect", "pointerdown", "Open all waves", "Open your mailbox", "'details'",
     ):  # fmt: skip
         assert expected in studio, expected
+
+
+def test_v16_tabs_rewrite_and_calm_overview():
+    """Four project tabs, the Rewrite row in the drawer, the calm Overview and the two export steps."""
+    project = (STATIC / "studio_project.js").read_text(encoding="utf-8")
+    for expected in (
+        "['messages', 'Messages']", "messages: ['signoff', 'templates', 'searches']",
+        "settings: ['product', 'memory', 'contacts']", "'Rewrite from a template'", "'Rewrite'",
+        "'Show template'", "The AI is rewriting this message", "'See it in the chat'", "120000",
+        "/api/leads/", "askAi",
+    ):  # fmt: skip
+        assert expected in project, expected
+    app = (STATIC / "app.js").read_text(encoding="utf-8")
+    for expected in (
+        "'Next step'", "stepTile", "'More about this wave'", "'Show the list'", "'Run the checks'",
+        "targetingLine", "showOptions", "Step 1: Download", "Step 2: Send from your mailbox (optional)",
+        "rewrite: { projectId", "text: 'Show'",
+    ):  # fmt: skip
+        assert expected in app, expected
+    assert "'Where you are'" not in app and "flowItem" not in app

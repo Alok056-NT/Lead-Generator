@@ -238,6 +238,11 @@ def test_list_qa_issues_filters_and_pages(world):
     paged = review.list_qa_issues(cid, page=3, page_size=2)
     assert paged["page"] == 3 and len(paged["issues"]) == 1 and not paged["has_more"]
     assert review.list_qa_issues(cid, page_size=2)["has_more"] is True
+    # the groups count every stored issue by what was found, whatever the filter or page
+    groups = review.list_qa_issues(cid, severity="warn")["groups"]
+    assert sum(g["n"] for g in groups) == 5 and groups[0]["severity"] == "block"
+    assert {(g["code"], g["n"]) for g in groups} >= {("M16", 3), ("M10", 1)}
+    assert all(g["title"] for g in groups)
 
 
 def test_list_qa_issues_rejects_bad_input(world):

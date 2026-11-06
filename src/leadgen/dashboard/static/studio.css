@@ -386,3 +386,14 @@ button.link { height: auto; padding: 0; border: none; background: none; box-shad
 .tool-card .row { margin-top: auto; }
 details.card > summary { cursor: pointer; font-weight: 600; }
 .tool-card { display: flex; flex-direction: column; }
+
+/* the wave Overview (V16): step tiles, the amber line, closed sections */
+.tile { display: grid; gap: var(--s-1); align-content: start; }
+.tile h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+.tile .button { margin-top: var(--s-2); justify-self: start; }
+a.amber { color: var(--warn); font-weight: 500; }
+details.card.more > .card, details.card.more > section { border: none; border-top: 1px solid var(--hairline); border-radius: 0; box-shadow: none; padding: var(--s-3) 0; background: none; }
+details.qa-list, details.qa-group { margin-top: var(--s-2); }
+details.qa-list > summary, details.qa-group > summary { cursor: pointer; }
+.rewrite-row { padding-top: var(--s-2); }
+.rewrite-row select { max-width: 100%; }

@@ -3,7 +3,7 @@
    send card are also used by the wave pages in app.js.
    Plain JavaScript, no libraries. Loaded BEFORE app.js (see studio.js); it only defines functions and
    uses app.js's helpers (h, api, clear, setMain, toast, notice, errorText, badge, extLink, field,
-   selectBox, copyText, query, fmtNum, setStatus, route, label, KNOWN, CAMPAIGN_STATUS, memoryBox,
+   selectBox, pager, copyText, query, fmtNum, setStatus, route, label, KNOWN, CAMPAIGN_STATUS, memoryBox,
    sourceKindText, setupSentence) and its variable routeToken. Card and layout memory comes from ui.js.
    Everything from the server is put on the page as text, never as HTML. */
 (function () {
@@ -13,6 +13,7 @@
   const SIGN_IN_CODES = ['not_signed_in', 'bad_api_key', 'missing_cli'];
   const LEVEL_NAME = { csuite: 'Top leaders', director: 'Directors and heads', manager: 'Managers', any: 'Anyone' };
   const DEPTH_NAME = { short: 'Short', standard: 'Standard', detailed: 'Detailed' };
+  const MESSAGE_WORD = { '': 'Not written yet', written: 'Written', approved: 'Approved', skipped: 'Skipped', sent: 'Sent' };
   const EMAIL_WORD = { verified: 'Verified', risky: 'Risky', guess: 'A guess', invalid: 'Not valid', unknown: 'Not checked', none: 'None found' };
   const CHANNEL_WORD = { email: 'Email', linkedin_message: 'LinkedIn message', linkedin_invite: 'LinkedIn invitation' };
   const TAB_KEY = 'lg.tab.';
@@ -78,6 +79,8 @@
   // onChange(): runs after something was saved so the tables can redraw.
   // opts.details(lead): adds a "More about this person" button that runs it (after closing the drawer);
   // opts.onClose(): runs after the drawer closes.
+  // opts.rewrite: { projectId, campaignId, waveName, askAi(text) -> Promise of '' or an error text,
+  // showChat() } turns on the "Rewrite from a template" row (without askAi it posts to the project chat).
   function reviewDrawer(leads, index, onChange, opts) {
     // switching away from a drawer with unsaved edits asks first, then opens this one
     if (drawer && drawer.dirty()) { drawer.attempt(() => reviewDrawer(leads, index, onChange, opts)); return; }
@@ -99,6 +102,7 @@
         h('span', { class: 'muted small', text: 'Keys: J next, K previous, Esc close' })));
 
     function close() {
+      stopAll();
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('pointerdown', onOutside);
       node.remove();
@@ -107,6 +111,19 @@
       if (opts && opts.onClose) opts.onClose();
     }
     const dirty = () => blocks.some((b) => b.edited());
+    const stopAll = () => blocks.forEach((b) => b.stop && b.stop());
+    // the project's templates and the wave's own template, loaded once for the rewrite rows
+    let rewriteData = null;
+    const loadRewrite = () => {
+      if (!rewriteData) {
+        rewriteData = Promise.all([api('/api/projects/' + opts.rewrite.projectId + '/templates'), api('/api/campaigns/' + opts.rewrite.campaignId)])
+          .then(([t, c]) => ({
+            list: t.ok ? [...t.builtin, ...t.custom.map((x) => ({ ...x, key: 'custom-' + x.id, own: true }))] : [],
+            current: (c.ok && c.campaign.options.template_key) || 'auto-standard',
+          }));
+      }
+      return rewriteData;
+    };
     // Runs action now, or, with unsaved edits, asks to Save or Discard first.
     function attempt(action) {
       if (!dirty()) { guard.hidden = true; action(); return; }
@@ -190,15 +207,99 @@
       skip.addEventListener('click', () => choose('skipped'));
       copy.addEventListener('click', () => copyText((subject ? subject.value + '\n\n' : '') + text.value));
       paint();
-      blocks.push({ edited: () => !sent && edited(), save: saveText });
+      const block = { edited: () => !sent && edited(), save: saveText };
+      blocks.push(block);
+      const rewriteRow = opts && opts.rewrite && !sent && ['email', 'linkedin_message'].includes(m.channel)
+        ? rewriteRowFor(lead, m, { text, subject, save, edited, paint, changed, block })
+        : null;
       return h('section', { class: 'drawer-msg' },
         h('div', { class: 'row' }, h('h3', { class: 'grow', text: CHANNEL_WORD[m.channel] || 'Message' }), mark),
         subject ? field('ds-subject', 'Subject', subject) : null, text,
-        h('div', { class: 'row' }, approve, skip, save, copy), status);
+        h('div', { class: 'row' }, approve, skip, save, copy), status, rewriteRow);
+    }
+
+    // "Rewrite from a template" under one message: asks the AI (one chat message), then waits for the
+    // new text to appear (checks every 3 seconds, gives up after 2 minutes). "Show template" is instant.
+    function rewriteRowFor(lead, m, ui) {
+      const rw = opts.rewrite;
+      const { text, subject, block } = ui;
+      const pick = h('select', { id: 'rw-' + m.id, 'aria-label': 'Template to rewrite from' });
+      const rewrite = h('button', { type: 'button', text: 'Rewrite', disabled: true });
+      const showTpl = h('button', { type: 'button', text: 'Show template', disabled: true });
+      const shown = h('pre', { class: 'msg', hidden: true });
+      const note = h('div', { role: 'status', class: 'small' });
+      let data = null;
+      let timer = null;
+      block.stop = () => { clearInterval(timer); timer = null; };
+      const chosen = () => (data ? data.list.find((t) => t.key === pick.value) : null);
+      loadRewrite().then((d) => {
+        data = d;
+        if (d.current.startsWith('auto-')) pick.appendChild(h('option', { value: d.current, text: "This wave's style, matched to each person's level (current)" }));
+        for (const t of d.list) pick.appendChild(h('option', { value: t.key, text: t.name + (t.own ? ' (yours)' : '') + (t.key === d.current ? ' (current)' : '') }));
+        pick.value = d.current;
+        rewrite.disabled = false;
+        showTpl.disabled = false;
+      });
+      showTpl.addEventListener('click', () => {
+        if (!shown.hidden) { shown.hidden = true; showTpl.textContent = 'Show template'; return; }
+        const t = chosen();
+        shown.textContent = t ? (t.subject && m.channel === 'email' ? 'Subject: ' + t.subject + '\n\n' : '') + t.body
+          : 'This style picks one of the built-in templates for each person, by their level. Choose a template in the list to read it.';
+        shown.hidden = false;
+        showTpl.textContent = 'Hide template';
+      });
+      rewrite.addEventListener('click', async () => {
+        if (ui.edited()) return setStatus(note, 'warn', 'Save your changes or discard them first, then rewrite.');
+        const t = chosen();
+        const name = t ? t.name : "this wave's style";
+        const before = [m.subject || '', m.body || ''];
+        const ask = [
+          'Rewrite one message from a template. Change only this one message and send nothing.',
+          'Person: ' + lead.name + (lead.title ? ', ' + lead.title : '') + ' at ' + lead.company + ' (person ' + lead.id + ', wave "' + (rw.waveName || '') + '", search ' + rw.campaignId + ').',
+          'Message: ' + (CHANNEL_WORD[m.channel] || m.channel) + ' (' + m.channel + ').',
+          'Template: ' + name + ' (' + pick.value + ').',
+          'Keep every fact. Save it as a new draft with save_drafts.',
+        ].join('\n');
+        rewrite.disabled = true;
+        clear(note);
+        const failed = rw.askAi ? await rw.askAi(ask)
+          : await api('/api/projects/' + rw.projectId + '/chat', { method: 'POST', body: { message: ask, attachments: [] } })
+            .then((res) => (res.ok ? '' : errorText(res)));
+        if (failed) { rewrite.disabled = false; return setStatus(note, 'bad', failed); }
+        const link = h('a', { href: '#/p/' + rw.projectId, text: 'See it in the chat' });
+        if (rw.showChat) link.addEventListener('click', (ev) => { ev.preventDefault(); rw.showChat(); });
+        clear(note);
+        note.appendChild(notice('ok', 'The AI is rewriting this message… ', link));
+        const started = Date.now();
+        block.stop();
+        timer = setInterval(async () => {
+          if (Date.now() - started > 120000) {
+            block.stop();
+            rewrite.disabled = false;
+            return setStatus(note, 'warn', 'The AI is taking longer than expected. Look at the chat, then open this person again to see the new text.');
+          }
+          const res = await api('/api/leads/' + lead.id);
+          const fresh = res.ok ? res.messages.find((x) => x.id === m.id) : null;
+          if (!timer || !fresh || ((fresh.subject || '') === before[0] && (fresh.body || '') === before[1])) return;
+          block.stop();
+          Object.assign(m, { subject: fresh.subject, body: fresh.body, status: fresh.status, owner_choice: '' });
+          text.value = m.body;
+          if (subject) subject.value = m.subject || '';
+          ui.save.disabled = true;
+          rewrite.disabled = false;
+          ui.paint();
+          ui.changed();
+          setStatus(note, 'ok', 'Rewritten from "' + name + '". Read it, then approve it or skip it. Nothing was sent.');
+        }, 3000);
+      });
+      return h('div', { class: 'stack rewrite-row' },
+        h('div', { class: 'row' }, h('label', { class: 'small', for: 'rw-' + m.id, text: 'Rewrite from a template' }), pick, rewrite, showTpl),
+        shown, note);
     }
 
     function show() {
       const lead = leads[at];
+      stopAll();
       blocks = [];
       clear(body);
       const more = opts && opts.details ? h('button', { type: 'button', text: 'More about this person' }) : null;
@@ -227,6 +328,57 @@
     drawer = { close, dirty, attempt };
     show();
     node.focus();
+  }
+
+  // ---- ready contacts -------------------------------------------------------------------------------
+
+  // The people table. columns: [[heading, (lead, open) => cell content]]; openAt(i) shows person i in the drawer.
+  function leadTable(leads, columns, openAt) {
+    return h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, ...columns.map(([t]) => h('th', { scope: 'col', text: t })))),
+      h('tbody', null, ...leads.map((lead, i) => {
+        const open = () => openAt(i);
+        const row = h('tr', { class: 'clickable' }, ...columns.map(([, cell]) => h('td', null, cell(lead, open))));
+        row.addEventListener('click', (ev) => { if (!ev.target.closest('a, button')) open(); });
+        return row;
+      }))));
+  }
+
+  const nameButton = (lead, open) => {
+    const b = h('button', { type: 'button', class: 'link', text: lead.name });
+    b.addEventListener('click', open);
+    return b;
+  };
+  const linkedinCell = (lead) => (lead.linkedin_url ? extLink(lead.linkedin_url, 'Open profile') : '');
+
+  // The Ready contacts card: a wave picker (newest first), the table, paging. A row opens the review drawer.
+  function resultsBody(r, view, again, openAt) {
+    const kids = [];
+    if (r.campaigns.length > 1) {
+      const pick = selectBox('res-search', r.campaigns.map((c) => [c.id, c.name]), r.campaign_id, (ev) => {
+        view.campaignId = Number(ev.target.value);
+        view.page = 1;
+        again();
+      });
+      kids.push(field('res-search', 'Wave', pick));
+    }
+    if (!r.leads.length) {
+      kids.push(h('p', { class: 'muted', text: 'Contacts will appear here as the AI finds and checks them.' }));
+      return kids;
+    }
+    const review = (lead, open) => {
+      const b = h('button', { type: 'button', text: lead.messages.length ? 'Review' : 'Open' });
+      b.addEventListener('click', open);
+      return h('span', { class: 'row' }, b, h('span', { class: 'muted small', text: MESSAGE_WORD[lead.message_state] || '' }));
+    };
+    kids.push(leadTable(r.leads, [
+      ['Name', nameButton], ['Job', (l) => l.title], ['Company', (l) => l.company], ['LinkedIn', linkedinCell],
+      ['Email (verified)', (l) => l.email],
+      ['Phone (found, not checked)', (l) => (l.phone_status === 'waiting' ? 'Requested, waiting' : l.phone)],
+      ['Messages', review],
+    ], openAt));
+    kids.push(pager(r, (page) => { view.page = page; again(); }));
+    return kids;
   }
 
   // ---- waves ------------------------------------------------------------------------------------------
@@ -801,10 +953,10 @@
   // Where each progress step leads: [tab, card] on this page, or a page of the newest wave (a path after #/c/<id>).
   // With no wave yet, a wave step leads to the Waves tab.
   const STEP_TARGET = {
-    product: ['settings', 'product'], reach: ['settings', 'searches'], companies: '/companies',
+    product: ['settings', 'product'], reach: ['messages', 'searches'], companies: '/companies',
     people: '/leads', emails: '/leads', checks: '', messages: '/messages', export: '/export',
   };
-  const TABS = [['activity', 'Activity'], ['waves', 'Waves'], ['settings', 'Settings']];
+  const TABS = [['activity', 'Activity'], ['waves', 'Waves'], ['messages', 'Messages'], ['settings', 'Settings']];
 
   function rememberedTab(projectId) {
     const key = TAB_KEY + projectId;
@@ -822,7 +974,8 @@
     if (!studio.ok) return setMain(notice('bad', errorText(studio)), h('a', { href: '#/home', text: 'Back to your projects' }));
     if (!chat.ok || !page.ok) return setMain(notice('bad', errorText(chat.ok ? page : chat)));
 
-    const view = { waves: [] }; // newest first
+    // campaignId: the wave shown in Ready contacts (null: the newest); lastLeads: the people last loaded there
+    const view = { waves: [], campaignId: null, page: 1, lastLeads: [] };
     const tl = UI.timeline();
     let timer = null;
     let dead = false;
@@ -832,6 +985,7 @@
       activity: UI.card('p.activity', 'What the AI is doing', { open: true }, tl.node),
       progress: UI.card('p.progress', 'Progress', { open: true }),
       waves: UI.card('p.waves', 'Waves', { open: true }),
+      results: UI.card('p.results', 'Ready contacts', { open: true }),
       product: UI.card('p.product', 'Your product', {}, ...productBody(page)),
       signoff: UI.card('p.signoff', 'Your sign-off', {}, signOffBody(studio.project, () => route())),
       templates: UI.card('p.templates', 'Message templates', {}),
@@ -840,8 +994,9 @@
       contacts: UI.card('p.contacts', 'Contacts you already have', {}, ...contactsBody(page)),
     };
     const inTab = {
-      activity: ['activity', 'progress'], waves: ['waves'],
-      settings: ['product', 'signoff', 'templates', 'searches', 'memory', 'contacts'],
+      activity: ['activity', 'progress'], waves: ['waves', 'results'],
+      messages: ['signoff', 'templates', 'searches'],
+      settings: ['product', 'memory', 'contacts'],
     };
     const drawSearches = (rows, choices) => { clear(cards.searches.inner); cards.searches.inner.append(...searchesBody(id, rows, choices)); };
     const drawTemplates = (data) => { clear(cards.templates.inner); cards.templates.inner.append(...templatesBody(id, data, reloadTemplates)); };
@@ -929,14 +1084,35 @@
         }),
       }));
     }
+    const openReady = (i) => {
+      const wave = view.waves.find((w) => w.id === view.campaignId);
+      reviewDrawer(view.lastLeads, i, () => refresh(true), {
+        rewrite: {
+          projectId: id, campaignId: view.campaignId, waveName: wave ? wave.name : '',
+          askAi: async (text) => (pane.send(text) ? '' : 'The AI is busy or not connected yet. Try again in a moment.'),
+          showChat: () => { showPane('chat'); pane.node.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
+        },
+      });
+    };
+    function drawResults(r) {
+      view.campaignId = r.campaign_id;
+      view.lastLeads = r.leads;
+      clear(cards.results.inner);
+      cards.results.setCount(fmtNum(r.total));
+      cards.results.inner.append(...resultsBody(r, view, () => refresh(true), openReady));
+    }
     async function refresh(now) {
       clearTimeout(timer);
       const run = async () => {
         if (dead || ctx.token !== routeToken) return;
-        const [s, w] = await Promise.all([api('/api/projects/' + id + '/studio'), api('/api/projects/' + id + '/waves')]);
+        const [s, w, r] = await Promise.all([
+          api('/api/projects/' + id + '/studio'), api('/api/projects/' + id + '/waves'),
+          api('/api/projects/' + id + '/results' + query({ campaign_id: view.campaignId, page: view.page })),
+        ]);
         if (dead || ctx.token !== routeToken) return;
         if (s.ok) drawProgress(s);
         if (w.ok) { view.waves = w.waves; drawWaves(); }
+        if (r.ok) drawResults(r);
       };
       if (now) await run(); else timer = setTimeout(run, 1200); // many tool events in a row make one refresh
     }
