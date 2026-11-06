@@ -277,3 +277,24 @@ def test_ensure_running_keeps_the_same_version(monkeypatch):
     )
     monkeypatch.setattr(ctl, "_stop_old", lambda *a: pytest.fail("must not stop"))
     assert ctl.ensure_running()["started"] is False
+
+
+def test_ensure_running_finds_an_old_pid_in_the_pid_file(monkeypatch):
+    """Dashboards before 1.3.4 don't report a pid; the pid file names them."""
+    stopped = []
+    answers = iter([True, False, True])
+    monkeypatch.setattr(ctl, "is_running", lambda host, port: next(answers))
+    monkeypatch.setattr(ctl, "_ping", lambda host, port: {"app": ctl.APP_ID, "version": "1.3.3"})
+    monkeypatch.setattr(ctl, "_pid_on", lambda port: 777)
+    monkeypatch.setattr(ctl, "_stop_old", lambda host, port, pid: stopped.append(pid))
+    monkeypatch.setattr(ctl, "_port_taken", lambda host, port: False)
+    monkeypatch.setattr(ctl, "_spawn", lambda port: FakeProc())
+    monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
+    assert ctl.ensure_running()["started"] is True
+    assert stopped == [777]
+
+
+def test_pid_on_reads_only_the_matching_port():
+    ctl.pid_file().write_text('{"pid": 55, "port": 8777}', encoding="utf-8")
+    assert ctl._pid_on(8777) == 55
+    assert ctl._pid_on(8765) is None

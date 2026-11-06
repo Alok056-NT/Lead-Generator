@@ -84,6 +84,16 @@ def write_pid(port: int) -> None:
     pid_file().write_text(json.dumps({"pid": os.getpid(), "port": port}), encoding="utf-8")
 
 
+def _pid_on(port: int) -> int | None:
+    """The process id the running dashboard wrote to the pid file, if it serves this port."""
+    try:
+        data = json.loads(pid_file().read_text(encoding="utf-8"))
+        pid = data.get("pid")
+        return pid if data.get("port") == port and isinstance(pid, int) else None
+    except (OSError, ValueError, KeyError, AttributeError):
+        return None
+
+
 def clear_pid() -> None:
     """Remove the pid file if it names this process."""
     try:
@@ -145,9 +155,10 @@ def ensure_running(wait_s: float = START_WAIT_S) -> dict[str, Any]:
     url = url_for(host, port)
     if is_running(host, port):
         running = _ping(host, port) or {}
-        if running.get("version") in (None, __version__) or not running.get("pid"):
+        pid = running.get("pid") or _pid_on(port)  # versions before 1.3.4 don't report their pid
+        if running.get("version") in (None, __version__) or not pid:
             return {"ok": True, "url": url, "started": False}
-        _stop_old(host, port, running["pid"])  # an update happened: serve the new version
+        _stop_old(host, port, pid)  # an update happened: serve the new version
     if _port_taken(host, port):
         return _error(
             "port_busy",
