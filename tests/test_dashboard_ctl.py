@@ -249,3 +249,31 @@ def test_console_python_prefers_the_console_build_on_windows(tmp_path):
     assert ctl._console_python(str(console), windows=True) == str(console)
     console.unlink()
     assert ctl._console_python(str(gui), windows=True) == str(gui)
+
+
+def test_ensure_running_restarts_an_older_version(monkeypatch):
+    """After an update the old dashboard is stopped and the new one started."""
+    stopped, started = [], []
+    answers = iter([True, False, True])
+    monkeypatch.setattr(ctl, "is_running", lambda host, port: next(answers))
+    monkeypatch.setattr(
+        ctl, "_ping", lambda host, port: {"app": ctl.APP_ID, "version": "0.0.1", "pid": 4242}
+    )
+    monkeypatch.setattr(ctl, "_stop_old", lambda host, port, pid: stopped.append(pid))
+    monkeypatch.setattr(ctl, "_port_taken", lambda host, port: False)
+    monkeypatch.setattr(ctl, "_spawn", lambda port: started.append(port) or FakeProc())
+    monkeypatch.setattr(ctl.time, "sleep", lambda s: None)
+    reply = ctl.ensure_running()
+    assert reply["ok"] and reply["started"]
+    assert stopped == [4242] and len(started) == 1
+
+
+def test_ensure_running_keeps_the_same_version(monkeypatch):
+    monkeypatch.setattr(ctl, "is_running", lambda host, port: True)
+    monkeypatch.setattr(
+        ctl,
+        "_ping",
+        lambda host, port: {"app": ctl.APP_ID, "version": ctl.__version__, "pid": 4242},
+    )
+    monkeypatch.setattr(ctl, "_stop_old", lambda *a: pytest.fail("must not stop"))
+    assert ctl.ensure_running()["started"] is False

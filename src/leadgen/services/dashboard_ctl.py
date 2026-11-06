@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -18,11 +19,12 @@ from typing import Any
 
 import httpx
 
+from leadgen import __version__
 from leadgen.core import config, paths
 
 APP_ID = "leadgen-dashboard"
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-START_WAIT_S = 12.0
+START_WAIT_S = 30.0  # the first start after an update compiles everything
 
 
 def pid_file() -> Path:
@@ -41,13 +43,32 @@ def _settings_address() -> tuple[str, int]:
     return dash.host or "127.0.0.1", int(dash.port)
 
 
-def is_running(host: str, port: int) -> bool:
-    """True when a Lead Generator dashboard answers on host:port."""
+def _ping(host: str, port: int) -> dict[str, Any] | None:
+    """The ping reply of a Lead Generator dashboard on host:port, or None."""
     try:
         reply = httpx.get(url_for(host, port) + "api/ping", timeout=1.5, trust_env=False)
-        return bool(reply.status_code == 200 and reply.json().get("app") == APP_ID)
+        data = reply.json()
+        return data if reply.status_code == 200 and data.get("app") == APP_ID else None
     except (httpx.HTTPError, ValueError, AttributeError):
-        return False
+        return None
+
+
+def is_running(host: str, port: int) -> bool:
+    """True when a Lead Generator dashboard answers on host:port."""
+    return _ping(host, port) is not None
+
+
+def _stop_old(host: str, port: int, pid: Any) -> None:
+    """Stop an older dashboard (left running across an update) and wait until its port is free."""
+    if not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)  # on Windows this ends the process
+    except OSError:
+        return
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and _port_taken(host, port):
+        time.sleep(0.25)
 
 
 def _port_taken(host: str, port: int) -> bool:
@@ -123,7 +144,10 @@ def ensure_running(wait_s: float = START_WAIT_S) -> dict[str, Any]:
         )
     url = url_for(host, port)
     if is_running(host, port):
-        return {"ok": True, "url": url, "started": False}
+        running = _ping(host, port) or {}
+        if running.get("version") in (None, __version__) or not running.get("pid"):
+            return {"ok": True, "url": url, "started": False}
+        _stop_old(host, port, running["pid"])  # an update happened: serve the new version
     if _port_taken(host, port):
         return _error(
             "port_busy",

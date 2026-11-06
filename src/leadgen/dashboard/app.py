@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import tempfile
 import traceback
@@ -425,7 +426,9 @@ def _source_reply(result: dict[str, Any]) -> dict[str, Any]:
 def _register_routes(app: FastAPI) -> None:
     @app.get("/api/ping")
     def ping() -> JSONResponse:
-        return _json({"ok": True, "app": dashboard_ctl.APP_ID, "version": __version__})
+        return _json(
+            {"ok": True, "app": dashboard_ctl.APP_ID, "version": __version__, "pid": os.getpid()}
+        )
 
     # ---- status, keys ------------------------------------------------------------------------
 

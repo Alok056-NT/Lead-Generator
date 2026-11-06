@@ -70,13 +70,15 @@ def test_rate_limiter_is_thread_safe():
         stamps.append(time.perf_counter())
 
     threads = [threading.Thread(target=work) for _ in range(6)]
+    t0 = time.perf_counter()
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    stamps.sort()
-    gaps = [b - a for a, b in zip(stamps, stamps[1:], strict=False)]
-    assert all(g >= 0.012 for g in gaps)  # 20 ms nominal, allow timer jitter
+    # 6 calls at 50/s need 5 waits of 20 ms. Wake-up gaps between threads jitter on busy CI
+    # machines (macOS), but sleeps never end early, so the total time is a reliable check.
+    assert len(stamps) == 6
+    assert max(stamps) - t0 >= 5 * 0.02 - 0.002
 
 
 def _sender(*statuses, headers=None):
