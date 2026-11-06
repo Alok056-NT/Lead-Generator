@@ -310,7 +310,7 @@
         h('p', { class: 'row small' },
           badge('Email: ' + (EMAIL_WORD[lead.email_status] || lead.email_status) + (lead.email ? ' (' + lead.email + ')' : ''), lead.email_status === 'verified' ? 'ok' : 'none'),
           lead.linkedin_url ? extLink(lead.linkedin_url, 'Open LinkedIn profile') : badge('No LinkedIn profile', 'none')),
-        more,
+        ...(more ? [more] : []),
         ...(lead.messages.length ? lead.messages.map((m) => messageBlock(lead, m))
           : [h('p', { class: 'muted', text: 'No messages have been written for this person yet.' })]));
       where.textContent = (at + 1) + ' of ' + leads.length;

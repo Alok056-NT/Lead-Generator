@@ -1342,7 +1342,7 @@ async function pageOverview(ctx) {
     }
   }
 
-  const tiles = h('div', { class: 'tiles' },
+  const tiles = h('div', { class: 'tiles steps' },
     stepTile('1 Companies', companies.approved || 0, ['companies approved'],
       companies.candidate ? [`${plural(companies.candidate, 'company', 'companies')} waiting for your approval`, base + '/companies?status=candidate'] : null,
       ['See companies', base + '/companies']),

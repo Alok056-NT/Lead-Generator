@@ -3,6 +3,23 @@
 All notable changes to Lead Generator are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.3] - 2026-11-06
+
+Contacts back, a calm wave Overview, rewrite from a template.
+
+### Added
+- The project page has a Messages tab (Your sign-off, Message templates, Searches and message style). Tabs are now Activity, Waves, Messages, Settings.
+- "Rewrite from a template" under each email and LinkedIn message in the review drawer (a template list, Rewrite, and an instant Show template). The AI rewrites only that message, keeps the facts and saves it as a new draft that is "Not reviewed yet". It also works from the wave pages.
+- `get_drafting_batch` accepts `lead_ids` and `template_key`; a saved draft clears the owner's Approve or Skip choice. The checks list reports its groups with counts.
+
+### Changed
+- The Ready contacts card is back on the Waves tab under the Waves card (wave picker, table, paging, review drawer).
+- The wave Overview is a header with one status pill and a targeting line, one Next step bar, four step tiles, one Checks line (the list is closed and grouped) and a closed "More about this wave" section.
+- Companies, People and Messages pages use one "Show" filter with counts. Export or send is two steps: Download, then Send from your mailbox (optional).
+
+### Fixed
+- A stray "null" no longer shows in the review drawer on the project page.
+
 ## [1.3.2] - 2026-11-06
 
 One clear path, fewer repeats.

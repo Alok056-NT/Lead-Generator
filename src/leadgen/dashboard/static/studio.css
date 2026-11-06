@@ -388,6 +388,7 @@ details.card > summary { cursor: pointer; font-weight: 600; }
 .tool-card { display: flex; flex-direction: column; }
 
 /* the wave Overview (V16): step tiles, the amber line, closed sections */
+.tiles.steps { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .tile { display: grid; gap: var(--s-1); align-content: start; }
 .tile h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); }
 .tile .button { margin-top: var(--s-2); justify-self: start; }
