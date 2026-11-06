@@ -413,7 +413,8 @@ def list_qa_issues(
         found = db.query(
             conn,
             "SELECT q.code AS code, q.severity AS severity, COUNT(*) AS n "
-            "FROM qa_issues q LEFT JOIN messages m ON q.entity_type = 'message' AND m.id = q.entity_id "
+            "FROM qa_issues q LEFT JOIN messages m "
+            "ON q.entity_type = 'message' AND m.id = q.entity_id "
             "JOIN people p ON p.id = (CASE WHEN q.entity_type = 'person' THEN q.entity_id "
             "ELSE m.person_id END) WHERE p.campaign_id = ? "
             "GROUP BY q.code, q.severity ORDER BY (q.severity = 'block') DESC, q.code",

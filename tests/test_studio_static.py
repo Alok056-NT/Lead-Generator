@@ -202,7 +202,7 @@ def test_v15_one_clear_path_and_popups_close_outside():
 
 
 def test_v16_tabs_rewrite_and_calm_overview():
-    """Four project tabs, the Rewrite row in the drawer, the calm Overview and the two export steps."""
+    """Four project tabs, the Rewrite row, the calm Overview and the two export steps."""
     project = (STATIC / "studio_project.js").read_text(encoding="utf-8")
     for expected in (
         "['messages', 'Messages']", "messages: ['signoff', 'templates', 'searches']",
@@ -214,7 +214,8 @@ def test_v16_tabs_rewrite_and_calm_overview():
     app = (STATIC / "app.js").read_text(encoding="utf-8")
     for expected in (
         "'Next step'", "stepTile", "'More about this wave'", "'Show the list'", "'Run the checks'",
-        "targetingLine", "showOptions", "Step 1: Download", "Step 2: Send from your mailbox (optional)",
+        "targetingLine", "showOptions", "Step 1: Download",
+        "Step 2: Send from your mailbox (optional)",
         "rewrite: { projectId", "text: 'Show'",
     ):  # fmt: skip
         assert expected in app, expected
